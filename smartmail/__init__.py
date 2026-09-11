@@ -53,11 +53,121 @@ class SmartMail:
             ("sent_records", "action_kind", "action_kind TEXT NOT NULL DEFAULT 'initial'"),
             ("sent_records", "follows_sent_record_id",
              "follows_sent_record_id TEXT REFERENCES sent_records(id)"),
+            ("execution_attempts", "phase",
+             "phase TEXT NOT NULL DEFAULT 'legacy'"),
+            ("execution_attempts", "intent_at",
+             "intent_at TEXT NOT NULL DEFAULT ''"),
+            ("execution_attempts", "submission_started_at",
+             "submission_started_at TEXT NOT NULL DEFAULT ''"),
+            ("execution_attempts", "outcome_observed_at",
+             "outcome_observed_at TEXT NOT NULL DEFAULT ''"),
+            ("execution_attempts", "updated_at",
+             "updated_at TEXT NOT NULL DEFAULT ''"),
+            ("confirmations", "confirmed_at",
+             "confirmed_at TEXT NOT NULL DEFAULT ''"),
         ):
             existing = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
             if column not in existing:
                 self._db.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
                 self._db.commit()
+        self._recover_unfinished_execution()
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _parse_timestamp(value):
+        if isinstance(value, datetime):
+            parsed = value
+        elif value:
+            try:
+                parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+        else:
+            return None
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+    def _recover_unfinished_execution(self) -> None:
+        """Turn a process-boundary interruption into an explicit Unknown Outcome.
+
+        An attempt persisted as ``in_progress`` may have crossed the mailbox
+        boundary even when the local process did not get an adapter response.
+        It is therefore never retried automatically after restart.  The
+        operator must reconcile mailbox evidence before continuing.
+        """
+        rows = list(self._db.execute(
+            "SELECT a.*, t.campaign_id FROM execution_attempts a "
+            "JOIN tasks t ON t.id = a.task_id "
+            "WHERE a.state IN ('in_progress', 'sent') ORDER BY a.rowid"))
+        if not rows:
+            return
+        recovered_at = self._now()
+        for row in rows:
+            if row["state"] == "sent":
+                existing_sent = self._db.execute(
+                    "SELECT id FROM sent_records WHERE attempt_id = ?", (row["id"],)).fetchone()
+                if existing_sent:
+                    self._db.execute(
+                        "UPDATE confirmations SET status = 'consumed' WHERE id = ? "
+                        "AND status = 'active'", (row["confirmation_id"],))
+                    evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+                    evidence.update({
+                        "phase": "recorded",
+                        "recovered_sent_record": True,
+                        "sent_record_id": existing_sent["id"],
+                    })
+                    self._db.execute(
+                        "UPDATE execution_attempts SET evidence = ?, phase = 'recorded', "
+                        "updated_at = ? WHERE id = ?",
+                        (json.dumps(evidence, ensure_ascii=False), recovered_at, row["id"]))
+                    continue
+                evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+                request = json.loads(row["request"])
+                try:
+                    confirmation = self.get_confirmation(row["confirmation_id"])
+                    self._record_sent(confirmation, row["id"], request, evidence)
+                    self._db.execute(
+                        "UPDATE confirmations SET status = 'consumed' WHERE id = ? "
+                        "AND status = 'active'", (row["confirmation_id"],))
+                    evidence["phase"] = "recorded"
+                    evidence["recovered_sent_record"] = True
+                    self._db.execute(
+                        "UPDATE execution_attempts SET evidence = ?, phase = 'recorded', "
+                        "updated_at = ? WHERE id = ?",
+                        (json.dumps(evidence, ensure_ascii=False), recovered_at, row["id"]))
+                except Exception as error:
+                    evidence.update({
+                        "phase": "recovery_required",
+                        "recovered_after_restart": True,
+                        "detail": str(error) or "Sent Record recovery failed",
+                    })
+                    self._db.execute(
+                        "UPDATE execution_attempts SET evidence = ?, phase = 'recovery_required', "
+                        "updated_at = ? WHERE id = ?",
+                        (json.dumps(evidence, ensure_ascii=False), recovered_at, row["id"]))
+                    self._pause_flow_if_idle(row["campaign_id"], "recovery_required", evidence)
+                continue
+            evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+            evidence.update({
+                "outcome": "unknown",
+                "recovered_after_restart": True,
+                "recovered_at": recovered_at,
+                "phase": "recovery_required",
+                "detail": (
+                    "The process stopped while external submission was in progress; "
+                    "reconcile mailbox evidence before continuing"
+                ),
+            })
+            self._db.execute(
+                "UPDATE execution_attempts SET state = 'unknown', evidence = ?, "
+                "phase = 'recovery_required', outcome_observed_at = ?, updated_at = ? "
+                "WHERE id = ?",
+                (json.dumps(evidence, ensure_ascii=False), recovered_at, recovered_at, row["id"]))
+            self._pause_flow_if_idle(
+                row["campaign_id"], "recovery_required", evidence)
+        self._db.commit()
 
     def __enter__(self):
         return self
@@ -399,6 +509,110 @@ class SmartMail:
         return [self.get_reconciliation(row["id"]) for row in self._db.execute(
             "SELECT id FROM reconciliations WHERE mailbox_id = ? ORDER BY rowid",
             (mailbox["id"],))]
+
+    def reconcile_and_continue(self, attempt_id: str,
+                               confirmation_ids: list[str] | None = None,
+                               *, acknowledge: bool = False) -> dict:
+        """Observe a manual or interrupted action before resolving or continuing it.
+
+        An operator acknowledgment is deliberately not treated as evidence of
+        sending.  Only a mailbox observation with an outbound ``sent`` state
+        can resolve the attempt and create its immutable Sent Record.
+        """
+        row = self._db.execute(
+            "SELECT * FROM execution_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Execution Attempt not found: {attempt_id}")
+        if row["state"] not in ("in_progress", "unknown"):
+            raise SmartMailError(
+                f"Execution Attempt cannot be reconciled from state {row['state']}")
+        task = self.get_task(row["task_id"])
+        refreshed = self.refresh_mailbox(task["student_id"])
+        resolved = self._resolve_attempt_from_observation(attempt_id, refreshed)
+        if not resolved:
+            # Keep the attempt unresolved even when the operator explicitly
+            # acknowledges the manual step.  The acknowledgment is inspectable
+            # evidence, never a substitute for mailbox confirmation.
+            if acknowledge:
+                evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+                evidence["operator_acknowledged"] = True
+                self._db.execute(
+                    "UPDATE execution_attempts SET evidence = ?, updated_at = ? WHERE id = ?",
+                    (json.dumps(evidence, ensure_ascii=False), self._now(), attempt_id))
+                self._db.commit()
+            self._pause_flow_if_idle(
+                task["campaign_id"], "reconcile_required",
+                {"detail": "Mailbox evidence did not establish that the action was Sent"})
+            self._db.commit()
+        continued = None
+        if resolved and confirmation_ids:
+            continued = self.run_execution(confirmation_ids)
+        return {
+            "resolved": resolved,
+            "attempt": self.get_execution_attempt(attempt_id),
+            "reconciliation": self.get_reconciliation(refreshed["reconciliation"]["id"]),
+            "continued": continued,
+        }
+
+    def _resolve_attempt_from_observation(self, attempt_id: str, refreshed: dict) -> bool:
+        """Resolve one unresolved attempt only from unique mailbox-confirmed Sent evidence."""
+        row = self._db.execute(
+            "SELECT * FROM execution_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None or row["state"] not in ("in_progress", "unknown"):
+            return False
+        request = json.loads(row["request"])
+        candidates = [message for message in refreshed["observation"]["messages"]
+                      if message["direction"] == "outbound"
+                      and message["status"] == "sent"
+                      and not message["ambiguity"]
+                      and self._list_fields_match(message, request)]
+        if len(candidates) != 1:
+            return False
+        message = candidates[0]
+        observed_at = self._now()
+        evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+        evidence.update({
+            "outcome": "sent",
+            "reference": message["platform_reference"] or evidence.get(
+                "reference", f"reconciled-{message['id']}"),
+            "reconciled": True,
+            "reconciliation_id": refreshed["reconciliation"]["id"],
+            "mailbox_observation_id": refreshed["observation"]["id"],
+            "outcome_observed_at": observed_at,
+            "detail": "Mailbox evidence established Sent after an unresolved attempt",
+        })
+        with self._db:
+            self._db.execute(
+                "UPDATE execution_attempts SET state = 'sent', evidence = ?, "
+                "phase = 'outcome_observed', outcome_observed_at = ?, updated_at = ? "
+                "WHERE id = ?",
+                (json.dumps(evidence, ensure_ascii=False), observed_at, observed_at, attempt_id))
+            sent = self._db.execute(
+                "SELECT id FROM sent_records WHERE attempt_id = ?", (attempt_id,)).fetchone()
+            if sent is None:
+                confirmation = self.get_confirmation(row["confirmation_id"])
+                sent_id = self._record_sent(confirmation, attempt_id, request, evidence)
+            else:
+                sent_id = sent["id"]
+            self._db.execute(
+                "UPDATE confirmations SET status = 'consumed' WHERE id = ? "
+                "AND status = 'active'", (row["confirmation_id"],))
+            evidence["sent_record_id"] = sent_id
+            self._db.execute(
+                "UPDATE execution_attempts SET evidence = ?, phase = 'recorded', updated_at = ? "
+                "WHERE id = ?", (json.dumps(evidence, ensure_ascii=False), self._now(), attempt_id))
+            summary_row = self._db.execute(
+                "SELECT summary FROM reconciliations WHERE id = ?",
+                (refreshed["reconciliation"]["id"],)).fetchone()
+            summary = json.loads(summary_row["summary"])
+            summary["local_state_changed"] = True
+            summary["resolved_execution_attempts"] = summary.get(
+                "resolved_execution_attempts", 0) + 1
+            self._db.execute(
+                "UPDATE reconciliations SET summary = ? WHERE id = ?",
+                (json.dumps(summary, ensure_ascii=False), refreshed["reconciliation"]["id"]))
+            self._clear_recovery_pause_if_resolved(row["task_id"])
+        return True
 
     def check_duplicate(self, preparation_id: str) -> dict:
         """Detect Repeat Execution and repeated initial outreach from available evidence."""
@@ -1263,6 +1477,21 @@ class SmartMail:
                    for slot in preparation["attachment_slots"] if slot["attachment"]]
         return hashlib.sha256(json.dumps(entries, ensure_ascii=False).encode("utf-8")).hexdigest()
 
+    def _confirmation_expired(self, confirmation: dict) -> bool:
+        """Whether the exact operator authorization has passed its validity time."""
+        execution = confirmation.get("execution") or {}
+        expiry = next((execution.get(key) for key in (
+            "expires_at", "valid_until", "confirmation_expires_at", "confirmed_until"
+        ) if execution.get(key)), None)
+        if expiry is None and execution.get("confirmed_time"):
+            expiry = execution["confirmed_time"]
+        if expiry is None and execution.get("kind") != "immediate":
+            expiry = next((execution.get(key) for key in (
+                "scheduled_at", "scheduled_time"
+            ) if execution.get(key)), None)
+        parsed = self._parse_timestamp(expiry)
+        return parsed is not None and parsed <= self._parse_timestamp(self._now())
+
     def review_confirmation(self, preparation_id: str) -> dict:
         """Everything an operator inspects before confirming: exact content and execution details."""
         preparation = self.get_preparation(preparation_id)
@@ -1274,27 +1503,37 @@ class SmartMail:
         sent = self._db.execute(
             "SELECT 1 FROM sent_records WHERE preparation_id = ?", (preparation_id,)).fetchone()
         active = self._db.execute(
-            "SELECT id FROM confirmations WHERE preparation_id = ? AND status = 'active'",
+            "SELECT * FROM confirmations WHERE preparation_id = ? AND status = 'active'",
             (preparation_id,)).fetchone()
+        execution = json.loads(active["execution_detail"]) if active else {"kind": "immediate"}
         return {
             "preparation_id": preparation_id, "task_id": preparation["task_id"],
             "status": preparation["status"], "sender": preparation["sender"],
             "recipient": preparation["recipient"], "subject": preparation["subject"],
             "body": preparation["body"], "attachments": attachments,
             "readiness_findings": preparation["readiness_findings"],
-            "ready": preparation["ready"], "execution": {"kind": "immediate"},
+            "ready": preparation["ready"], "execution": execution,
             "already_sent": sent is not None,
             "confirmation_id": active["id"] if active else None,
             "message": self.preview_preparation(preparation_id)["text"],
         }
 
-    def confirm(self, preparation_id: str) -> dict:
+    def confirm(self, preparation_id: str, execution: dict | None = None,
+                *, confirmed_at: str | datetime | None = None) -> dict:
         """Authorize exactly one Ready Preparation for its bound execution details."""
-        return self.confirm_preparations([preparation_id])[0]
+        return self.confirm_preparations(
+            [preparation_id], execution=execution, confirmed_at=confirmed_at)[0]
 
-    def confirm_preparations(self, preparation_ids: list[str]) -> list[dict]:
+    def confirm_preparations(self, preparation_ids: list[str], execution: dict | None = None,
+                             *, confirmed_at: str | datetime | None = None) -> list[dict]:
         """Confirm several Preparations in one operator action; each gets its own Confirmation."""
         confirmations = []
+        execution_detail = dict(execution or {"kind": "immediate"})
+        if not execution_detail.get("kind"):
+            raise SmartMailError("Confirmation execution details require a kind")
+        confirmed_at_value = confirmed_at or self._now()
+        if isinstance(confirmed_at_value, datetime):
+            confirmed_at_value = confirmed_at_value.isoformat()
         with self._db:
             for preparation_id in preparation_ids:
                 preparation = self.get_preparation(preparation_id)
@@ -1316,21 +1555,31 @@ class SmartMail:
                 active = self._db.execute(
                     "SELECT * FROM confirmations WHERE preparation_id = ? AND status = 'active'",
                     (preparation_id,)).fetchone()
+                active_execution = json.loads(active["execution_detail"]) if active else None
+                active_view = self._confirmation_view(active) if active else None
                 if active and active["content_digest"] == content_digest \
-                        and active["attachments_digest"] == attachments_digest:
+                        and active["attachments_digest"] == attachments_digest \
+                        and active_execution == execution_detail \
+                        and not self._confirmation_expired(active_view):
                     confirmations.append(self._confirmation_view(active))
                     continue
                 if active:
+                    invalidated_reason = (
+                        "expired" if self._confirmation_expired(active_view) else "renewed")
                     self._db.execute(
-                        "UPDATE confirmations SET status = 'invalidated', invalidated_reason = 'renewed' "
-                        "WHERE id = ?", (active["id"],))
+                        "UPDATE confirmations SET status = 'invalidated', invalidated_reason = ? "
+                        "WHERE id = ?", (invalidated_reason, active["id"]))
                 confirmation_id = str(uuid4())
                 self._db.execute(
-                    "INSERT INTO confirmations VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '')",
-                    (confirmation_id, preparation_id, preparation["task_id"], "immediate",
-                     json.dumps({"kind": "immediate"}, ensure_ascii=False),
-                     content_digest, attachments_digest))
+                    "INSERT INTO confirmations "
+                    "(id, preparation_id, task_id, execution_kind, execution_detail, "
+                    "content_digest, attachments_digest, status, invalidated_reason, confirmed_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '', ?)",
+                    (confirmation_id, preparation_id, preparation["task_id"], execution_detail["kind"],
+                     json.dumps(execution_detail, ensure_ascii=False),
+                     content_digest, attachments_digest, confirmed_at_value))
                 confirmations.append(self.get_confirmation(confirmation_id))
+                self._clear_confirmation_expired_pause(self._campaign_of_task(preparation["task_id"]))
         return confirmations
 
     def _confirmation_view(self, row) -> dict:
@@ -1340,6 +1589,7 @@ class SmartMail:
             "content_digest": row["content_digest"],
             "attachments_digest": row["attachments_digest"],
             "invalidated_reason": row["invalidated_reason"],
+            "confirmed_at": row["confirmed_at"],
         }
 
     def get_confirmation(self, confirmation_id: str) -> dict:
@@ -1356,8 +1606,44 @@ class SmartMail:
             "SELECT c.* FROM confirmations c JOIN tasks t ON t.id = c.task_id "
             "WHERE t.campaign_id = ? AND c.status = 'active' ORDER BY c.rowid", (campaign_id,))]
 
+    def resume_execution(self, campaign_id: str,
+                         confirmation_ids: list[str] | None = None) -> dict:
+        """Resume only active, still-valid Confirmations after persisted recovery checks."""
+        self.get_campaign(campaign_id)
+        flow = self._flow_state(campaign_id)
+        if flow["state"] == "paused":
+            return {"attempts": [], "paused": True, "flow": flow}
+        confirmations = (
+            [self.get_confirmation(confirmation_id) for confirmation_id in confirmation_ids]
+            if confirmation_ids is not None else self.list_confirmations(campaign_id))
+        for confirmation in confirmations:
+            if self._campaign_of_task(confirmation["task_id"]) != campaign_id:
+                raise SmartMailError(
+                    f"Confirmation is outside Campaign {campaign_id}: {confirmation['id']}")
+            if self._confirmation_expired(confirmation):
+                detail = "Confirmed execution time has expired; renew Confirmation with a new time"
+                self._pause_flow(campaign_id, "confirmation_expired", {"detail": detail})
+                self._db.commit()
+                return {"attempts": [], "paused": True,
+                        "flow": self._flow_state(campaign_id),
+                        "expired_confirmation_id": confirmation["id"]}
+        if not confirmations:
+            return {"attempts": [], "paused": False, "flow": flow}
+        return self.run_execution([confirmation["id"] for confirmation in confirmations])
+
+    def recover_execution(self, campaign_id: str,
+                          confirmation_ids: list[str] | None = None) -> dict:
+        """Compatibility name for the operator-facing restart recovery operation."""
+        return self.resume_execution(campaign_id, confirmation_ids)
+
     def run_execution(self, confirmation_ids: list[str]) -> dict:
-        """Execute confirmed immediate sends in order through the adapter, pausing on failure."""
+        """Execute confirmed immediate sends in order through the adapter.
+
+        The intent row is committed before submission, and the submission-start
+        marker is committed separately.  A restart can therefore distinguish a
+        request that was never started from one whose external outcome is
+        unknown; only the former is safe to resume automatically.
+        """
         if not confirmation_ids:
             raise SmartMailError("At least one Confirmation is required")
         attempts: list[dict] = []
@@ -1377,24 +1663,140 @@ class SmartMail:
                 self._db.commit()
                 paused = True
                 break
-            attempt_id = str(uuid4())
-            self._db.execute(
-                "INSERT INTO execution_attempts VALUES (?, ?, ?, ?, ?, 'in_progress', ?, '')",
-                (attempt_id, confirmation["id"], confirmation["preparation_id"],
-                 confirmation["task_id"], self._next_sequence(confirmation["preparation_id"]),
-                 json.dumps(request, ensure_ascii=False)))
-            self._db.commit()
-            evidence = self._submit(request)
-            state = evidence["outcome"]
-            self._db.execute(
-                "UPDATE execution_attempts SET state = ?, evidence = ? WHERE id = ?",
-                (state, json.dumps(evidence, ensure_ascii=False), attempt_id))
-            if state == "sent":
-                self._record_sent(confirmation, attempt_id, request, evidence)
+            existing = self._db.execute(
+                "SELECT * FROM execution_attempts WHERE confirmation_id = ? "
+                "ORDER BY rowid DESC LIMIT 1", (confirmation["id"],)).fetchone()
+            if existing and existing["state"] in ("in_progress", "unknown"):
+                self._pause_flow_if_idle(
+                    campaign_id, "recovery_required",
+                    {"detail": "An unresolved Execution Attempt requires Reconciliation"})
+                self._db.commit()
+                raise SmartMailError(
+                    "An unresolved Execution Attempt exists; reconcile it before retrying")
+
+            now = self._now()
+            if existing and existing["state"] == "not_attempted":
+                attempt_id = existing["id"]
+                evidence = json.loads(existing["evidence"]) if existing["evidence"] else {}
+                evidence.update({"phase": "submission_started", "submission_started_at": now})
                 self._db.execute(
-                    "UPDATE confirmations SET status = 'consumed' WHERE id = ?", (confirmation["id"],))
+                    "UPDATE execution_attempts SET state = 'in_progress', evidence = ?, "
+                    "phase = 'submission_started', submission_started_at = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (json.dumps(evidence, ensure_ascii=False), now, now, attempt_id))
             else:
-                self._pause_flow(campaign_id, _PAUSE_REASONS[state], evidence)
+                attempt_id = str(uuid4())
+                evidence = {
+                    "outcome": "not_attempted",
+                    "phase": "intent_recorded",
+                    "intent_persisted_at": now,
+                }
+                self._db.execute(
+                    "INSERT INTO execution_attempts "
+                    "(id, confirmation_id, preparation_id, task_id, sequence, state, request, "
+                    "evidence, phase, intent_at, submission_started_at, outcome_observed_at, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'not_attempted', ?, ?, 'intent_recorded', ?, '', '', ?)",
+                    (attempt_id, confirmation["id"], confirmation["preparation_id"],
+                     confirmation["task_id"], self._next_sequence(confirmation["preparation_id"]),
+                     json.dumps(request, ensure_ascii=False),
+                     json.dumps(evidence, ensure_ascii=False), now, now))
+                self._db.commit()
+                evidence["phase"] = "submission_started"
+                evidence["submission_started_at"] = now
+                self._db.execute(
+                    "UPDATE execution_attempts SET state = 'in_progress', evidence = ?, "
+                    "phase = 'submission_started', submission_started_at = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (json.dumps(evidence, ensure_ascii=False), now, now, attempt_id))
+            self._db.commit()
+
+            try:
+                evidence = self._submit(request)
+                if not isinstance(evidence, dict) or evidence.get("outcome") not in {
+                        "sent", "failed", "unknown", "authentication_required"}:
+                    raise SmartMailError("Mailbox adapter returned an unsupported execution outcome")
+            except Exception as error:
+                if getattr(error, "phase", "") == "before_submission":
+                    evidence = dict(evidence)
+                    evidence.pop("submission_started_at", None)
+                    evidence.update({
+                        "outcome": "not_attempted",
+                        "phase": "intent_recorded",
+                        "crash_phase": "before_submission",
+                        "detail": str(error),
+                    })
+                    self._db.execute(
+                        "UPDATE execution_attempts SET state = 'not_attempted', evidence = ?, "
+                        "phase = 'intent_recorded', submission_started_at = '', updated_at = ? "
+                        "WHERE id = ?",
+                        (json.dumps(evidence, ensure_ascii=False), self._now(), attempt_id))
+                    self._db.commit()
+                    raise
+                evidence = {
+                    "outcome": "unknown",
+                    "phase": "recovery_required",
+                    "detail": str(error) or "External submission was interrupted",
+                    "error_type": type(error).__name__,
+                    "recovered_after_restart": False,
+                }
+                if getattr(error, "phase", ""):
+                    evidence["crash_phase"] = error.phase
+                failed_at = self._now()
+                self._db.execute(
+                    "UPDATE execution_attempts SET state = 'unknown', evidence = ?, "
+                    "phase = 'recovery_required', outcome_observed_at = ?, updated_at = ? "
+                    "WHERE id = ?",
+                    (json.dumps(evidence, ensure_ascii=False), failed_at, failed_at, attempt_id))
+                self._pause_flow(campaign_id, "recovery_required", evidence)
+                self._db.commit()
+                raise
+
+            adapter_evidence = dict(evidence)
+            state = adapter_evidence["outcome"]
+            interruption = None
+            if state == "authentication_required":
+                interruption = state
+                adapter_evidence["interruption"] = interruption
+                adapter_evidence["outcome"] = "unknown"
+                state = "unknown"
+            observed_at = self._now()
+            evidence = dict(adapter_evidence)
+            evidence["outcome_observed_at"] = observed_at
+            evidence["phase"] = "outcome_observed"
+            self._db.execute(
+                "UPDATE execution_attempts SET state = ?, evidence = ?, phase = 'outcome_observed', "
+                "outcome_observed_at = ?, updated_at = ? WHERE id = ?",
+                (state, json.dumps(evidence, ensure_ascii=False), observed_at, observed_at, attempt_id))
+            # Persist the adapter's outcome before writing the Sent Record.  If
+            # the process stops during record creation, restart can finish the
+            # local record without another external request.
+            self._db.commit()
+            if state == "sent":
+                try:
+                    self._record_sent(confirmation, attempt_id, request, adapter_evidence)
+                    self._db.execute(
+                        "UPDATE confirmations SET status = 'consumed' WHERE id = ?",
+                        (confirmation["id"],))
+                    evidence["phase"] = "recorded"
+                    self._db.execute(
+                        "UPDATE execution_attempts SET evidence = ?, phase = 'recorded', "
+                        "updated_at = ? WHERE id = ?",
+                        (json.dumps(evidence, ensure_ascii=False), self._now(), attempt_id))
+                except Exception as error:
+                    evidence["phase"] = "recovery_required"
+                    evidence["detail"] = str(error) or "Sent Record persistence was interrupted"
+                    self._db.execute(
+                        "UPDATE execution_attempts SET evidence = ?, phase = 'recovery_required', "
+                        "updated_at = ? WHERE id = ?",
+                        (json.dumps(evidence, ensure_ascii=False), self._now(), attempt_id))
+                    self._pause_flow(campaign_id, "recovery_required", evidence)
+                    self._db.commit()
+                    raise
+            else:
+                self._pause_flow(
+                    campaign_id,
+                    interruption or _PAUSE_REASONS[state],
+                    evidence)
                 paused = True
             self._db.commit()
             attempts.append(self.get_execution_attempt(attempt_id))
@@ -1410,6 +1812,12 @@ class SmartMail:
             raise SmartMailError(
                 f"Confirmation is not active ({confirmation['status']}); "
                 "renew Confirmation before executing")
+        if self._confirmation_expired(confirmation):
+            campaign_id = self._campaign_of_task(confirmation["task_id"])
+            detail = "Confirmed execution time has expired; renew Confirmation with a new time"
+            self._pause_flow(campaign_id, "confirmation_expired", {"detail": detail})
+            self._db.commit()
+            raise SmartMailError(detail)
         if preparation["status"] != "active":
             raise SmartMailError(
                 "Preparation has been superseded; renew Confirmation before executing")
@@ -1428,16 +1836,20 @@ class SmartMail:
         blocking = [f["code"] for f in preparation["readiness_findings"] if f["blocking"]]
         if blocking:
             raise SmartMailError(f"Preparation is not Ready; resolve: {', '.join(blocking)}")
-        return self._execution_request(preparation)
+        return self._execution_request(preparation, confirmation["execution"])
 
-    def _execution_request(self, preparation: dict) -> dict:
+    def _execution_request(self, preparation: dict, execution: dict | None = None) -> dict:
+        execution = execution or {"kind": "immediate"}
+        if execution.get("kind") != "immediate":
+            raise SmartMailError(
+                f"External execution kind is not enabled: {execution.get('kind', '')}")
         attachments = [
             {"label": slot["label"], "name": slot["attachment"]["name"],
              "sha256": slot["attachment"]["sha256"], "size": slot["attachment"]["size"]}
             for slot in preparation["attachment_slots"] if slot["attachment"]]
         return {"sender": preparation["sender"], "recipient": preparation["recipient"],
                 "subject": preparation["subject"], "body": preparation["body"],
-                "attachments": attachments, "kind": "immediate"}
+                "attachments": attachments, "kind": execution["kind"]}
 
     def _submit(self, request: dict) -> dict:
         try:
@@ -1476,6 +1888,10 @@ class SmartMail:
         return {"id": row["id"], "confirmation_id": row["confirmation_id"],
                 "preparation_id": row["preparation_id"], "task_id": row["task_id"],
                 "sequence": row["sequence"], "state": row["state"],
+                "phase": row["phase"], "intent_at": row["intent_at"],
+                "submission_started_at": row["submission_started_at"],
+                "outcome_observed_at": row["outcome_observed_at"],
+                "updated_at": row["updated_at"],
                 "request": json.loads(row["request"]),
                 "evidence": json.loads(row["evidence"]) if row["evidence"] else None,
                 "sent_record_id": sent["id"] if sent else None}
@@ -1547,10 +1963,47 @@ class SmartMail:
                 (json.dumps(evidence, ensure_ascii=False), attempt_id))
             campaign_id = self._campaign_of_task(row["task_id"])
             flow = self._flow_state(campaign_id)
-            if flow["state"] == "paused" and flow["reason"] == "unknown_outcome":
+            if flow["state"] == "paused" and flow["reason"] in {
+                    "unknown_outcome", "recovery_required", "reconcile_required",
+                    "manual_takeover", "authentication_required"}:
                 self._db.execute(
                     "DELETE FROM execution_flow WHERE campaign_id = ?", (campaign_id,))
         return self.get_execution_attempt(attempt_id)
+
+    def take_over_execution(self, attempt_id: str, detail: str = "") -> dict:
+        """Record an explicit Manual Takeover without asserting that it was Sent."""
+        row = self._db.execute(
+            "SELECT * FROM execution_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Execution Attempt not found: {attempt_id}")
+        if row["state"] not in ("in_progress", "unknown"):
+            raise SmartMailError(
+                f"Execution Attempt is not unresolved ({row['state']})")
+        evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+        evidence["manual_takeover"] = True
+        if detail:
+            evidence["detail"] = detail
+        evidence["phase"] = "manual_takeover"
+        now = self._now()
+        with self._db:
+            self._db.execute(
+                "UPDATE execution_attempts SET state = 'unknown', evidence = ?, "
+                "phase = 'manual_takeover', updated_at = ? WHERE id = ?",
+                (json.dumps(evidence, ensure_ascii=False), now, attempt_id))
+            self._pause_flow_if_idle(
+                self._campaign_of_task(row["task_id"]), "manual_takeover", evidence)
+        return self.get_execution_attempt(attempt_id)
+
+    def manual_takeover(self, attempt_id: str, detail: str = "") -> dict:
+        """Alias using the domain noun for an explicit operator takeover."""
+        return self.take_over_execution(attempt_id, detail)
+
+    def reconcile_execution(self, attempt_id: str,
+                            confirmation_ids: list[str] | None = None,
+                            *, acknowledge: bool = False) -> dict:
+        """Alias for explicit reconcile-and-continue at the core boundary."""
+        return self.reconcile_and_continue(
+            attempt_id, confirmation_ids, acknowledge=acknowledge)
 
     def _flow_state(self, campaign_id: str) -> dict:
         row = self._db.execute(
@@ -1567,6 +2020,31 @@ class SmartMail:
             "ON CONFLICT(campaign_id) DO UPDATE SET state = 'paused', "
             "reason = excluded.reason, detail = excluded.detail",
             (campaign_id, reason, detail))
+
+    def _pause_flow_if_idle(self, campaign_id: str, reason: str, evidence: dict) -> None:
+        """Add a recovery pause without replacing an existing operator blocker."""
+        if self._flow_state(campaign_id)["state"] == "idle":
+            self._pause_flow(campaign_id, reason, evidence)
+
+    def _clear_recovery_pause_if_resolved(self, task_id: str) -> None:
+        """Release only a recovery pause once every unresolved attempt is resolved."""
+        campaign_id = self._campaign_of_task(task_id)
+        flow = self._flow_state(campaign_id)
+        if flow["reason"] not in {
+            "recovery_required", "unknown_outcome", "reconcile_required",
+                "manual_takeover", "authentication_required"}:
+            return
+        unresolved = self._db.execute(
+            "SELECT 1 FROM execution_attempts a JOIN tasks t ON t.id = a.task_id "
+            "WHERE t.campaign_id = ? AND a.state IN ('in_progress', 'unknown') LIMIT 1",
+            (campaign_id,)).fetchone()
+        if unresolved is None:
+            self._db.execute("DELETE FROM execution_flow WHERE campaign_id = ?", (campaign_id,))
+
+    def _clear_confirmation_expired_pause(self, campaign_id: str) -> None:
+        flow = self._flow_state(campaign_id)
+        if flow["reason"] == "confirmation_expired":
+            self._db.execute("DELETE FROM execution_flow WHERE campaign_id = ?", (campaign_id,))
 
     def _campaign_of_task(self, task_id: str) -> str:
         row = self._db.execute(

@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS confirmations (
     content_digest TEXT NOT NULL,
     attachments_digest TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
-    invalidated_reason TEXT NOT NULL DEFAULT ''
+    invalidated_reason TEXT NOT NULL DEFAULT '',
+    confirmed_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS execution_attempts (
     id TEXT PRIMARY KEY,
@@ -97,7 +98,12 @@ CREATE TABLE IF NOT EXISTS execution_attempts (
     sequence INTEGER NOT NULL,
     state TEXT NOT NULL,
     request TEXT NOT NULL,
-    evidence TEXT NOT NULL DEFAULT ''
+    evidence TEXT NOT NULL DEFAULT '',
+    phase TEXT NOT NULL DEFAULT 'intent_recorded',
+    intent_at TEXT NOT NULL DEFAULT '',
+    submission_started_at TEXT NOT NULL DEFAULT '',
+    outcome_observed_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS sent_records (
     id TEXT PRIMARY KEY,

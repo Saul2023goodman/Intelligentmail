@@ -98,6 +98,8 @@ def main() -> int:
     confirmation.add_parser("review", help="Inspect the exact message before confirming").add_argument("id")
     confirm = confirmation.add_parser("confirm", help="Authorize one or more Ready Preparations")
     confirm.add_argument("ids", nargs="+")
+    confirm.add_argument("--expires-at", help="Optional ISO-8601 Confirmation expiry")
+    confirm.add_argument("--confirmed-at", help="Optional ISO-8601 operator confirmation time")
     confirmation.add_parser("list").add_argument("--campaign", required=True)
     confirmation.add_parser("show").add_argument("id")
 
@@ -107,6 +109,23 @@ def main() -> int:
     execution.add_parser("list").add_argument("--campaign", required=True)
     execution.add_parser("show").add_argument("id")
     execution.add_parser("status").add_argument("--campaign", required=True)
+    resume = execution.add_parser(
+        "resume", aliases=["recover"],
+        help="Resume still-valid confirmed work after persisted recovery checks")
+    resume.add_argument("--campaign", required=True)
+    takeover = execution.add_parser(
+        "takeover", aliases=["take-over"], help="Record an explicit Manual Takeover")
+    takeover.add_argument("id")
+    takeover.add_argument("--detail", default="")
+    reconcile_continue = execution.add_parser(
+        "reconcile-and-continue", aliases=["reconcile"],
+        help="Observe mailbox evidence before resolving and continuing an attempt")
+    reconcile_continue.add_argument("id", help="Unresolved Execution Attempt ID")
+    reconcile_continue.add_argument(
+        "confirmation_ids", nargs="*", help="Confirmed work to run after positive reconciliation")
+    reconcile_continue.add_argument(
+        "--acknowledge", action="store_true",
+        help="Record operator acknowledgment; it never establishes Sent")
     stop = execution.add_parser("stop", help="Stop an unresolved Execution Attempt")
     stop.add_argument("id")
     stop.add_argument("--detail", default="")
@@ -221,7 +240,11 @@ def main() -> int:
                 if args.action == "review":
                     result = core.review_confirmation(args.id)
                 elif args.action == "confirm":
-                    result = core.confirm_preparations(args.ids)
+                    execution = {"kind": "immediate"}
+                    if args.expires_at:
+                        execution["expires_at"] = args.expires_at
+                    result = core.confirm_preparations(
+                        args.ids, execution=execution, confirmed_at=args.confirmed_at)
                 elif args.action == "list":
                     result = core.list_confirmations(args.campaign)
                 else:
@@ -235,6 +258,13 @@ def main() -> int:
                     result = core.get_execution_attempt(args.id)
                 elif args.action == "status":
                     result = core.execution_status(args.campaign)
+                elif args.action in ("resume", "recover"):
+                    result = core.resume_execution(args.campaign)
+                elif args.action in ("takeover", "take-over"):
+                    result = core.take_over_execution(args.id, detail=args.detail)
+                elif args.action in ("reconcile-and-continue", "reconcile"):
+                    result = core.reconcile_and_continue(
+                        args.id, args.confirmation_ids or None, acknowledge=args.acknowledge)
                 else:
                     result = core.stop_execution_attempt(args.id, detail=args.detail)
             elif args.command == "sent":

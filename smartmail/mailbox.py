@@ -19,6 +19,14 @@ class MailboxCapabilityError(ValueError):
     """The requested external execution capability is unavailable."""
 
 
+class MailboxCrash(RuntimeError):
+    """A controlled process-boundary interruption for recovery acceptance tests."""
+
+    def __init__(self, phase: str):
+        self.phase = phase
+        super().__init__(f"controlled process crash: {phase}")
+
+
 class MailboxCapability:
     """The adapter boundary: carry out one confirmed request, return observed evidence."""
 
@@ -78,7 +86,7 @@ class ControlledMailbox(MailboxCapability):
 
     name = "controlled"
     enabled = True
-    OUTCOMES = ("sent", "failed", "unknown")
+    OUTCOMES = ("sent", "failed", "unknown", "authentication_required")
 
     def __init__(self, outcomes=None, default: str = "sent", observations=None):
         self._outcomes = list(outcomes or [])
@@ -111,8 +119,18 @@ class ControlledMailbox(MailboxCapability):
         return {"mailbox_address": mailbox_address, **scripted}
 
     def submit(self, request: dict) -> dict:
-        self.requests.append(request)
         scripted = self._outcomes.pop(0) if self._outcomes else self._default
+        if isinstance(scripted, dict) and scripted.get("crash") == "before_submission":
+            raise MailboxCrash("before_submission")
+        self.requests.append(request)
+        if isinstance(scripted, dict) and scripted.get("crash") == "during_submission":
+            raise MailboxCrash("during_submission")
+        if isinstance(scripted, dict) and scripted.get("crash") == "after_success":
+            evidence = self.evidence(scripted)
+            if evidence["outcome"] != "sent":
+                raise MailboxCapabilityError(
+                    "Controlled after_success crash requires a sent outcome")
+            raise MailboxCrash("after_success")
         return self.evidence(scripted)
 
     @classmethod
