@@ -1,4 +1,4 @@
-"""The mailbox adapter boundary: SmartMail's only channel to external execution.
+"""The mailbox adapter boundary for external execution and read-only observation.
 
 Every external send goes through an adapter. The default adapter has no enabled
 capability, so nothing leaves the machine until a capability is separately
@@ -7,6 +7,11 @@ real sends; the 163.com browser adapter attaches through this same boundary.
 """
 
 import json
+import os
+import re
+import shutil
+import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -19,6 +24,35 @@ class MailboxCapability:
 
     name = "unavailable"
     enabled = False
+
+    _CAPABILITIES = (
+        "read_history", "immediate_send", "native_scheduling",
+        "schedule_cancellation", "recall",
+    )
+
+    def capabilities(self) -> dict:
+        """Report each platform capability independently.
+
+        ``enabled`` remains the execution-send guard used by ticket 05. Reading
+        a mailbox never turns it on.
+        """
+        return {
+            capability: {
+                "available": False,
+                "verified": False,
+                "basis": "not enabled for this adapter",
+            }
+            for capability in self._CAPABILITIES
+        }
+
+    def observe(self, mailbox_address: str) -> dict:
+        return {
+            "status": "unsupported",
+            "mailbox_address": mailbox_address,
+            "detail": "Read-only mailbox history is not available for this adapter",
+            "coverage": {"folders": [], "complete": False},
+            "messages": [],
+        }
 
     def submit(self, request: dict) -> dict:
         raise MailboxCapabilityError("No external mailbox capability is enabled")
@@ -46,10 +80,35 @@ class ControlledMailbox(MailboxCapability):
     enabled = True
     OUTCOMES = ("sent", "failed", "unknown")
 
-    def __init__(self, outcomes=None, default: str = "sent"):
+    def __init__(self, outcomes=None, default: str = "sent", observations=None):
         self._outcomes = list(outcomes or [])
         self._default = default
+        self._observations = list(observations or [])
         self.requests: list[dict] = []
+        self.observation_requests: list[str] = []
+
+    def capabilities(self) -> dict:
+        capabilities = super().capabilities()
+        capabilities["read_history"] = {
+            "available": bool(self._observations),
+            "verified": False,
+            "basis": "controlled fixture; not live platform verification",
+        }
+        capabilities["immediate_send"] = {
+            "available": True,
+            "verified": False,
+            "basis": "controlled outcome fixture; no external send",
+        }
+        return capabilities
+
+    def observe(self, mailbox_address: str) -> dict:
+        self.observation_requests.append(mailbox_address)
+        if not self._observations:
+            return super().observe(mailbox_address)
+        scripted = self._observations.pop(0)
+        if not isinstance(scripted, dict):
+            raise MailboxCapabilityError("Controlled observation must be a JSON object")
+        return {"mailbox_address": mailbox_address, **scripted}
 
     def submit(self, request: dict) -> dict:
         self.requests.append(request)
@@ -72,5 +131,153 @@ class ControlledMailbox(MailboxCapability):
         """Build a deterministic adapter from an outcome script file (development/testing)."""
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(data, dict):
-            return cls(data.get("outcomes", []), default=data.get("default", default))
+            return cls(data.get("outcomes", []), default=data.get("default", default),
+                       observations=data.get("observations", []))
         return cls(data, default=default)
+
+
+class NetEase163Mailbox(MailboxCapability):
+    """Scan recognized folders and message metadata in an operator-owned browser.
+
+    The adapter intentionally uses the Playwright CLI session rather than
+    storing mailbox credentials. If login, verification, or a CAPTCHA is
+    required it opens a headed browser and returns ``authentication_required``;
+    the operator completes that interaction and runs refresh again.
+
+    This adapter has no execution capability. It enumerates canonical IDs from
+    folder-level list requests and reads header/MIME metadata without fetching
+    message-body HTML, whose endpoint changes unread state.
+    """
+
+    name = "163-browser"
+    enabled = False
+    _SESSION_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+    def __init__(self, session: str = "smartmail-163", runner=None):
+        if not self._SESSION_RE.fullmatch(session):
+            raise MailboxCapabilityError(
+                "Browser session may contain only letters, digits, underscores, and hyphens")
+        self.session = session
+        self._runner = runner or subprocess.run
+
+    def capabilities(self) -> dict:
+        capabilities = super().capabilities()
+        capabilities["read_history"] = {
+            "available": True,
+            "verified": True,
+            "basis": (
+                "Live acceptance on 163.com webmail: DOM-discovered built-in folders, "
+                "paginated canonical IDs, and metadata-only detail reads; message bodies "
+                "remain excluded to preserve unread state"
+            ),
+        }
+        for capability in (
+                "immediate_send", "native_scheduling", "schedule_cancellation", "recall"):
+            capabilities[capability]["basis"] = (
+                "Not enabled; read-only history verification does not verify this capability")
+        return capabilities
+
+    def observe(self, mailbox_address: str) -> dict:
+        collector = Path(__file__).with_name("netease_163_collector.js").read_text(encoding="utf-8")
+        collector = collector.replace(
+            "__INTENDED_MAILBOX__", json.dumps(mailbox_address.lower()))
+        try:
+            result = self._run_cli("--json", "run-code", collector)
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "failed", "mailbox_address": "",
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "detail": "Read-only 163.com observation timed out",
+                "coverage": {"folders": [], "complete": False}, "messages": [],
+            }
+        if result.returncode != 0:
+            if "is not open" in (result.stdout + result.stderr):
+                try:
+                    self._open_browser()
+                except subprocess.TimeoutExpired:
+                    return {
+                        "status": "failed", "mailbox_address": "",
+                        "observed_at": datetime.now(timezone.utc).isoformat(),
+                        "detail": "Opening the headed 163.com browser timed out",
+                        "coverage": {"folders": [], "complete": False}, "messages": [],
+                    }
+                detail = (
+                    "The headed 163.com browser is open. Complete login, verification, or "
+                    "CAPTCHA as the operator, then run mailbox refresh again")
+                status = "authentication_required"
+            else:
+                try:
+                    detail = json.loads(result.stdout).get("error", "Browser observation failed")
+                except json.JSONDecodeError:
+                    detail = (result.stderr or result.stdout or "Browser observation failed").strip()
+                status = "failed"
+            return {
+                "status": status,
+                "mailbox_address": "",
+                "observed_at": datetime.now(timezone.utc).isoformat(),
+                "detail": detail,
+                "coverage": {"folders": [], "complete": False},
+                "messages": [],
+            }
+        try:
+            envelope = json.loads(result.stdout)
+            observation = json.loads(envelope["result"])
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            raise MailboxCapabilityError(
+                "163.com returned an unsupported or ambiguous browser observation") from error
+        actual = str(observation.get("mailbox_address", "")).lower()
+        if actual and actual != mailbox_address.lower():
+            return {
+                "status": "wrong_mailbox",
+                "mailbox_address": actual,
+                "observed_at": observation.get("observed_at"),
+                "detail": (
+                    f"Browser is logged into {actual}; intended Mailbox is "
+                    f"{mailbox_address.lower()}"
+                ),
+                "coverage": observation.get("coverage", {"folders": [], "complete": False}),
+                "messages": [],
+            }
+        return observation
+
+    def _command(self, *arguments: str) -> list[str]:
+        prefix = ["npx.cmd"]
+        node = shutil.which("node")
+        if node:
+            entrypoint = self._cached_cli_entrypoint()
+            if entrypoint:
+                # Invoke the package entrypoint directly so cmd.exe's 8191
+                # character limit does not constrain readable collector source.
+                return [node, str(entrypoint), f"-s={self.session}", *arguments]
+            npx_script = Path(node).parent / "node_modules" / "npm" / "bin" / "npx-cli.js"
+            if npx_script.exists():
+                prefix = [node, str(npx_script)]
+        return [*prefix, "--yes", "--package", "@playwright/cli", "playwright-cli",
+                f"-s={self.session}", *arguments]
+
+    @staticmethod
+    def _cached_cli_entrypoint() -> Path | None:
+        roots = []
+        configured = os.environ.get("NPM_CONFIG_CACHE")
+        local = os.environ.get("LOCALAPPDATA")
+        if configured:
+            roots.append(Path(configured))
+        if local:
+            roots.append(Path(local) / "npm-cache")
+        roots.append(Path.home() / ".npm")
+        candidates = []
+        for root in roots:
+            candidates.extend(root.glob(
+                "_npx/*/node_modules/@playwright/cli/playwright-cli.js"))
+        return max(candidates, key=lambda path: path.stat().st_mtime) if candidates else None
+
+    def _run_cli(self, *arguments: str):
+        return self._runner(
+            self._command(*arguments), capture_output=True, text=True,
+            encoding="utf-8", timeout=300)
+
+    def _open_browser(self) -> None:
+        result = self._run_cli("open", "https://mail.163.com", "--headed")
+        if result.returncode != 0:
+            raise MailboxCapabilityError(
+                "Cannot open the headed 163.com browser; verify Node.js/npm and Playwright CLI")

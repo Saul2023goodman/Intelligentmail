@@ -118,3 +118,43 @@ CREATE TABLE IF NOT EXISTS execution_flow (
     reason TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS mailbox_observation_runs (
+    id TEXT PRIMARY KEY,
+    mailbox_id TEXT NOT NULL REFERENCES mailboxes(id),
+    adapter TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    detail TEXT NOT NULL DEFAULT '',
+    evidence_coverage TEXT NOT NULL,
+    capabilities TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mailbox_message_observations (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL REFERENCES mailbox_observation_runs(id),
+    direction TEXT NOT NULL,
+    folder TEXT NOT NULL,
+    platform_reference TEXT NOT NULL DEFAULT '',
+    counterpart TEXT NOT NULL DEFAULT '',
+    subject TEXT NOT NULL DEFAULT '',
+    observed_time TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    ambiguity TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reconciliations (
+    id TEXT PRIMARY KEY,
+    mailbox_id TEXT NOT NULL REFERENCES mailboxes(id),
+    observation_run_id TEXT NOT NULL REFERENCES mailbox_observation_runs(id),
+    observed_at TEXT NOT NULL,
+    summary TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reconciliation_findings (
+    id TEXT PRIMARY KEY,
+    reconciliation_id TEXT NOT NULL REFERENCES reconciliations(id),
+    message_observation_id TEXT REFERENCES mailbox_message_observations(id),
+    finding TEXT NOT NULL,
+    local_kind TEXT NOT NULL DEFAULT '',
+    local_id TEXT NOT NULL DEFAULT '',
+    basis TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT ''
+);

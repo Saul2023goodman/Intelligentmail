@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 to 05 provide a local terminal application to import and inspect Outreach Tasks, to prepare local messages from existing draft documents, to resolve readiness Exceptions and attach supporting files, to rewrite preparation with inspectable history, and to confirm and execute through a controlled mailbox adapter. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records and SQLite persistence.
+Tickets 01 to 06 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a controlled mailbox adapter, and reconcile persisted read-only observations from the real 163.com mailbox. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage and SQLite persistence.
 
 ## Run
 
@@ -115,11 +115,33 @@ A mailbox-confirmed `sent` creates an immutable Sent Record (frozen content and 
 
 Successful commands print UTF-8 JSON, except `preparation preview`, which prints the message. Core errors return JSON on stderr; argument errors print usage. Both exit with code 2. Task summaries include names and Exception counts; `task show` includes participant records, source row/cell evidence and blocking Exceptions. Successful intake does not establish Ready Preparation or authorize sending.
 
+## Inspect and reconcile a real 163.com mailbox
+
+Register the intended Student and Mailbox first. Start a manual read-only refresh with the live browser adapter and a named browser session:
+
+```powershell
+.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 mailbox capabilities
+.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 mailbox refresh --student STUDENT_ID
+```
+
+If authentication, verification or a CAPTCHA is required, SmartMail opens a headed 163.com browser and persists the interruption. Complete it yourself in that browser; SmartMail does not store credentials or bypass the challenge. Then run the same `mailbox refresh` command again. Refresh discovers recognized built-in folders in the live DOM, enumerates every canonical message ID through paginated folder reads, and fetches structured header, MIME and attachment metadata for each ID. It does not open Compose, create or edit a draft, send, schedule, delete, cancel or Recall anything.
+
+Every refresh persists the observation, canonical platform references, list and metadata-detail evidence, the adapter capability snapshot, and explicit per-folder Evidence Coverage: declared total, enumerated IDs, requested/successful pages, and requested/attempted/successful/failed details. Supported-scope completeness is distinct from whole-mailbox completeness. Virtual views, unrecognized custom folders and message-body HTML are not claimed; body HTML is deliberately excluded because its endpoint changes unread state. Inspect retained evidence and the Reconciliation it produced:
+
+```powershell
+.\.venv\Scripts\python -m smartmail mailbox observations --student STUDENT_ID
+.\.venv\Scripts\python -m smartmail mailbox show OBSERVATION_ID
+.\.venv\Scripts\python -m smartmail reconciliation list --student STUDENT_ID
+.\.venv\Scripts\python -m smartmail reconciliation show RECONCILIATION_ID
+```
+
+Reconciliation links exact observable matches and leaves unsupported, ambiguous and unassociated observations explicit. It never treats the mailbox as SmartMail's primary store and does not change an unresolved attempt merely because a list row looks similar. The controlled adapter accepts an `observations` array in its JSON script for repeatable command-boundary tests. Reading is an independent capability: the live adapter leaves immediate send, native scheduling, cancellation and Recall disabled.
+
 ## Local state
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md).
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md).
 
 ## Verify
 

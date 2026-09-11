@@ -9,16 +9,19 @@ import sys
 from pathlib import Path
 
 from . import SmartMail, SmartMailError
-from .mailbox import ControlledMailbox
+from .mailbox import ControlledMailbox, NetEase163Mailbox
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="SmartMail: import and inspect local Outreach Tasks")
     parser.add_argument("--home", type=Path, default=Path(".smartmail"), help="Local store directory (default: .smartmail)")
-    parser.add_argument("--adapter", choices=["disabled", "controlled"], default="disabled",
-                        help="External execution capability; disabled by default")
+    parser.add_argument("--adapter", choices=["disabled", "controlled", "163-browser"],
+                        default="disabled",
+                        help="Mailbox adapter; external execution is disabled by default")
     parser.add_argument("--adapter-script", type=Path,
                         help="Outcome script for the controlled adapter (development and testing)")
+    parser.add_argument("--browser-session", default="smartmail-163",
+                        help="Named Playwright CLI session used by the read-only 163 browser adapter")
     commands = parser.add_subparsers(dest="command", required=True)
 
     campaign = commands.add_parser("campaign", help="Create, list or inspect Campaigns").add_subparsers(dest="action", required=True)
@@ -108,17 +111,37 @@ def main() -> int:
     sent.add_parser("list").add_argument("--campaign", required=True)
     sent.add_parser("show").add_argument("id")
 
+    mailbox_commands = commands.add_parser(
+        "mailbox", help="Inspect capabilities and manually refresh read-only mailbox evidence"
+    ).add_subparsers(dest="action", required=True)
+    mailbox_commands.add_parser("capabilities")
+    refresh = mailbox_commands.add_parser(
+        "refresh", help="Observe the intended Student's Mailbox and reconcile local records")
+    refresh.add_argument("--student", required=True)
+    observations = mailbox_commands.add_parser("observations")
+    observations.add_argument("--student", required=True)
+    mailbox_commands.add_parser("show").add_argument("id")
+
+    reconciliation = commands.add_parser(
+        "reconciliation", help="Inspect persisted manual Reconciliation results"
+    ).add_subparsers(dest="action", required=True)
+    reconciliations = reconciliation.add_parser("list")
+    reconciliations.add_argument("--student", required=True)
+    reconciliation.add_parser("show").add_argument("id")
+
     source = commands.add_parser("source", help="Open a fresh copy of preserved original bytes").add_subparsers(dest="action", required=True)
     opening = source.add_parser("open")
     opening.add_argument("id")
     opening.add_argument("--path-only", action="store_true", help="Materialize and print the path without launching a desktop app")
 
     args = parser.parse_args()
-    mailbox = None
-    if args.adapter == "controlled":
-        mailbox = (ControlledMailbox.from_script(args.adapter_script) if args.adapter_script
-                   else ControlledMailbox())
     try:
+        mailbox = None
+        if args.adapter == "controlled":
+            mailbox = (ControlledMailbox.from_script(args.adapter_script) if args.adapter_script
+                       else ControlledMailbox())
+        elif args.adapter == "163-browser":
+            mailbox = NetEase163Mailbox(session=args.browser_session)
         with SmartMail(args.home, mailbox=mailbox) as core:
             if args.command == "campaign":
                 if args.action == "create":
@@ -203,6 +226,18 @@ def main() -> int:
             elif args.command == "sent":
                 result = (core.list_sent_records(args.campaign) if args.action == "list"
                           else core.get_sent_record(args.id))
+            elif args.command == "mailbox":
+                if args.action == "capabilities":
+                    result = core.mailbox_capabilities()
+                elif args.action == "refresh":
+                    result = core.refresh_mailbox(args.student)
+                elif args.action == "observations":
+                    result = core.list_mailbox_observations(args.student)
+                else:
+                    result = core.get_mailbox_observation(args.id)
+            elif args.command == "reconciliation":
+                result = (core.list_reconciliations(args.student) if args.action == "list"
+                          else core.get_reconciliation(args.id))
             else:
                 path = core.materialize_source(args.id)
                 if not args.path_only:

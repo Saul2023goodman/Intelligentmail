@@ -2,3 +2,5 @@ __pycache__/
 *.py[cod]
 .venv/
 .smartmail/
+.playwright-cli/
+output/
