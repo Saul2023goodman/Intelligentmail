@@ -3,9 +3,37 @@
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from smartmail import SmartMail
+
+
+def draft_paragraphs(recipient, salutation, body, note=None):
+    """The observed outreach draft layout: Email line, salutation, body, sign-off, internal note."""
+    lines = [f"Email: {recipient}", "", "", "", salutation, ""]
+    for paragraph in body:
+        lines.extend([paragraph, ""])
+    lines += ["Yours sincerely,", "Sipei Yao"]
+    if note is not None:
+        lines += ["", "", "", note]
+    return lines
+
+
+def document(path, paragraphs):
+    """Minimal .docx carrying only word/document.xml, as the extractor reads."""
+    namespace = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+    body = "".join(
+        f'<w:p><w:r><w:t xml:space="preserve">{escape(text)}</w:t></w:r></w:p>' for text in paragraphs
+    )
+    xml = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<w:document xmlns:w="{namespace}"><w:body>{body}</w:body></w:document>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("word/document.xml", xml)
+    return path
 
 
 @unittest.skipUnless(os.environ.get("SMARTMAIL_SAMPLE_ZIP"), "Set SMARTMAIL_SAMPLE_ZIP to the supplied sample.zip")
@@ -110,3 +138,67 @@ class RepresentativeMaterialTests(unittest.TestCase):
                 morton = next(e for e in exceptions if "Morton" in e["supervisor_name"])
                 self.assertEqual([f["code"] for f in morton["readiness_findings"]],
                                  ["missing_subject"])
+
+    def test_supplied_draft_revision_rewrites_with_inspectable_history(self):
+        with tempfile.TemporaryDirectory() as home, tempfile.TemporaryDirectory() as work:
+            home, work = Path(home), Path(work)
+            with SmartMail(home) as core:
+                campaign = core.create_campaign("Representative pilot")
+                student = core.create_student("Sipei Yao", "artsipei@163.com")
+                imported = core.import_master(
+                    campaign["id"], student["id"], Path(os.environ["SMARTMAIL_SAMPLE_ZIP"]))
+                core.prepare_from_documents(imported["id"])
+                preparations = [core.get_preparation(p["id"])
+                                for p in core.list_preparations(campaign["id"])]
+                laird = next(p for p in preparations if p["association"]["supervisor"] == "Tessa Laird")
+
+                slot = laird["attachment_slots"][0]
+                confirmed = core.confirm_attachment(laird["id"], slot["id"])
+                snapshot = core.read_attachment(
+                    confirmed["attachment_slots"][0]["attachment"]["id"])
+
+                sources = core.get_import(imported["id"])["sources"]
+                master_bytes = core.read_source(next(s["id"] for s in sources
+                                                     if s["name"].endswith(".xlsx")))
+                cv = next(s for s in sources if s["name"].endswith("CV.docx"))
+                revised = document(work / "revised-laird.docx", draft_paragraphs(
+                    laird["recipient"], "Dear Dr Laird,",
+                    ["I am writing again to confirm my interest in PhD supervision.",
+                     "I have attached my CV."],
+                    note="Research source: revised University of Melbourne record"))
+                revision_bundle = work / "revision.zip"
+                with zipfile.ZipFile(revision_bundle, "w") as archive:
+                    archive.writestr("master.xlsx", master_bytes)
+                    archive.writestr("Sipei Yao - CV.docx", core.read_source(cv["id"]))
+                    archive.write(revised,
+                                  f"{laird['association']['institution']}_Tessa Laird.docx")
+
+                revision = core.import_master(campaign["id"], student["id"], revision_bundle)
+                result = core.prepare_from_documents(revision["id"])
+                self.assertEqual(result["preparation_ids"], [])
+                self.assertEqual([f["code"] for f in core.list_unassociated_documents(revision["id"])],
+                                 ["replacement_requires_rewrite"])
+                self.assertEqual(len(core.list_preparations(campaign["id"])), 17)
+
+                revised_source = next(
+                    s for s in core.get_import(revision["id"])["sources"]
+                    if s["name"].endswith("Tessa Laird.docx"))
+                replaced = core.rewrite(laird["id"], source_id=revised_source["id"])
+                self.assertNotEqual(replaced["id"], laird["id"])
+                self.assertIn("I am writing again to confirm", replaced["body"])
+
+                self.assertEqual(len(core.list_preparations(campaign["id"])), 17)
+                history = core.get_preparation_history(replaced["id"])
+                self.assertEqual([v["status"] for v in history["versions"]],
+                                 ["active", "superseded"])
+                prior = history["versions"][-1]
+                self.assertIn("I hope this email finds you well.", prior["body"])
+                self.assertEqual(
+                    core.read_attachment(prior["attachment_slots"][0]["attachment"]["id"]), snapshot)
+                self.assertEqual([s["label"] for s in replaced["attachment_slots"]], ["Student CV"])
+                self.assertIsNone(replaced["attachment_slots"][0]["attachment"])
+
+            with SmartMail(home) as restarted:
+                active = restarted.list_preparations(campaign["id"])
+                self.assertEqual(len(active), 17)
+                self.assertEqual(restarted.get_preparation(laird["id"])["status"], "superseded")

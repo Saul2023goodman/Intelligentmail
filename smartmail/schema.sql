@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS preparations (
     subject TEXT NOT NULL DEFAULT '', body TEXT NOT NULL,
     internal_note TEXT NOT NULL DEFAULT '',
     association_evidence TEXT NOT NULL,
-    UNIQUE(task_id, source_id)
+    superseded_by TEXT REFERENCES preparations(id)
 );
 CREATE TABLE IF NOT EXISTS transformations (
     id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),

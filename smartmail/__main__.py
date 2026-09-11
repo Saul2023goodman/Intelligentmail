@@ -68,6 +68,10 @@ def main() -> int:
     remove = preparation.add_parser("remove-attachment", help="Remove an attachment slot")
     remove.add_argument("id")
     remove.add_argument("--slot", required=True)
+    rewrite = preparation.add_parser("rewrite", help="Replace a Preparation with a fresh one from a revised Source Material")
+    rewrite.add_argument("id")
+    rewrite.add_argument("--source", required=True, help="Source Material ID from imports show")
+    preparation.add_parser("history", help="Inspect the active and Superseded versions of a Preparation").add_argument("id")
 
     tasks = commands.add_parser("task", help="Inspect Outreach Tasks and Exceptions").add_subparsers(dest="action", required=True)
     tasks.add_parser("list").add_argument("--campaign", required=True)
@@ -131,6 +135,10 @@ def main() -> int:
                     result = core.set_attachment(args.id, args.slot, source_id=args.source, path=args.file)
                 elif args.action == "add-attachment":
                     result = core.add_attachment_slot(args.id, args.label, source_id=args.source, path=args.file)
+                elif args.action == "rewrite":
+                    result = core.rewrite(args.id, source_id=args.source)
+                elif args.action == "history":
+                    result = core.get_preparation_history(args.id)
                 else:
                     result = core.remove_attachment_slot(args.id, args.slot)
             elif args.command == "task":

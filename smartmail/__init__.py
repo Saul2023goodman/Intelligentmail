@@ -30,6 +30,15 @@ class SmartMail:
         )
         self._db.commit()
         self._db.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Keep an existing local store usable as the versioned Preparation schema grows."""
+        columns = {row["name"] for row in self._db.execute("PRAGMA table_info(preparations)")}
+        if "superseded_by" not in columns:
+            self._db.execute(
+                "ALTER TABLE preparations ADD COLUMN superseded_by TEXT REFERENCES preparations(id)")
+            self._db.commit()
 
     def __enter__(self):
         return self
@@ -258,10 +267,11 @@ class SmartMail:
             "student_id": task["student_id"], "supervisor_name": row["supervisor_name"],
             "source": dict(source) if source else None,
             "preparation_ids": [r["id"] for r in self._db.execute(
-                "SELECT id FROM preparations WHERE task_id = ? ORDER BY rowid", (row["task_id"],))],
+                "SELECT id FROM preparations WHERE task_id = ? AND superseded_by IS NULL ORDER BY rowid",
+                (row["task_id"],))],
             "readiness_findings": [dict(r) for r in self._db.execute(
-                "SELECT code, detail, blocking FROM readiness_findings "
-                "WHERE preparation_id IN (SELECT id FROM preparations WHERE task_id = ?) ORDER BY rowid",
+                "SELECT code, detail, blocking FROM readiness_findings WHERE preparation_id IN "
+                "(SELECT id FROM preparations WHERE task_id = ? AND superseded_by IS NULL) ORDER BY rowid",
                 (row["task_id"],))],
         }
 
@@ -302,7 +312,21 @@ class SmartMail:
                         f"{source['name']}: expected one Outreach Task, matched {len(matches)}")
                     unassociated_source_ids.append(source["id"])
                     continue
-                preparation_ids.append(self._store_preparation(matches[0], source, parsed, sender, key))
+                task = matches[0]
+                active = self._db.execute(
+                    "SELECT id FROM preparations WHERE task_id = ? AND superseded_by IS NULL",
+                    (task["task_id"],)).fetchone()
+                already_active = self._db.execute(
+                    "SELECT 1 FROM preparations WHERE task_id = ? AND source_id = ? AND superseded_by IS NULL",
+                    (task["task_id"], source["id"])).fetchone()
+                if active is not None and already_active is None:
+                    self._record_document_finding(
+                        source["id"], "replacement_requires_rewrite",
+                        f"{source['name']}: Outreach Task already has active Preparation "
+                        f"{active['id']}; replace it with an explicit Rewrite")
+                    unassociated_source_ids.append(source["id"])
+                    continue
+                preparation_ids.append(self._store_preparation(task, source, parsed, sender, key))
         for preparation_id in preparation_ids:
             self.suggest_attachment_slots(preparation_id)
         return {"preparation_ids": preparation_ids, "unassociated_source_ids": unassociated_source_ids}
@@ -494,10 +518,13 @@ class SmartMail:
 
     def _store_preparation(self, task: dict, source: dict, parsed: dict, sender: str, key: tuple) -> str:
         existing = self._db.execute(
-            "SELECT id FROM preparations WHERE task_id = ? AND source_id = ?",
+            "SELECT id FROM preparations WHERE task_id = ? AND source_id = ? AND superseded_by IS NULL",
             (task["task_id"], source["id"])).fetchone()
         if existing:
             return existing["id"]
+        return self._insert_preparation(task, source, parsed, sender, key)
+
+    def _insert_preparation(self, task: dict, source: dict, parsed: dict, sender: str, key: tuple) -> str:
         preparation_id = str(uuid4())
         subject = ""
         recipient = email_address(parsed["recipient"])
@@ -527,6 +554,42 @@ class SmartMail:
                 f"Recipient {recipient} taken from {source['name']}; no usable address was recorded")
         self._revalidate(preparation_id)
         return preparation_id
+
+    def rewrite(self, preparation_id: str, source_id: str) -> dict:
+        """Replace an active Preparation with a fresh one, keeping the prior version inspectable."""
+        prior = self._db.execute(
+            "SELECT id, task_id, superseded_by FROM preparations WHERE id = ?",
+            (preparation_id,)).fetchone()
+        if prior is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        if prior["superseded_by"] is not None:
+            raise SmartMailError(f"Preparation is already superseded: {preparation_id}")
+        task = self._db.execute(
+            "SELECT t.id AS task_id, t.supervisor_id, s.name AS supervisor_name, i.name AS institution_name, "
+            "(SELECT address FROM mailboxes WHERE student_id = t.student_id) AS sender "
+            "FROM tasks t JOIN supervisors s ON s.id = t.supervisor_id "
+            "JOIN institutions i ON i.id = s.institution_id WHERE t.id = ?", (prior["task_id"],)).fetchone()
+        source = self._db.execute("SELECT id, name FROM sources WHERE id = ?", (source_id,)).fetchone()
+        if source is None:
+            raise SmartMailError(f"Source Material not found: {source_id}")
+        try:
+            parsed = parse_draft(read_paragraphs(self.read_source(source_id)))
+        except DocumentError as error:
+            raise SmartMailError(f"Cannot rewrite from Source Material: {error}") from error
+        key = association_key(source["name"])
+        if parsed is None or key is None or key[0].strip().casefold() != task["institution_name"].strip().casefold() \
+                or person_name(key[1]) != person_name(task["supervisor_name"]):
+            raise SmartMailError(
+                f"Source Material does not describe this Outreach Task: {source['name']}")
+        with self._db:
+            fresh_id = self._insert_preparation(task, source, parsed, task["sender"], key)
+            self._db.execute(
+                "UPDATE preparations SET superseded_by = ? WHERE id = ?", (fresh_id, preparation_id))
+            self._db.execute(
+                "DELETE FROM document_findings WHERE source_id = ? AND code = 'replacement_requires_rewrite'",
+                (source_id,))
+        self.suggest_attachment_slots(fresh_id)
+        return self.get_preparation(fresh_id)
 
     def _revalidate(self, preparation_id: str) -> None:
         """Recompute the complete Preparation's readiness findings from its current local state."""
@@ -610,7 +673,8 @@ class SmartMail:
             "AS blocking_count "
             "FROM preparations p JOIN tasks t ON t.id = p.task_id "
             "JOIN supervisors s ON s.id = t.supervisor_id JOIN students st ON st.id = t.student_id "
-            "JOIN sources src ON src.id = p.source_id WHERE t.campaign_id = ? ORDER BY t.rowid",
+            "JOIN sources src ON src.id = p.source_id "
+            "WHERE t.campaign_id = ? AND p.superseded_by IS NULL ORDER BY t.rowid",
             (campaign_id,))]
 
     def preview_preparation(self, preparation_id: str) -> dict:
@@ -658,5 +722,17 @@ class SmartMail:
             "SELECT field, value, prior FROM corrections WHERE preparation_id = ? ORDER BY rowid",
             (preparation_id,))]
         preparation["attachment_slots"] = self.list_attachment_slots(preparation_id)
+        preparation["status"] = "superseded" if preparation["superseded_by"] else "active"
         preparation["ready"] = not any(finding["blocking"] for finding in preparation["readiness_findings"])
         return preparation
+
+    def get_preparation_history(self, preparation_id: str) -> dict:
+        """Every version of an Outreach Task's Preparation, newest first, with its evidence."""
+        row = self._db.execute(
+            "SELECT task_id FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        versions = [self.get_preparation(r["id"]) for r in self._db.execute(
+            "SELECT id FROM preparations WHERE task_id = ? ORDER BY rowid DESC", (row["task_id"],))]
+        active_id = next((version["id"] for version in versions if version["status"] == "active"), None)
+        return {"task_id": row["task_id"], "active_id": active_id, "versions": versions}

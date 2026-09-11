@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 to 03 provide a local terminal application to import and inspect Outreach Tasks, to prepare local messages from existing draft documents, and to resolve readiness Exceptions and attach supporting files. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections and SQLite persistence.
+Tickets 01 to 04 provide a local terminal application to import and inspect Outreach Tasks, to prepare local messages from existing draft documents, to resolve readiness Exceptions and attach supporting files, and to rewrite preparation with inspectable history. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections and SQLite persistence.
 
 ## Run
 
@@ -74,13 +74,25 @@ Correct fields and confirm attachments. Corrections are explicit operator input;
 
 When a draft declares an enclosed file, `prepare` creates an **advisory** attachment slot (for example `Student CV`) and shows the best filename candidate. Slots never block readiness and are never confirmed automatically: confirm the suggested candidate, replace it with a preserved Source Material or a local file, add further slots, or remove them. Confirmed bytes are snapshotted with their SHA-256 and are never converted, merged or modified, so later edits to the original file path cannot change them. Every correction is recorded and the whole Preparation is revalidated.
 
+## Rewrite with inspectable history
+
+Revised content becomes a fresh Preparation rather than an in-place edit. A new import cannot silently replace active work: `prepare` records a blocking `replacement_requires_rewrite` finding on a document whose Task already has an active Preparation, leaving that work untouched. The operator replaces it explicitly:
+
+```powershell
+.\.venv\Scripts\python -m smartmail imports findings $imported.id
+.\.venv\Scripts\python -m smartmail preparation rewrite PREPARATION_ID --source SOURCE_ID
+.\.venv\Scripts\python -m smartmail preparation history PREPARATION_ID
+```
+
+`preparation rewrite` prepares a fresh Preparation for the same Outreach Task from the named Source Material and marks the earlier one Superseded. Corrections, subjects and confirmed attachments are not carried over; the fresh Preparation gets advisory slots again. Superseded Preparations disappear from `preparation list` and from `exceptions` findings but remain fully inspectable through `preparation history`, which returns the Task's versions newest first with their content, Source Material, Source Associations and Transformation Records.
+
 Successful commands print UTF-8 JSON, except `preparation preview`, which prints the message. Core errors return JSON on stderr; argument errors print usage. Both exit with code 2. Task summaries include names and Exception counts; `task show` includes participant records, source row/cell evidence and blocking Exceptions. Successful intake does not establish Ready Preparation or authorize sending.
 
 ## Local state
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md). Rewrite with inspectable history is the next slice.
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md). Confirmation and controlled execution are the next slice.
 
 ## Verify
 
@@ -95,4 +107,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md) and [ticket 03 validation](docs/ticket-03-validation.md) for measured outcomes and the retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md) and [ticket 04 validation](docs/ticket-04-validation.md) for measured outcomes and the retained terminal pilots.
