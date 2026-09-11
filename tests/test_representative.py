@@ -8,6 +8,7 @@ from pathlib import Path
 from xml.sax.saxutils import escape
 
 from smartmail import SmartMail
+from smartmail.mailbox import ControlledMailbox
 
 
 def draft_paragraphs(recipient, salutation, body, note=None):
@@ -202,3 +203,47 @@ class RepresentativeMaterialTests(unittest.TestCase):
                 active = restarted.list_preparations(campaign["id"])
                 self.assertEqual(len(active), 17)
                 self.assertEqual(restarted.get_preparation(laird["id"])["status"], "superseded")
+
+
+@unittest.skipUnless(os.environ.get("SMARTMAIL_SAMPLE_ZIP"), "Set SMARTMAIL_SAMPLE_ZIP to the supplied sample.zip")
+class RepresentativeExecutionTests(unittest.TestCase):
+    def test_supplied_preparation_confirms_and_sends_only_through_the_controlled_adapter(self):
+        with tempfile.TemporaryDirectory() as home:
+            adapter = ControlledMailbox()
+            with SmartMail(Path(home), mailbox=adapter) as core:
+                campaign = core.create_campaign("Representative pilot")
+                student = core.create_student("Sipei Yao", "artsipei@163.com")
+                imported = core.import_master(
+                    campaign["id"], student["id"], Path(os.environ["SMARTMAIL_SAMPLE_ZIP"]))
+                core.prepare_from_documents(imported["id"])
+                sources = core.get_import(imported["id"])["sources"]
+                cv = next(s for s in sources if s["name"].endswith("CV.docx"))
+                preparations = [core.get_preparation(p["id"])
+                                for p in core.list_preparations(campaign["id"])]
+                self.assertEqual(len(preparations), 17)
+
+                laird = next(p for p in preparations if p["association"]["supervisor"] == "Tessa Laird")
+                core.set_subject(laird["id"], "PhD supervision enquiry")
+                core.confirm_attachment(laird["id"], laird["attachment_slots"][0]["id"])
+                confirmation = core.confirm(laird["id"])
+
+                self.assertEqual(adapter.requests, [])
+                review = core.review_confirmation(laird["id"])
+                self.assertEqual(review["recipient"], laird["recipient"])
+                self.assertEqual(review["attachments"][0]["sha256"], cv["sha256"])
+
+                result = core.run_execution([confirmation["id"]])
+
+                self.assertEqual(result["attempts"][0]["state"], "sent")
+                self.assertEqual(len(adapter.requests), 1)
+                self.assertEqual(adapter.requests[0]["recipient"], laird["recipient"])
+                self.assertEqual(adapter.requests[0]["attachments"][0]["sha256"], cv["sha256"])
+                sent = core.get_sent_record(result["attempts"][0]["sent_record_id"])
+                self.assertEqual(sent["attachments"][0]["sha256"], cv["sha256"])
+                self.assertEqual(core.read_sent_attachment(sent["attachments"][0]["id"]),
+                                 core.read_source(cv["id"]))
+                self.assertEqual(len(core.list_sent_records(campaign["id"])), 1)
+                self.assertEqual(len(core.list_preparations(campaign["id"])), 17)
+
+            with SmartMail(Path(home), mailbox=ControlledMailbox()) as restarted:
+                self.assertEqual(restarted.list_sent_records(campaign["id"])[0]["id"], sent["id"])

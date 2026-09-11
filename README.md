@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 to 04 provide a local terminal application to import and inspect Outreach Tasks, to prepare local messages from existing draft documents, to resolve readiness Exceptions and attach supporting files, and to rewrite preparation with inspectable history. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections and SQLite persistence.
+Tickets 01 to 05 provide a local terminal application to import and inspect Outreach Tasks, to prepare local messages from existing draft documents, to resolve readiness Exceptions and attach supporting files, to rewrite preparation with inspectable history, and to confirm and execute through a controlled mailbox adapter. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records and SQLite persistence.
 
 ## Run
 
@@ -86,13 +86,40 @@ Revised content becomes a fresh Preparation rather than an in-place edit. A new 
 
 `preparation rewrite` prepares a fresh Preparation for the same Outreach Task from the named Source Material and marks the earlier one Superseded. Corrections, subjects and confirmed attachments are not carried over; the fresh Preparation gets advisory slots again. Superseded Preparations disappear from `preparation list` and from `exceptions` findings but remain fully inspectable through `preparation history`, which returns the Task's versions newest first with their content, Source Material, Source Associations and Transformation Records.
 
+## Confirm and execute through a controlled adapter
+
+Readiness is not authority. Review the exact message, then authorize it; external execution runs only through a mailbox adapter:
+
+```powershell
+.\.venv\Scripts\python -m smartmail confirmation review PREPARATION_ID
+.\.venv\Scripts\python -m smartmail confirmation confirm PREPARATION_ID [PREPARATION_ID ...]
+.\.venv\Scripts\python -m smartmail confirmation list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail execution run CONFIRMATION_ID [CONFIRMATION_ID ...]
+.\.venv\Scripts\python -m smartmail execution status --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail execution list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail execution stop ATTEMPT_ID --detail 'operator stopped before retry'
+.\.venv\Scripts\python -m smartmail sent list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail sent show SENT_RECORD_ID
+```
+
+`confirmation review` exposes the sender, recipient, subject, attachment names with their SHA-256 and size, readiness, execution details and the full message. `confirmation confirm` binds each Ready Preparation's identity, exact content digest and attachment digest; unchanged content re-confirms idempotently, changed content renews (the prior Confirmation is invalidated). Confirmation is local and writes nothing externally.
+
+Execution requires an enabled adapter. The default is **disabled**, so nothing leaves the machine. Demonstrate outcomes deterministically without real sends with the controlled adapter:
+
+```powershell
+# an outcomes script, e.g. {"outcomes": ["sent"]} or {"outcomes": ["unknown"]}
+.\.venv\Scripts\python -m smartmail --adapter controlled --adapter-script outcomes.json execution run CONFIRMATION_ID
+```
+
+A mailbox-confirmed `sent` creates an immutable Sent Record (frozen content and attachment bytes) and consumes the Confirmation. A `failed` or `unknown` outcome pauses the Execution Flow and stops the batch; local inspection stays available, and `execution status` reports the pause with its reason. Only adapter-confirmed sending establishes Sent; a recorded request or elapsed time does not. `execution stop` releases an unresolved attempt, which is required before a `preparation rewrite` of that Preparation. A Sent Preparation cannot be rewritten or re-confirmed: further communication is a new linked Communication Action.
+
 Successful commands print UTF-8 JSON, except `preparation preview`, which prints the message. Core errors return JSON on stderr; argument errors print usage. Both exit with code 2. Task summaries include names and Exception counts; `task show` includes participant records, source row/cell evidence and blocking Exceptions. Successful intake does not establish Ready Preparation or authorize sending.
 
 ## Local state
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md). Confirmation and controlled execution are the next slice.
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md).
 
 ## Verify
 
@@ -107,4 +134,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md) and [ticket 04 validation](docs/ticket-04-validation.md) for measured outcomes and the retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md) and [ticket 05 validation](docs/ticket-05-validation.md) for measured outcomes and the retained terminal pilots.

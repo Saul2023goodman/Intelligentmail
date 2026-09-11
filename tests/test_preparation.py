@@ -1,4 +1,3 @@
-import inspect
 import json
 import subprocess
 import sys
@@ -321,7 +320,7 @@ class PreparationTests(unittest.TestCase):
         original = self.core.read_source(document_source["id"])
         self.core.prepare_from_documents(imported["id"])
         self.assertEqual(self.core.read_source(document_source["id"]), original)
-        self.assertEqual(list(inspect.signature(SmartMail.__init__).parameters), ["self", "home"])
+        self.assertFalse(self.core.mailbox.enabled)
 
 
 class TerminalPreparationTests(unittest.TestCase):

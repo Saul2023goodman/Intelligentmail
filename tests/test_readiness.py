@@ -1,6 +1,5 @@
 """Resolving readiness Exceptions, field corrections and advisory attachments."""
 
-import inspect
 import json
 import subprocess
 import sys
@@ -484,7 +483,7 @@ class LocalOnlyTests(ReadinessTestCase):
 
         self.assertEqual(untouched, {path: path.stat().st_mtime_ns for path in self.directory.rglob("*")
                                      if path.is_file() and "state" not in path.parts})
-        self.assertEqual(list(inspect.signature(SmartMail.__init__).parameters), ["self", "home"])
+        self.assertFalse(self.core.mailbox.enabled)
         self.assertEqual(
             [name for name in dir(SmartMail)
              if any(word in name.lower() for word in ("send", "draft", "browser", "smtp"))], [])

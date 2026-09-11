@@ -9,11 +9,16 @@ import sys
 from pathlib import Path
 
 from . import SmartMail, SmartMailError
+from .mailbox import ControlledMailbox
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="SmartMail: import and inspect local Outreach Tasks")
     parser.add_argument("--home", type=Path, default=Path(".smartmail"), help="Local store directory (default: .smartmail)")
+    parser.add_argument("--adapter", choices=["disabled", "controlled"], default="disabled",
+                        help="External execution capability; disabled by default")
+    parser.add_argument("--adapter-script", type=Path,
+                        help="Outcome script for the controlled adapter (development and testing)")
     commands = parser.add_subparsers(dest="command", required=True)
 
     campaign = commands.add_parser("campaign", help="Create, list or inspect Campaigns").add_subparsers(dest="action", required=True)
@@ -82,14 +87,39 @@ def main() -> int:
     exceptions.add_parser("list").add_argument("--campaign", required=True)
     exceptions.add_parser("show").add_argument("id")
 
+    confirmation = commands.add_parser("confirmation", help="Review and confirm exact Preparations").add_subparsers(dest="action", required=True)
+    confirmation.add_parser("review", help="Inspect the exact message before confirming").add_argument("id")
+    confirm = confirmation.add_parser("confirm", help="Authorize one or more Ready Preparations")
+    confirm.add_argument("ids", nargs="+")
+    confirmation.add_parser("list").add_argument("--campaign", required=True)
+    confirmation.add_parser("show").add_argument("id")
+
+    execution = commands.add_parser("execution", help="Execute confirmed work through the mailbox adapter").add_subparsers(dest="action", required=True)
+    run = execution.add_parser("run", help="Execute one or more Confirmations in order")
+    run.add_argument("ids", nargs="+")
+    execution.add_parser("list").add_argument("--campaign", required=True)
+    execution.add_parser("show").add_argument("id")
+    execution.add_parser("status").add_argument("--campaign", required=True)
+    stop = execution.add_parser("stop", help="Stop an unresolved Execution Attempt")
+    stop.add_argument("id")
+    stop.add_argument("--detail", default="")
+
+    sent = commands.add_parser("sent", help="Inspect immutable Sent Records").add_subparsers(dest="action", required=True)
+    sent.add_parser("list").add_argument("--campaign", required=True)
+    sent.add_parser("show").add_argument("id")
+
     source = commands.add_parser("source", help="Open a fresh copy of preserved original bytes").add_subparsers(dest="action", required=True)
     opening = source.add_parser("open")
     opening.add_argument("id")
     opening.add_argument("--path-only", action="store_true", help="Materialize and print the path without launching a desktop app")
 
     args = parser.parse_args()
+    mailbox = None
+    if args.adapter == "controlled":
+        mailbox = (ControlledMailbox.from_script(args.adapter_script) if args.adapter_script
+                   else ControlledMailbox())
     try:
-        with SmartMail(args.home) as core:
+        with SmartMail(args.home, mailbox=mailbox) as core:
             if args.command == "campaign":
                 if args.action == "create":
                     result = core.create_campaign(args.name)
@@ -150,6 +180,29 @@ def main() -> int:
                     result = core.confirm_task_identity(args.id)
             elif args.command == "exceptions":
                 result = core.list_exceptions(args.campaign) if args.action == "list" else core.get_exception(args.id)
+            elif args.command == "confirmation":
+                if args.action == "review":
+                    result = core.review_confirmation(args.id)
+                elif args.action == "confirm":
+                    result = core.confirm_preparations(args.ids)
+                elif args.action == "list":
+                    result = core.list_confirmations(args.campaign)
+                else:
+                    result = core.get_confirmation(args.id)
+            elif args.command == "execution":
+                if args.action == "run":
+                    result = core.run_execution(args.ids)
+                elif args.action == "list":
+                    result = core.list_execution_attempts(args.campaign)
+                elif args.action == "show":
+                    result = core.get_execution_attempt(args.id)
+                elif args.action == "status":
+                    result = core.execution_status(args.campaign)
+                else:
+                    result = core.stop_execution_attempt(args.id, detail=args.detail)
+            elif args.command == "sent":
+                result = (core.list_sent_records(args.campaign) if args.action == "list"
+                          else core.get_sent_record(args.id))
             else:
                 path = core.materialize_source(args.id)
                 if not args.path_only:

@@ -76,3 +76,45 @@ CREATE TABLE IF NOT EXISTS document_findings (
     id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id),
     code TEXT NOT NULL, detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS confirmations (
+    id TEXT PRIMARY KEY,
+    preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    execution_kind TEXT NOT NULL,
+    execution_detail TEXT NOT NULL,
+    content_digest TEXT NOT NULL,
+    attachments_digest TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    invalidated_reason TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS execution_attempts (
+    id TEXT PRIMARY KEY,
+    confirmation_id TEXT NOT NULL REFERENCES confirmations(id),
+    preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    sequence INTEGER NOT NULL,
+    state TEXT NOT NULL,
+    request TEXT NOT NULL,
+    evidence TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sent_records (
+    id TEXT PRIMARY KEY,
+    preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    attempt_id TEXT NOT NULL REFERENCES execution_attempts(id),
+    content TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    reference TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS sent_attachments (
+    id TEXT PRIMARY KEY,
+    sent_record_id TEXT NOT NULL REFERENCES sent_records(id),
+    label TEXT NOT NULL, name TEXT NOT NULL,
+    content BLOB NOT NULL, sha256 TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS execution_flow (
+    campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
+    state TEXT NOT NULL,
+    reason TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT ''
+);

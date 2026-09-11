@@ -12,16 +12,21 @@ from xml.etree.ElementTree import ParseError
 from .documents import DocumentError, association_key, attachment_declarations, parse_draft, read_paragraphs
 from .intake import read_master, read_bundle
 from .identity import email_address, person_name, profile_url
+from .mailbox import DisabledMailbox, MailboxCapabilityError
 
 
 class SmartMailError(ValueError):
     """An operator-visible command or query error."""
 
 
+_PAUSE_REASONS = {"failed": "execution_failed", "unknown": "unknown_outcome"}
+
+
 class SmartMail:
-    def __init__(self, home: Path):
+    def __init__(self, home: Path, mailbox=None):
         self.home = Path(home).resolve()
         self.home.mkdir(parents=True, exist_ok=True)
+        self.mailbox = mailbox if mailbox is not None else DisabledMailbox()
         self._db = sqlite3.connect(self.home / "smartmail.sqlite3")
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
@@ -564,6 +569,18 @@ class SmartMail:
             raise SmartMailError(f"Preparation not found: {preparation_id}")
         if prior["superseded_by"] is not None:
             raise SmartMailError(f"Preparation is already superseded: {preparation_id}")
+        if self._db.execute(
+                "SELECT 1 FROM execution_attempts WHERE preparation_id = ? "
+                "AND state IN ('in_progress', 'unknown')", (preparation_id,)).fetchone():
+            raise SmartMailError(
+                "An Execution Attempt for this Preparation is unresolved; stop or resolve it "
+                "before rewriting")
+        if self._db.execute(
+                "SELECT 1 FROM sent_records WHERE preparation_id = ?",
+                (preparation_id,)).fetchone():
+            raise SmartMailError(
+                "Sent content is frozen; prepare a new linked Communication Action instead "
+                "of rewriting")
         task = self._db.execute(
             "SELECT t.id AS task_id, t.supervisor_id, s.name AS supervisor_name, i.name AS institution_name, "
             "(SELECT address FROM mailboxes WHERE student_id = t.student_id) AS sender "
@@ -585,6 +602,9 @@ class SmartMail:
             fresh_id = self._insert_preparation(task, source, parsed, task["sender"], key)
             self._db.execute(
                 "UPDATE preparations SET superseded_by = ? WHERE id = ?", (fresh_id, preparation_id))
+            self._db.execute(
+                "UPDATE confirmations SET status = 'invalidated', invalidated_reason = 'rewrite' "
+                "WHERE preparation_id = ? AND status = 'active'", (preparation_id,))
             self._db.execute(
                 "DELETE FROM document_findings WHERE source_id = ? AND code = 'replacement_requires_rewrite'",
                 (source_id,))
@@ -736,3 +756,322 @@ class SmartMail:
             "SELECT id FROM preparations WHERE task_id = ? ORDER BY rowid DESC", (row["task_id"],))]
         active_id = next((version["id"] for version in versions if version["status"] == "active"), None)
         return {"task_id": row["task_id"], "active_id": active_id, "versions": versions}
+
+    def _content_digest(self, preparation: dict) -> str:
+        """A stable fingerprint of the exact message content a Confirmation binds."""
+        canonical = json.dumps(
+            {"sender": preparation["sender"], "recipient": preparation["recipient"],
+             "subject": preparation["subject"], "body": preparation["body"]},
+            ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _attachments_digest(self, preparation: dict) -> str:
+        """A stable fingerprint of the confirmed attachment bytes a Confirmation binds."""
+        entries = [[slot["label"], slot["attachment"]["name"], slot["attachment"]["sha256"]]
+                   for slot in preparation["attachment_slots"] if slot["attachment"]]
+        return hashlib.sha256(json.dumps(entries, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+    def review_confirmation(self, preparation_id: str) -> dict:
+        """Everything an operator inspects before confirming: exact content and execution details."""
+        preparation = self.get_preparation(preparation_id)
+        attachments = [
+            {"id": slot["attachment"]["id"], "label": slot["label"],
+             "name": slot["attachment"]["name"], "sha256": slot["attachment"]["sha256"],
+             "size": slot["attachment"]["size"]}
+            for slot in preparation["attachment_slots"] if slot["attachment"]]
+        sent = self._db.execute(
+            "SELECT 1 FROM sent_records WHERE preparation_id = ?", (preparation_id,)).fetchone()
+        active = self._db.execute(
+            "SELECT id FROM confirmations WHERE preparation_id = ? AND status = 'active'",
+            (preparation_id,)).fetchone()
+        return {
+            "preparation_id": preparation_id, "task_id": preparation["task_id"],
+            "status": preparation["status"], "sender": preparation["sender"],
+            "recipient": preparation["recipient"], "subject": preparation["subject"],
+            "body": preparation["body"], "attachments": attachments,
+            "readiness_findings": preparation["readiness_findings"],
+            "ready": preparation["ready"], "execution": {"kind": "immediate"},
+            "already_sent": sent is not None,
+            "confirmation_id": active["id"] if active else None,
+            "message": self.preview_preparation(preparation_id)["text"],
+        }
+
+    def confirm(self, preparation_id: str) -> dict:
+        """Authorize exactly one Ready Preparation for its bound execution details."""
+        return self.confirm_preparations([preparation_id])[0]
+
+    def confirm_preparations(self, preparation_ids: list[str]) -> list[dict]:
+        """Confirm several Preparations in one operator action; each gets its own Confirmation."""
+        confirmations = []
+        with self._db:
+            for preparation_id in preparation_ids:
+                preparation = self.get_preparation(preparation_id)
+                if preparation["status"] != "active":
+                    raise SmartMailError(
+                        f"Cannot confirm a Superseded Preparation: {preparation_id}")
+                if self._db.execute(
+                        "SELECT 1 FROM sent_records WHERE preparation_id = ?",
+                        (preparation_id,)).fetchone():
+                    raise SmartMailError(
+                        "Preparation has already been sent; prepare a new linked Communication "
+                        f"Action instead: {preparation_id}")
+                blocking = [f["code"] for f in preparation["readiness_findings"] if f["blocking"]]
+                if blocking:
+                    raise SmartMailError(
+                        f"Preparation is not Ready; resolve: {', '.join(blocking)}")
+                content_digest = self._content_digest(preparation)
+                attachments_digest = self._attachments_digest(preparation)
+                active = self._db.execute(
+                    "SELECT * FROM confirmations WHERE preparation_id = ? AND status = 'active'",
+                    (preparation_id,)).fetchone()
+                if active and active["content_digest"] == content_digest \
+                        and active["attachments_digest"] == attachments_digest:
+                    confirmations.append(self._confirmation_view(active))
+                    continue
+                if active:
+                    self._db.execute(
+                        "UPDATE confirmations SET status = 'invalidated', invalidated_reason = 'renewed' "
+                        "WHERE id = ?", (active["id"],))
+                confirmation_id = str(uuid4())
+                self._db.execute(
+                    "INSERT INTO confirmations VALUES (?, ?, ?, ?, ?, ?, ?, 'active', '')",
+                    (confirmation_id, preparation_id, preparation["task_id"], "immediate",
+                     json.dumps({"kind": "immediate"}, ensure_ascii=False),
+                     content_digest, attachments_digest))
+                confirmations.append(self.get_confirmation(confirmation_id))
+        return confirmations
+
+    def _confirmation_view(self, row) -> dict:
+        return {
+            "id": row["id"], "preparation_id": row["preparation_id"], "task_id": row["task_id"],
+            "status": row["status"], "execution": json.loads(row["execution_detail"]),
+            "content_digest": row["content_digest"],
+            "attachments_digest": row["attachments_digest"],
+            "invalidated_reason": row["invalidated_reason"],
+        }
+
+    def get_confirmation(self, confirmation_id: str) -> dict:
+        row = self._db.execute(
+            "SELECT * FROM confirmations WHERE id = ?", (confirmation_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Confirmation not found: {confirmation_id}")
+        return self._confirmation_view(row)
+
+    def list_confirmations(self, campaign_id: str) -> list[dict]:
+        """Active operator authorizations for a Campaign; invalidated ones stay inspectable by ID."""
+        self.get_campaign(campaign_id)
+        return [self._confirmation_view(row) for row in self._db.execute(
+            "SELECT c.* FROM confirmations c JOIN tasks t ON t.id = c.task_id "
+            "WHERE t.campaign_id = ? AND c.status = 'active' ORDER BY c.rowid", (campaign_id,))]
+
+    def run_execution(self, confirmation_ids: list[str]) -> dict:
+        """Execute confirmed immediate sends in order through the adapter, pausing on failure."""
+        if not confirmation_ids:
+            raise SmartMailError("At least one Confirmation is required")
+        attempts: list[dict] = []
+        paused = False
+        campaign_id = None
+        for confirmation_id in confirmation_ids:
+            confirmation = self.get_confirmation(confirmation_id)
+            campaign_id = self._campaign_of_task(confirmation["task_id"])
+            flow = self._flow_state(campaign_id)
+            if flow["state"] == "paused":
+                raise SmartMailError(
+                    f"Execution Flow is paused ({flow['reason']}); resolve it before executing")
+            request = self._authorized_request(confirmation)
+            attempt_id = str(uuid4())
+            self._db.execute(
+                "INSERT INTO execution_attempts VALUES (?, ?, ?, ?, ?, 'in_progress', ?, '')",
+                (attempt_id, confirmation["id"], confirmation["preparation_id"],
+                 confirmation["task_id"], self._next_sequence(confirmation["preparation_id"]),
+                 json.dumps(request, ensure_ascii=False)))
+            self._db.commit()
+            evidence = self._submit(request)
+            state = evidence["outcome"]
+            self._db.execute(
+                "UPDATE execution_attempts SET state = ?, evidence = ? WHERE id = ?",
+                (state, json.dumps(evidence, ensure_ascii=False), attempt_id))
+            if state == "sent":
+                self._record_sent(confirmation, attempt_id, request, evidence)
+                self._db.execute(
+                    "UPDATE confirmations SET status = 'consumed' WHERE id = ?", (confirmation["id"],))
+            else:
+                self._pause_flow(campaign_id, _PAUSE_REASONS[state], evidence)
+                paused = True
+            self._db.commit()
+            attempts.append(self.get_execution_attempt(attempt_id))
+            if paused:
+                break
+        return {"attempts": attempts, "paused": paused,
+                "flow": self._flow_state(campaign_id)}
+
+    def _authorized_request(self, confirmation: dict) -> dict:
+        """The exact external request a Confirmation authorizes, or an operator-visible refusal."""
+        preparation = self.get_preparation(confirmation["preparation_id"])
+        if confirmation["status"] != "active":
+            raise SmartMailError(
+                f"Confirmation is not active ({confirmation['status']}); "
+                "renew Confirmation before executing")
+        if preparation["status"] != "active":
+            raise SmartMailError(
+                "Preparation has been superseded; renew Confirmation before executing")
+        if self._db.execute(
+                "SELECT 1 FROM sent_records WHERE preparation_id = ?",
+                (preparation["id"],)).fetchone():
+            raise SmartMailError(
+                "Preparation has already been sent; a new linked Communication Action is required")
+        if not getattr(self.mailbox, "enabled", False):
+            raise SmartMailError(
+                "External execution is disabled: no verified mailbox capability is enabled")
+        if self._content_digest(preparation) != confirmation["content_digest"] \
+                or self._attachments_digest(preparation) != confirmation["attachments_digest"]:
+            raise SmartMailError(
+                "Preparation content changed after Confirmation; confirm the exact content again")
+        blocking = [f["code"] for f in preparation["readiness_findings"] if f["blocking"]]
+        if blocking:
+            raise SmartMailError(f"Preparation is not Ready; resolve: {', '.join(blocking)}")
+        return self._execution_request(preparation)
+
+    def _execution_request(self, preparation: dict) -> dict:
+        attachments = [
+            {"label": slot["label"], "name": slot["attachment"]["name"],
+             "sha256": slot["attachment"]["sha256"], "size": slot["attachment"]["size"]}
+            for slot in preparation["attachment_slots"] if slot["attachment"]]
+        return {"sender": preparation["sender"], "recipient": preparation["recipient"],
+                "subject": preparation["subject"], "body": preparation["body"],
+                "attachments": attachments, "kind": "immediate"}
+
+    def _submit(self, request: dict) -> dict:
+        try:
+            return self.mailbox.submit(request)
+        except MailboxCapabilityError as error:
+            raise SmartMailError(str(error)) from error
+
+    def _record_sent(self, confirmation: dict, attempt_id: str, request: dict, evidence: dict) -> str:
+        """Freeze the exact content and attachment bytes that the mailbox confirmed as sent."""
+        sent_id = str(uuid4())
+        content = json.dumps({"sender": request["sender"], "recipient": request["recipient"],
+                              "subject": request["subject"], "body": request["body"]},
+                             ensure_ascii=False)
+        self._db.execute("INSERT INTO sent_records VALUES (?, ?, ?, ?, ?, ?, ?)",
+                         (sent_id, confirmation["preparation_id"], confirmation["task_id"], attempt_id,
+                          content, json.dumps(evidence, ensure_ascii=False), evidence["reference"]))
+        preparation = self.get_preparation(confirmation["preparation_id"])
+        for slot in preparation["attachment_slots"]:
+            if slot["attachment"]:
+                attachment = slot["attachment"]
+                self._db.execute(
+                    "INSERT INTO sent_attachments VALUES (?, ?, ?, ?, ?, ?)",
+                    (str(uuid4()), sent_id, slot["label"], attachment["name"],
+                     self.read_attachment(attachment["id"]), attachment["sha256"]))
+        return sent_id
+
+    def _attempt_view(self, row) -> dict:
+        sent = self._db.execute(
+            "SELECT id FROM sent_records WHERE attempt_id = ?", (row["id"],)).fetchone()
+        return {"id": row["id"], "confirmation_id": row["confirmation_id"],
+                "preparation_id": row["preparation_id"], "task_id": row["task_id"],
+                "sequence": row["sequence"], "state": row["state"],
+                "request": json.loads(row["request"]),
+                "evidence": json.loads(row["evidence"]) if row["evidence"] else None,
+                "sent_record_id": sent["id"] if sent else None}
+
+    def list_execution_attempts(self, campaign_id: str) -> list[dict]:
+        """The Execution Ledger: every observed attempt for a Campaign, in order."""
+        self.get_campaign(campaign_id)
+        return [self._attempt_view(row) for row in self._db.execute(
+            "SELECT a.* FROM execution_attempts a JOIN tasks t ON t.id = a.task_id "
+            "WHERE t.campaign_id = ? ORDER BY a.rowid", (campaign_id,))]
+
+    def get_execution_attempt(self, attempt_id: str) -> dict:
+        row = self._db.execute(
+            "SELECT * FROM execution_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Execution Attempt not found: {attempt_id}")
+        return self._attempt_view(row)
+
+    def get_sent_record(self, sent_record_id: str) -> dict:
+        row = self._db.execute("SELECT * FROM sent_records WHERE id = ?", (sent_record_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Sent Record not found: {sent_record_id}")
+        attachments = [
+            {"id": r["id"], "label": r["label"], "name": r["name"],
+             "sha256": r["sha256"], "size": len(r["content"])}
+            for r in self._db.execute(
+                "SELECT * FROM sent_attachments WHERE sent_record_id = ? ORDER BY rowid",
+                (sent_record_id,))]
+        return {"id": row["id"], "preparation_id": row["preparation_id"], "task_id": row["task_id"],
+                "attempt_id": row["attempt_id"], **json.loads(row["content"]),
+                "attachments": attachments, "evidence": json.loads(row["evidence"]),
+                "reference": row["reference"]}
+
+    def list_sent_records(self, campaign_id: str) -> list[dict]:
+        self.get_campaign(campaign_id)
+        return [self.get_sent_record(row["id"]) for row in self._db.execute(
+            "SELECT s.id FROM sent_records s JOIN tasks t ON t.id = s.task_id "
+            "WHERE t.campaign_id = ? ORDER BY s.rowid", (campaign_id,))]
+
+    def read_sent_attachment(self, sent_attachment_id: str) -> bytes:
+        row = self._db.execute(
+            "SELECT content FROM sent_attachments WHERE id = ?", (sent_attachment_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Sent attachment not found: {sent_attachment_id}")
+        return bytes(row["content"])
+
+    def execution_status(self, campaign_id: str) -> dict:
+        """The current Execution Flow state for a Campaign; absent means idle."""
+        self.get_campaign(campaign_id)
+        return self._flow_state(campaign_id)
+
+    def stop_execution_attempt(self, attempt_id: str, detail: str = "") -> dict:
+        """Stop an unresolved attempt so the Execution Flow can proceed under a fresh decision."""
+        row = self._db.execute(
+            "SELECT * FROM execution_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Execution Attempt not found: {attempt_id}")
+        if row["state"] not in ("in_progress", "unknown"):
+            raise SmartMailError(
+                f"Execution Attempt is not active ({row['state']}); "
+                "reconciliation is required before it can be resolved")
+        evidence = json.loads(row["evidence"]) if row["evidence"] else {}
+        evidence["stopped"] = True
+        if detail:
+            evidence["detail"] = detail
+        with self._db:
+            self._db.execute(
+                "UPDATE execution_attempts SET state = 'stopped', evidence = ? WHERE id = ?",
+                (json.dumps(evidence, ensure_ascii=False), attempt_id))
+            campaign_id = self._campaign_of_task(row["task_id"])
+            flow = self._flow_state(campaign_id)
+            if flow["state"] == "paused" and flow["reason"] == "unknown_outcome":
+                self._db.execute(
+                    "DELETE FROM execution_flow WHERE campaign_id = ?", (campaign_id,))
+        return self.get_execution_attempt(attempt_id)
+
+    def _flow_state(self, campaign_id: str) -> dict:
+        row = self._db.execute(
+            "SELECT * FROM execution_flow WHERE campaign_id = ?", (campaign_id,)).fetchone()
+        if row is None:
+            return {"campaign_id": campaign_id, "state": "idle", "reason": "", "detail": ""}
+        return {"campaign_id": campaign_id, "state": row["state"],
+                "reason": row["reason"], "detail": row["detail"]}
+
+    def _pause_flow(self, campaign_id: str, reason: str, evidence: dict) -> None:
+        detail = evidence.get("detail", "") if isinstance(evidence, dict) else ""
+        self._db.execute(
+            "INSERT INTO execution_flow VALUES (?, 'paused', ?, ?) "
+            "ON CONFLICT(campaign_id) DO UPDATE SET state = 'paused', "
+            "reason = excluded.reason, detail = excluded.detail",
+            (campaign_id, reason, detail))
+
+    def _campaign_of_task(self, task_id: str) -> str:
+        row = self._db.execute(
+            "SELECT campaign_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Outreach Task not found: {task_id}")
+        return row["campaign_id"]
+
+    def _next_sequence(self, preparation_id: str) -> int:
+        return self._db.execute(
+            "SELECT COALESCE(MAX(sequence), 0) + 1 FROM execution_attempts WHERE preparation_id = ?",
+            (preparation_id,)).fetchone()[0]
