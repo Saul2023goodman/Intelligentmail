@@ -1,0 +1,42 @@
+CREATE TABLE IF NOT EXISTS students (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mailboxes (
+    id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES students(id),
+    address TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS institutions (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE
+);
+CREATE TABLE IF NOT EXISTS supervisors (
+    id TEXT PRIMARY KEY, name TEXT NOT NULL,
+    institution_id TEXT NOT NULL REFERENCES institutions(id), profile TEXT
+);
+CREATE TABLE IF NOT EXISTS supervisor_addresses (
+    supervisor_id TEXT NOT NULL REFERENCES supervisors(id), address TEXT NOT NULL,
+    UNIQUE(supervisor_id, address)
+);
+CREATE TABLE IF NOT EXISTS imports (
+    id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+    student_id TEXT NOT NULL REFERENCES students(id)
+);
+CREATE TABLE IF NOT EXISTS sources (
+    id TEXT PRIMARY KEY, import_id TEXT NOT NULL REFERENCES imports(id),
+    name TEXT NOT NULL, content BLOB NOT NULL, sha256 TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS tasks (
+    id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES students(id),
+    supervisor_id TEXT NOT NULL REFERENCES supervisors(id),
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+    UNIQUE(student_id, supervisor_id, campaign_id)
+);
+CREATE TABLE IF NOT EXISTS source_associations (
+    task_id TEXT NOT NULL REFERENCES tasks(id), source_id TEXT NOT NULL REFERENCES sources(id),
+    sheet TEXT NOT NULL, row INTEGER NOT NULL, evidence TEXT NOT NULL,
+    UNIQUE(task_id, source_id, sheet, row)
+);
+CREATE TABLE IF NOT EXISTS exceptions (
+    id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES tasks(id),
+    source_id TEXT NOT NULL REFERENCES sources(id), code TEXT NOT NULL,
+    detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
+);
