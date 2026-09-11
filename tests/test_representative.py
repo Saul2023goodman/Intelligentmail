@@ -27,3 +27,43 @@ class RepresentativeMaterialTests(unittest.TestCase):
                 self.assertEqual(len(sources), 22)
                 self.assertEqual(sources[0]["sha256"], "f2e73a53d3503c3568cfeba730317ba232f4258636d9f5560e10dea77398f5e2")
                 self.assertIn("姚思培/姚思培_60筛导初版.xlsx", [s["name"] for s in sources])
+
+    def test_supplied_drafts_produce_inspectable_local_preparations(self):
+        with tempfile.TemporaryDirectory() as home:
+            with SmartMail(Path(home)) as core:
+                campaign = core.create_campaign("Representative pilot")
+                student = core.create_student("Sipei Yao", "artsipei@163.com")
+                imported = core.import_master(
+                    campaign["id"], student["id"], Path(os.environ["SMARTMAIL_SAMPLE_ZIP"]))
+                result = core.prepare_from_documents(imported["id"])
+                self.assertEqual(len(result["preparation_ids"]), 17)
+
+                findings = core.list_unassociated_documents(imported["id"])
+                self.assertEqual(
+                    {f["source"]["name"].rsplit("/", 1)[-1] for f in findings},
+                    {"University of Technology Sydney_Nahum McLean.docx",
+                     "University of Technology Sydney_Nga Wun Doris Li.docx"})
+                self.assertTrue(all(f["code"] == "unassociated_document" for f in findings))
+
+                preparations = [
+                    core.get_preparation(p["id"]) for p in core.list_preparations(campaign["id"])]
+                by_supervisor = {p["association"]["supervisor"]: p for p in preparations}
+                self.assertEqual([p["id"] for p in preparations if p["ready"]], [])
+
+                conflicts = [p for p in preparations if any(
+                    f["code"] == "recipient_conflict" for f in p["readiness_findings"])]
+                self.assertEqual(
+                    [p["association"]["supervisor"] for p in conflicts], ["Susanna Castleden"])
+                self.assertEqual(conflicts[0]["recipient"], "S.Castleden@exchange.curtin.edu.au")
+
+                morton = by_supervisor["Callum Morton"]
+                self.assertEqual(morton["recipient"], "callum.morton@monash.edu")
+                self.assertIn("recipient_filled_missing_address",
+                              {t["code"] for t in morton["transformations"]})
+
+                laird = by_supervisor["Tessa Laird"]
+                self.assertTrue(laird["body"].startswith("Dear Dr Laird,"))
+                self.assertTrue(laird["body"].endswith("Sipei Yao"))
+                self.assertNotIn("Research source", laird["body"])
+                self.assertIn("Research source", laird["internal_note"])
+                self.assertEqual({f["code"] for f in laird["readiness_findings"]}, {"missing_subject"})

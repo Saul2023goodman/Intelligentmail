@@ -8,6 +8,7 @@ from uuid import uuid4
 from zipfile import BadZipFile
 from xml.etree.ElementTree import ParseError
 
+from .documents import DocumentError, association_key, parse_draft, read_paragraphs
 from .intake import read_master, read_bundle
 from .identity import email_address, person_name, profile_url
 
@@ -211,3 +212,169 @@ class SmartMail:
         ]
         task["exceptions"] = [dict(r) for r in self._db.execute("SELECT * FROM exceptions WHERE task_id = ? ORDER BY rowid", (task_id,))]
         return task
+
+    def prepare_from_documents(self, import_id: str) -> dict:
+        """Associate supported draft documents with Outreach Tasks and prepare local messages."""
+        imported = self.get_import(import_id)
+        sender = self._db.execute(
+            "SELECT address FROM mailboxes WHERE student_id = ?", (imported["student_id"],)).fetchone()["address"]
+        tasks = list(self._db.execute(
+            "SELECT t.id AS task_id, s.id AS supervisor_id, s.name AS supervisor_name, "
+            "i.name AS institution_name "
+            "FROM tasks t JOIN supervisors s ON s.id = t.supervisor_id JOIN institutions i ON i.id = s.institution_id "
+            "WHERE t.campaign_id = ? AND t.student_id = ?",
+            (imported["campaign_id"], imported["student_id"])))
+        preparation_ids: list[str] = []
+        unassociated_source_ids: list[str] = []
+        with self._db:
+            for source in self._db.execute(
+                    "SELECT id, name FROM sources WHERE import_id = ? ORDER BY rowid", (import_id,)):
+                if not source["name"].casefold().endswith(".docx"):
+                    continue
+                try:
+                    parsed = parse_draft(read_paragraphs(self.read_source(source["id"])))
+                except DocumentError as error:
+                    self._record_document_finding(source["id"], "unsupported_document", str(error))
+                    unassociated_source_ids.append(source["id"])
+                    continue
+                if parsed is None:
+                    continue
+                key = association_key(source["name"])
+                matches = [task for task in tasks if key
+                           and task["institution_name"].strip().casefold() == key[0].casefold()
+                           and person_name(task["supervisor_name"]) == person_name(key[1])]
+                if len(matches) != 1:
+                    self._record_document_finding(
+                        source["id"],
+                        "unassociated_document" if not matches else "ambiguous_document",
+                        f"{source['name']}: expected one Outreach Task, matched {len(matches)}")
+                    unassociated_source_ids.append(source["id"])
+                    continue
+                preparation_ids.append(self._store_preparation(matches[0], source, parsed, sender, key))
+        return {"preparation_ids": preparation_ids, "unassociated_source_ids": unassociated_source_ids}
+
+    def _record_document_finding(self, source_id: str, code: str, detail: str, blocking: bool = True) -> None:
+        if self._db.execute("SELECT 1 FROM document_findings WHERE source_id = ? AND code = ?",
+                            (source_id, code)).fetchone():
+            return
+        self._db.execute("INSERT INTO document_findings VALUES (?, ?, ?, ?, ?)",
+                         (str(uuid4()), source_id, code, detail, 1 if blocking else 0))
+
+    def list_unassociated_documents(self, import_id: str) -> list[dict]:
+        self.get_import(import_id)
+        return [
+            {"id": row["id"], "source": {"id": row["source_id"], "name": row["source_name"]},
+             "code": row["code"], "detail": row["detail"], "blocking": bool(row["blocking"])}
+            for row in self._db.execute(
+                "SELECT f.id, f.source_id, f.code, f.detail, f.blocking, s.name AS source_name "
+                "FROM document_findings f JOIN sources s ON s.id = f.source_id "
+                "WHERE s.import_id = ? ORDER BY s.rowid", (import_id,))]
+
+    def _store_preparation(self, task: dict, source: dict, parsed: dict, sender: str, key: tuple) -> str:
+        existing = self._db.execute(
+            "SELECT id FROM preparations WHERE task_id = ? AND source_id = ?",
+            (task["task_id"], source["id"])).fetchone()
+        if existing:
+            return existing["id"]
+        preparation_id = str(uuid4())
+        subject = ""
+        recipient = email_address(parsed["recipient"])
+        recorded = [row[0] for row in self._db.execute(
+            "SELECT address FROM supervisor_addresses WHERE supervisor_id = ? ORDER BY address",
+            (task["supervisor_id"],))]
+        evidence = json.dumps(
+            {"source": source["name"], "institution": key[0], "supervisor": key[1]}, ensure_ascii=False)
+        self._db.execute(
+            "INSERT INTO preparations (id, task_id, source_id, sender, recipient, subject, body, "
+            "internal_note, association_evidence) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (preparation_id, task["task_id"], source["id"], sender,
+             recipient or parsed["recipient"], subject, parsed["body"], parsed["internal_note"], evidence))
+        self._record_transformation(
+            preparation_id, "recipient_extracted",
+            f"Recipient declared in {source['name']}: {parsed['recipient']}")
+        self._record_transformation(
+            preparation_id, "body_restructured",
+            "Message body retained from the greeting through the sign-off; spacing normalized")
+        if parsed["note_separated"]:
+            self._record_transformation(
+                preparation_id, "internal_note_separated",
+                f"Internal note removed from the message body: {parsed['internal_note']}")
+        if not subject:
+            self._record_finding(
+                preparation_id, "missing_subject",
+                "No authoritative subject is available for this Preparation")
+        if recipient is None:
+            self._record_finding(
+                preparation_id, "invalid_recipient",
+                f"Draft recipient is not a usable address: {parsed['recipient']}")
+        elif recorded and recipient.casefold() not in {address.casefold() for address in recorded}:
+            self._record_finding(
+                preparation_id, "recipient_conflict",
+                f"Draft recipient {recipient} differs from recorded Supervisor address(es): "
+                f"{', '.join(recorded)}")
+        elif recipient and not recorded:
+            self._record_transformation(
+                preparation_id, "recipient_filled_missing_address",
+                f"Recipient {recipient} taken from {source['name']}; no usable address was recorded")
+        if self._db.execute(
+                "SELECT 1 FROM exceptions WHERE task_id = ? AND code = 'identity_ambiguity' AND blocking = 1",
+                (task["task_id"],)).fetchone():
+            self._record_finding(
+                preparation_id, "identity_conflict",
+                "The associated Outreach Task has an unresolved Supervisor identity conflict")
+        return preparation_id
+
+    def _record_transformation(self, preparation_id: str, code: str, detail: str) -> None:
+        self._db.execute("INSERT INTO transformations VALUES (?, ?, ?, ?)",
+                         (str(uuid4()), preparation_id, code, detail))
+
+    def _record_finding(self, preparation_id: str, code: str, detail: str, blocking: bool = True) -> None:
+        self._db.execute("INSERT INTO readiness_findings VALUES (?, ?, ?, ?, ?)",
+                         (str(uuid4()), preparation_id, code, detail, 1 if blocking else 0))
+
+    def list_preparations(self, campaign_id: str) -> list[dict]:
+        self.get_campaign(campaign_id)
+        return [dict(row) for row in self._db.execute(
+            "SELECT p.id, p.task_id, p.sender, p.recipient, p.subject, p.source_id, t.student_id, "
+            "s.name AS supervisor_name, st.name AS student_name, src.name AS source_name, "
+            "(SELECT count(*) FROM readiness_findings f WHERE f.preparation_id = p.id AND f.blocking = 1) "
+            "AS blocking_count "
+            "FROM preparations p JOIN tasks t ON t.id = p.task_id "
+            "JOIN supervisors s ON s.id = t.supervisor_id JOIN students st ON st.id = t.student_id "
+            "JOIN sources src ON src.id = p.source_id WHERE t.campaign_id = ? ORDER BY t.rowid",
+            (campaign_id,))]
+
+    def preview_preparation(self, preparation_id: str) -> dict:
+        """The full local message, with readiness and the separated internal note kept apart."""
+        preparation = self.get_preparation(preparation_id)
+        blocking = [finding["code"] for finding in preparation["readiness_findings"] if finding["blocking"]]
+        readiness = "Blocked: " + ", ".join(blocking) if blocking else "Ready"
+        subject = preparation["subject"] or "(no authoritative subject)"
+        text = "\n".join([
+            f"From: {preparation['sender']}",
+            f"To: {preparation['recipient']}",
+            f"Subject: {subject}",
+            f"Readiness: {readiness}",
+            f"Source: {preparation['source']['name']}",
+            "",
+            preparation["body"],
+        ])
+        return {"sender": preparation["sender"], "recipient": preparation["recipient"],
+                "subject": preparation["subject"], "body": preparation["body"],
+                "internal_note": preparation["internal_note"], "readiness": readiness, "text": text}
+
+    def get_preparation(self, preparation_id: str) -> dict:
+        row = self._db.execute("SELECT * FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        preparation = dict(row)
+        preparation["source"] = dict(self._db.execute(
+            "SELECT id, name, sha256 FROM sources WHERE id = ?", (row["source_id"],)).fetchone())
+        preparation["association"] = json.loads(preparation.pop("association_evidence"))
+        preparation["transformations"] = [dict(r) for r in self._db.execute(
+            "SELECT code, detail FROM transformations WHERE preparation_id = ? ORDER BY rowid", (preparation_id,))]
+        preparation["readiness_findings"] = [dict(r) for r in self._db.execute(
+            "SELECT code, detail, blocking FROM readiness_findings WHERE preparation_id = ? ORDER BY rowid",
+            (preparation_id,))]
+        preparation["ready"] = not any(finding["blocking"] for finding in preparation["readiness_findings"])
+        return preparation

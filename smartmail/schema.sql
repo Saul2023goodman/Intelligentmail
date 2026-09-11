@@ -40,3 +40,25 @@ CREATE TABLE IF NOT EXISTS exceptions (
     source_id TEXT NOT NULL REFERENCES sources(id), code TEXT NOT NULL,
     detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS preparations (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    source_id TEXT NOT NULL REFERENCES sources(id),
+    sender TEXT NOT NULL, recipient TEXT NOT NULL,
+    subject TEXT NOT NULL DEFAULT '', body TEXT NOT NULL,
+    internal_note TEXT NOT NULL DEFAULT '',
+    association_evidence TEXT NOT NULL,
+    UNIQUE(task_id, source_id)
+);
+CREATE TABLE IF NOT EXISTS transformations (
+    id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    code TEXT NOT NULL, detail TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS readiness_findings (
+    id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    code TEXT NOT NULL, detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS document_findings (
+    id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id),
+    code TEXT NOT NULL, detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
+);

@@ -36,6 +36,15 @@ def main() -> int:
     imports = commands.add_parser("imports", help="Inspect an import and its preserved materials").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--campaign", required=True)
     imports.add_parser("show").add_argument("id")
+    imports.add_parser("findings").add_argument("id", help="Documents that produced no single Preparation")
+
+    prepare = commands.add_parser("prepare", help="Associate draft documents and prepare local messages")
+    prepare.add_argument("--import", dest="import_id", required=True, help="Import ID from imports list")
+
+    preparation = commands.add_parser("preparation", help="Inspect and preview local Preparations").add_subparsers(dest="action", required=True)
+    preparation.add_parser("list").add_argument("--campaign", required=True)
+    preparation.add_parser("show").add_argument("id")
+    preparation.add_parser("preview").add_argument("id", help="Print the full local message")
 
     tasks = commands.add_parser("task", help="Inspect Outreach Tasks and Exceptions").add_subparsers(dest="action", required=True)
     tasks.add_parser("list").add_argument("--campaign", required=True)
@@ -66,7 +75,22 @@ def main() -> int:
             elif args.command == "import":
                 result = core.import_master(args.campaign, args.student, args.path)
             elif args.command == "imports":
-                result = core.list_imports(args.campaign) if args.action == "list" else core.get_import(args.id)
+                if args.action == "list":
+                    result = core.list_imports(args.campaign)
+                elif args.action == "show":
+                    result = core.get_import(args.id)
+                else:
+                    result = core.list_unassociated_documents(args.id)
+            elif args.command == "prepare":
+                result = core.prepare_from_documents(args.import_id)
+            elif args.command == "preparation":
+                if args.action == "list":
+                    result = core.list_preparations(args.campaign)
+                elif args.action == "show":
+                    result = core.get_preparation(args.id)
+                else:
+                    print(core.preview_preparation(args.id)["text"])
+                    return 0
             elif args.command == "task":
                 result = core.list_tasks(args.campaign) if args.action == "list" else core.get_task(args.id)
             else:
