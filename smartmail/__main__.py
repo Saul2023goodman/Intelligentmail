@@ -80,6 +80,10 @@ def main() -> int:
     rewrite.add_argument("id")
     rewrite.add_argument("--source", required=True, help="Source Material ID from imports show")
     preparation.add_parser("history", help="Inspect the active and Superseded versions of a Preparation").add_argument("id")
+    follow_up = preparation.add_parser(
+        "link-follow-up", help="Mark a Preparation as a linked Follow-up Action")
+    follow_up.add_argument("id")
+    follow_up.add_argument("--sent", help="Sent Record ID of the earlier outreach")
 
     tasks = commands.add_parser("task", help="Inspect Outreach Tasks and Exceptions").add_subparsers(dest="action", required=True)
     tasks.add_parser("list").add_argument("--campaign", required=True)
@@ -128,6 +132,14 @@ def main() -> int:
     reconciliations = reconciliation.add_parser("list")
     reconciliations.add_argument("--student", required=True)
     reconciliation.add_parser("show").add_argument("id")
+
+    duplicate = commands.add_parser(
+        "duplicate", help="Detect Repeat Execution and repeated initial outreach"
+    ).add_subparsers(dest="action", required=True)
+    duplicate.add_parser("check", help="Check one Preparation against available history").add_argument("id")
+    duplicates = duplicate.add_parser("list", help="List recorded checks for a Campaign")
+    duplicates.add_argument("--campaign", required=True)
+    duplicate.add_parser("show").add_argument("id")
 
     source = commands.add_parser("source", help="Open a fresh copy of preserved original bytes").add_subparsers(dest="action", required=True)
     opening = source.add_parser("open")
@@ -192,6 +204,8 @@ def main() -> int:
                     result = core.rewrite(args.id, source_id=args.source)
                 elif args.action == "history":
                     result = core.get_preparation_history(args.id)
+                elif args.action == "link-follow-up":
+                    result = core.link_follow_up(args.id, args.sent)
                 else:
                     result = core.remove_attachment_slot(args.id, args.slot)
             elif args.command == "task":
@@ -238,6 +252,13 @@ def main() -> int:
             elif args.command == "reconciliation":
                 result = (core.list_reconciliations(args.student) if args.action == "list"
                           else core.get_reconciliation(args.id))
+            elif args.command == "duplicate":
+                if args.action == "check":
+                    result = core.check_duplicate(args.id)
+                elif args.action == "list":
+                    result = core.list_duplicate_checks(args.campaign)
+                else:
+                    result = core.get_duplicate_check(args.id)
             else:
                 path = core.materialize_source(args.id)
                 if not args.path_only:

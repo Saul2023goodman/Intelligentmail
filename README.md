@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 to 06 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a controlled mailbox adapter, and reconcile persisted read-only observations from the real 163.com mailbox. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage and SQLite persistence.
+Tickets 01 to 07 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a controlled mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, and detect historical duplicates before execution. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence.
 
 ## Run
 
@@ -137,11 +137,31 @@ Every refresh persists the observation, canonical platform references, list and 
 
 Reconciliation links exact observable matches and leaves unsupported, ambiguous and unassociated observations explicit. It never treats the mailbox as SmartMail's primary store and does not change an unresolved attempt merely because a list row looks similar. The controlled adapter accepts an `observations` array in its JSON script for repeatable command-boundary tests. Reading is an independent capability: the live adapter leaves immediate send, native scheduling, cancellation and Recall disabled.
 
+## Detect historical duplicates before execution
+
+Recorded sends and persisted mailbox history are combined into a Duplicate Check with explicit Evidence Coverage, so repeated outreach is caught before anything is submitted:
+
+```powershell
+.\.venv\Scripts\python -m smartmail duplicate check PREPARATION_ID
+.\.venv\Scripts\python -m smartmail duplicate list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail duplicate show CHECK_ID
+```
+
+The Mailbox account identifies the Student and the recipient identifies the Supervisor. An observed outbound send to any known Supervisor address, including a known alternate address, is a **Duplicate Suspicion**; an already executed action is **Repeat Execution**; a match that cannot be established because the identity conflicts or the observation is incomplete is an **Ambiguous Match** requiring review. With no match, the check reports **No Duplicate Found** qualified by its Evidence Coverage: incomplete history alone never blocks work, and the recorded limitation states that no match is not proof that no prior send exists outside the inspected scope.
+
+Another Student addressing the same Supervisor is never a duplicate, and a linked Follow-up Action is not repeated initial outreach:
+
+```powershell
+.\.venv\Scripts\python -m smartmail preparation link-follow-up PREPARATION_ID --sent SENT_RECORD_ID
+```
+
+`execution run` re-checks each Confirmation before submitting. A duplicate or ambiguous match discovered after Confirmation pauses the current Execution Flow with the finding as its reason and submits nothing; a batch stops at the affected action, and `execution status` reports the pause. Every check is persisted with its matches and Evidence Coverage and stays inspectable after a restart.
+
 ## Local state
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md).
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md).
 
 ## Verify
 
@@ -156,4 +176,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md) and [ticket 05 validation](docs/ticket-05-validation.md) for measured outcomes and the retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md) and [ticket 05 validation](docs/ticket-05-validation.md) and [ticket 07 validation](docs/ticket-07-validation.md) for measured outcomes and the retained terminal pilots.

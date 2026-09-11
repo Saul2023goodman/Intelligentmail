@@ -48,7 +48,9 @@ CREATE TABLE IF NOT EXISTS preparations (
     subject TEXT NOT NULL DEFAULT '', body TEXT NOT NULL,
     internal_note TEXT NOT NULL DEFAULT '',
     association_evidence TEXT NOT NULL,
-    superseded_by TEXT REFERENCES preparations(id)
+    superseded_by TEXT REFERENCES preparations(id),
+    action_kind TEXT NOT NULL DEFAULT 'initial',
+    linked_sent_record_id TEXT REFERENCES sent_records(id)
 );
 CREATE TABLE IF NOT EXISTS transformations (
     id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),
@@ -104,7 +106,9 @@ CREATE TABLE IF NOT EXISTS sent_records (
     attempt_id TEXT NOT NULL REFERENCES execution_attempts(id),
     content TEXT NOT NULL,
     evidence TEXT NOT NULL,
-    reference TEXT NOT NULL DEFAULT ''
+    reference TEXT NOT NULL DEFAULT '',
+    action_kind TEXT NOT NULL DEFAULT 'initial',
+    follows_sent_record_id TEXT REFERENCES sent_records(id)
 );
 CREATE TABLE IF NOT EXISTS sent_attachments (
     id TEXT PRIMARY KEY,
@@ -147,6 +151,18 @@ CREATE TABLE IF NOT EXISTS reconciliations (
     observation_run_id TEXT NOT NULL REFERENCES mailbox_observation_runs(id),
     observed_at TEXT NOT NULL,
     summary TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS duplicate_checks (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    checked_at TEXT NOT NULL,
+    finding TEXT NOT NULL,
+    review_required INTEGER NOT NULL DEFAULT 0,
+    basis TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    evidence_coverage TEXT NOT NULL,
+    matches TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS reconciliation_findings (
     id TEXT PRIMARY KEY,
