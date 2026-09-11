@@ -89,3 +89,30 @@ def association_key(filename: str) -> tuple[str, str] | None:
     if not separator or not institution or not supervisor:
         return None
     return institution, supervisor
+
+
+# The observed sentence that declares an enclosed attachment: "I have attached my CV".
+ATTACHMENT_DECLARATION = re.compile(
+    r"\bI(?:'ve| have)\s+attached\s+(?:my|the|a|an)\s+"
+    r"(?P<label>[A-Za-z][A-Za-z0-9+#/&-]*(?:\s+[A-Za-z][A-Za-z0-9+#/&-]*){0,2})",
+    re.IGNORECASE,
+)
+DECLARATION_STOP_WORDS = {
+    "and", "or", "which", "that", "for", "to", "with", "as", "so", "but", "however",
+    "in", "on", "at", "please", "would", "will", "is", "are", "was", "were", "the",
+}
+
+
+def attachment_declarations(body: str) -> list[str]:
+    """Attachment labels declared in a supported body sentence, in order, without duplicates."""
+    labels: list[str] = []
+    for match in ATTACHMENT_DECLARATION.finditer(body):
+        words: list[str] = []
+        for word in match.group("label").split():
+            if word.casefold() in DECLARATION_STOP_WORDS:
+                break
+            words.append(word)
+        label = " ".join(words).strip()
+        if label and label.casefold() not in {existing.casefold() for existing in labels}:
+            labels.append(label)
+    return labels

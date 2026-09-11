@@ -3,12 +3,13 @@
 import sqlite3
 import hashlib
 import json
-from pathlib import Path
+import re
+from pathlib import Path, PurePosixPath
 from uuid import uuid4
 from zipfile import BadZipFile
 from xml.etree.ElementTree import ParseError
 
-from .documents import DocumentError, association_key, parse_draft, read_paragraphs
+from .documents import DocumentError, association_key, attachment_declarations, parse_draft, read_paragraphs
 from .intake import read_master, read_bundle
 from .identity import email_address, person_name, profile_url
 
@@ -213,6 +214,57 @@ class SmartMail:
         task["exceptions"] = [dict(r) for r in self._db.execute("SELECT * FROM exceptions WHERE task_id = ? ORDER BY rowid", (task_id,))]
         return task
 
+    def confirm_task_identity(self, task_id: str) -> dict:
+        """Explicitly confirm a Task's recorded Supervisor identity, clearing its ambiguity Blocker."""
+        if self._db.execute("SELECT 1 FROM tasks WHERE id = ?", (task_id,)).fetchone() is None:
+            raise SmartMailError(f"Outreach Task not found: {task_id}")
+        ambiguous = list(self._db.execute(
+            "SELECT id FROM exceptions WHERE task_id = ? AND code = 'identity_ambiguity'", (task_id,)))
+        if not ambiguous:
+            raise SmartMailError(
+                f"Outreach Task has no unresolved Supervisor identity ambiguity: {task_id}")
+        with self._db:
+            self._db.execute(
+                "DELETE FROM exceptions WHERE task_id = ? AND code = 'identity_ambiguity'", (task_id,))
+            for preparation in self._db.execute(
+                    "SELECT id FROM preparations WHERE task_id = ?", (task_id,)):
+                self._revalidate(preparation["id"])
+        return self.get_task(task_id)
+
+    def list_exceptions(self, campaign_id: str) -> list[dict]:
+        """Blocking and non-blocking Exceptions with their source evidence and readiness findings."""
+        self.get_campaign(campaign_id)
+        return [self._exception_view(row) for row in self._db.execute(
+            "SELECT e.*, s.name AS supervisor_name FROM exceptions e "
+            "JOIN tasks t ON t.id = e.task_id JOIN supervisors s ON s.id = t.supervisor_id "
+            "WHERE t.campaign_id = ? ORDER BY e.rowid", (campaign_id,))]
+
+    def get_exception(self, exception_id: str) -> dict:
+        row = self._db.execute(
+            "SELECT e.*, s.name AS supervisor_name FROM exceptions e "
+            "JOIN tasks t ON t.id = e.task_id JOIN supervisors s ON s.id = t.supervisor_id "
+            "WHERE e.id = ?", (exception_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Exception not found: {exception_id}")
+        return self._exception_view(row)
+
+    def _exception_view(self, row) -> dict:
+        source = self._db.execute(
+            "SELECT id, name, sha256 FROM sources WHERE id = ?", (row["source_id"],)).fetchone()
+        task = self._db.execute("SELECT student_id FROM tasks WHERE id = ?", (row["task_id"],)).fetchone()
+        return {
+            "id": row["id"], "code": row["code"], "detail": row["detail"],
+            "blocking": bool(row["blocking"]), "task_id": row["task_id"],
+            "student_id": task["student_id"], "supervisor_name": row["supervisor_name"],
+            "source": dict(source) if source else None,
+            "preparation_ids": [r["id"] for r in self._db.execute(
+                "SELECT id FROM preparations WHERE task_id = ? ORDER BY rowid", (row["task_id"],))],
+            "readiness_findings": [dict(r) for r in self._db.execute(
+                "SELECT code, detail, blocking FROM readiness_findings "
+                "WHERE preparation_id IN (SELECT id FROM preparations WHERE task_id = ?) ORDER BY rowid",
+                (row["task_id"],))],
+        }
+
     def prepare_from_documents(self, import_id: str) -> dict:
         """Associate supported draft documents with Outreach Tasks and prepare local messages."""
         imported = self.get_import(import_id)
@@ -251,7 +303,177 @@ class SmartMail:
                     unassociated_source_ids.append(source["id"])
                     continue
                 preparation_ids.append(self._store_preparation(matches[0], source, parsed, sender, key))
+        for preparation_id in preparation_ids:
+            self.suggest_attachment_slots(preparation_id)
         return {"preparation_ids": preparation_ids, "unassociated_source_ids": unassociated_source_ids}
+
+    def suggest_attachment_slots(self, preparation_id: str) -> list[dict]:
+        """Create or refresh the advisory attachment slots declared by the message body.
+
+        Suggestions never finalize an association and never affect readiness.
+        """
+        preparation = self._db.execute(
+            "SELECT id, body, source_id FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
+        if preparation is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        import_id = self._db.execute(
+            "SELECT import_id FROM sources WHERE id = ?", (preparation["source_id"],)).fetchone()["import_id"]
+        with self._db:
+            for declared in attachment_declarations(preparation["body"]):
+                label = f"Student {declared}"
+                basis = f'Attachment declared in the message body: "I have attached my {declared}"'
+                candidates = self._attachment_candidates(import_id, declared, preparation["source_id"])
+                suggested = candidates[0]["id"] if len(candidates) == 1 else None
+                existing = self._db.execute(
+                    "SELECT id, suggested_source_id FROM attachment_slots WHERE preparation_id = ? AND label = ?",
+                    (preparation_id, label)).fetchone()
+                if existing is None:
+                    self._db.execute(
+                        "INSERT INTO attachment_slots VALUES (?, ?, ?, ?, ?, ?)",
+                        (str(uuid4()), preparation_id, label, declared, basis, suggested))
+                elif self._db.execute(
+                        "SELECT 1 FROM attachments WHERE slot_id = ?", (existing["id"],)).fetchone() is None:
+                    self._db.execute(
+                        "UPDATE attachment_slots SET basis = ?, suggested_source_id = ? WHERE id = ?",
+                        (basis, suggested, existing["id"]))
+        return self.list_attachment_slots(preparation_id)
+
+    def _attachment_candidates(self, import_id: str, declared: str, exclude_source_id: str) -> list[dict]:
+        """Preserved .docx Source Materials whose filename carries the declared attachment label."""
+        wanted = {token.casefold() for token in re.split(r"[^0-9A-Za-z]+", declared) if token}
+        candidates = []
+        for row in self._db.execute(
+                "SELECT id, name, sha256 FROM sources WHERE import_id = ? ORDER BY rowid", (import_id,)):
+            if row["id"] == exclude_source_id or not row["name"].casefold().endswith(".docx"):
+                continue
+            stem = PurePosixPath(row["name"]).name[:-5]
+            tokens = {token.casefold() for token in re.split(r"[^0-9A-Za-z]+", stem) if token}
+            if wanted and wanted <= tokens:
+                candidates.append(dict(row))
+        return candidates
+
+    def confirm_attachment(self, preparation_id: str, slot_id: str) -> dict:
+        """Confirm the slot's single suggested candidate; suggestions are never finalized automatically."""
+        slot = self._db.execute(
+            "SELECT * FROM attachment_slots WHERE id = ? AND preparation_id = ?",
+            (slot_id, preparation_id)).fetchone()
+        if slot is None:
+            raise SmartMailError(f"Attachment slot not found: {slot_id}")
+        if slot["suggested_source_id"] is None:
+            raise SmartMailError(
+                "This slot has no single suggested candidate; select a file explicitly")
+        return self.set_attachment(preparation_id, slot_id, source_id=slot["suggested_source_id"])
+
+    def set_attachment(self, preparation_id: str, slot_id: str, source_id: str | None = None,
+                       path: Path | None = None) -> dict:
+        """Confirm or replace a slot's file, snapshotting its bytes without conversion or merging."""
+        if (source_id is None) == (path is None):
+            raise SmartMailError("Provide exactly one of a preserved Source Material or a file path")
+        slot = self._require_slot(preparation_id, slot_id)
+        name, content, digest = self._attachment_payload(source_id, path)
+        with self._db:
+            self._store_attachment(preparation_id, slot, name, content, digest)
+        return self.get_preparation(preparation_id)
+
+    def add_attachment_slot(self, preparation_id: str, label: str, source_id: str | None = None,
+                            path: Path | None = None) -> dict:
+        """Add an operator-defined slot, optionally confirming a file at the same time."""
+        label = label.strip()
+        if not label:
+            raise SmartMailError("An attachment slot label is required")
+        if self._db.execute(
+                "SELECT 1 FROM preparations WHERE id = ?", (preparation_id,)).fetchone() is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        if self._db.execute(
+                "SELECT 1 FROM attachment_slots WHERE preparation_id = ? AND label = ?",
+                (preparation_id, label)).fetchone():
+            raise SmartMailError(f"Attachment slot already exists: {label}")
+        if source_id is not None and path is not None:
+            raise SmartMailError("Provide exactly one of a preserved Source Material or a file path")
+        payload = self._attachment_payload(source_id, path) if (source_id or path) else None
+        with self._db:
+            slot = {"id": str(uuid4()), "label": label}
+            self._db.execute(
+                "INSERT INTO attachment_slots VALUES (?, ?, ?, ?, ?, ?)",
+                (slot["id"], preparation_id, label, label,
+                 f"Added by the operator: {label}", None))
+            if payload is not None:
+                self._store_attachment(preparation_id, slot, *payload)
+        return self.get_preparation(preparation_id)
+
+    def remove_attachment_slot(self, preparation_id: str, slot_id: str) -> dict:
+        slot = self._require_slot(preparation_id, slot_id)
+        with self._db:
+            self._db.execute("DELETE FROM attachments WHERE slot_id = ?", (slot["id"],))
+            self._db.execute("DELETE FROM attachment_slots WHERE id = ?", (slot["id"],))
+        return self.get_preparation(preparation_id)
+
+    def _require_slot(self, preparation_id: str, slot_id: str):
+        slot = self._db.execute(
+            "SELECT * FROM attachment_slots WHERE id = ? AND preparation_id = ?",
+            (slot_id, preparation_id)).fetchone()
+        if slot is None:
+            raise SmartMailError(f"Attachment slot not found: {slot_id}")
+        return slot
+
+    def _attachment_payload(self, source_id: str | None, path: Path | None) -> tuple[str, bytes, str]:
+        if source_id is not None:
+            source = self._db.execute(
+                "SELECT name, content FROM sources WHERE id = ?", (source_id,)).fetchone()
+            if source is None:
+                raise SmartMailError(f"Source Material not found: {source_id}")
+            name, content = PurePosixPath(source["name"]).name, bytes(source["content"])
+        else:
+            path = Path(path)
+            if not path.is_file():
+                raise SmartMailError(f"Attachment file not found: {path}")
+            name, content = path.name, path.read_bytes()
+        return name, content, hashlib.sha256(content).hexdigest()
+
+    def _store_attachment(self, preparation_id: str, slot: dict, name: str,
+                          content: bytes, digest: str) -> None:
+        prior_row = self._db.execute(
+            "SELECT name, sha256 FROM attachments WHERE slot_id = ?", (slot["id"],)).fetchone()
+        prior = prior_row["name"] if prior_row and prior_row["sha256"] != digest else ""
+        if prior_row is None:
+            self._db.execute("INSERT INTO attachments VALUES (?, ?, ?, ?, ?)",
+                             (str(uuid4()), slot["id"], name, content, digest))
+        else:
+            self._db.execute(
+                "UPDATE attachments SET name = ?, content = ?, sha256 = ? WHERE slot_id = ?",
+                (name, content, digest, slot["id"]))
+        if prior or prior_row is None:
+            self._record_correction(preparation_id, f"attachment:{slot['label']}", name, prior)
+
+    def read_attachment(self, attachment_id: str) -> bytes:
+        row = self._db.execute("SELECT content FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Attachment not found: {attachment_id}")
+        return bytes(row["content"])
+
+    def list_attachment_slots(self, preparation_id: str) -> list[dict]:
+        """The Preparation's attachment slots: advisory candidates plus any confirmed file."""
+        preparation = self._db.execute(
+            "SELECT source_id FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
+        if preparation is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        import_id = self._db.execute(
+            "SELECT import_id FROM sources WHERE id = ?", (preparation["source_id"],)).fetchone()["import_id"]
+        slots = []
+        for row in self._db.execute(
+                "SELECT * FROM attachment_slots WHERE preparation_id = ? ORDER BY rowid", (preparation_id,)):
+            attachment = self._db.execute(
+                "SELECT id, name, sha256, length(content) AS size FROM attachments WHERE slot_id = ?",
+                (row["id"],)).fetchone()
+            slots.append({
+                "id": row["id"], "label": row["label"], "declared": row["declared"],
+                "basis": row["basis"],
+                "suggested_source_id": row["suggested_source_id"],
+                "candidates": self._attachment_candidates(
+                    import_id, row["declared"], preparation["source_id"]),
+                "attachment": dict(attachment) if attachment else None,
+            })
+        return slots
 
     def _record_document_finding(self, source_id: str, code: str, detail: str, blocking: bool = True) -> None:
         if self._db.execute("SELECT 1 FROM document_findings WHERE source_id = ? AND code = ?",
@@ -299,30 +521,77 @@ class SmartMail:
             self._record_transformation(
                 preparation_id, "internal_note_separated",
                 f"Internal note removed from the message body: {parsed['internal_note']}")
-        if not subject:
+        if recipient and not recorded:
+            self._record_transformation(
+                preparation_id, "recipient_filled_missing_address",
+                f"Recipient {recipient} taken from {source['name']}; no usable address was recorded")
+        self._revalidate(preparation_id)
+        return preparation_id
+
+    def _revalidate(self, preparation_id: str) -> None:
+        """Recompute the complete Preparation's readiness findings from its current local state."""
+        preparation = self._db.execute(
+            "SELECT * FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
+        if preparation is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        self._db.execute("DELETE FROM readiness_findings WHERE preparation_id = ?", (preparation_id,))
+        recorded = [row[0] for row in self._db.execute(
+            "SELECT a.address FROM supervisor_addresses a JOIN tasks t ON t.supervisor_id = a.supervisor_id "
+            "WHERE t.id = ? ORDER BY a.address", (preparation["task_id"],))]
+        recipient = email_address(preparation["recipient"])
+        if not preparation["subject"].strip():
             self._record_finding(
                 preparation_id, "missing_subject",
                 "No authoritative subject is available for this Preparation")
         if recipient is None:
             self._record_finding(
                 preparation_id, "invalid_recipient",
-                f"Draft recipient is not a usable address: {parsed['recipient']}")
+                f"Draft recipient is not a usable address: {preparation['recipient']}")
         elif recorded and recipient.casefold() not in {address.casefold() for address in recorded}:
             self._record_finding(
                 preparation_id, "recipient_conflict",
                 f"Draft recipient {recipient} differs from recorded Supervisor address(es): "
                 f"{', '.join(recorded)}")
-        elif recipient and not recorded:
-            self._record_transformation(
-                preparation_id, "recipient_filled_missing_address",
-                f"Recipient {recipient} taken from {source['name']}; no usable address was recorded")
         if self._db.execute(
                 "SELECT 1 FROM exceptions WHERE task_id = ? AND code = 'identity_ambiguity' AND blocking = 1",
-                (task["task_id"],)).fetchone():
+                (preparation["task_id"],)).fetchone():
             self._record_finding(
                 preparation_id, "identity_conflict",
                 "The associated Outreach Task has an unresolved Supervisor identity conflict")
-        return preparation_id
+
+    def set_subject(self, preparation_id: str, subject: str) -> dict:
+        """Record an explicit operator subject as the field's Authoritative Source."""
+        subject = subject.strip()
+        if not subject:
+            raise SmartMailError("A non-blank subject is required; SmartMail never invents one")
+        with self._db:
+            self._correct_field(preparation_id, "subject", subject)
+        return self.get_preparation(preparation_id)
+
+    def set_recipient(self, preparation_id: str, address: str) -> dict:
+        """Record an explicit operator recipient; the value is normalized, never guessed."""
+        normalized = email_address(address)
+        if normalized is None:
+            raise SmartMailError("A usable email address is required; SmartMail never guesses a recipient")
+        with self._db:
+            self._correct_field(preparation_id, "recipient", normalized)
+        return self.get_preparation(preparation_id)
+
+    def _correct_field(self, preparation_id: str, field: str, value: str) -> None:
+        row = self._db.execute(
+            f"SELECT {field} FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
+        if row is None:
+            raise SmartMailError(f"Preparation not found: {preparation_id}")
+        prior = row[field]
+        if prior == value:
+            return
+        self._db.execute(f"UPDATE preparations SET {field} = ? WHERE id = ?", (value, preparation_id))
+        self._record_correction(preparation_id, field, value, prior)
+        self._revalidate(preparation_id)
+
+    def _record_correction(self, preparation_id: str, field: str, value: str, prior: str) -> None:
+        self._db.execute("INSERT INTO corrections VALUES (?, ?, ?, ?, ?)",
+                         (str(uuid4()), preparation_id, field, value, prior))
 
     def _record_transformation(self, preparation_id: str, code: str, detail: str) -> None:
         self._db.execute("INSERT INTO transformations VALUES (?, ?, ?, ?)",
@@ -350,18 +619,27 @@ class SmartMail:
         blocking = [finding["code"] for finding in preparation["readiness_findings"] if finding["blocking"]]
         readiness = "Blocked: " + ", ".join(blocking) if blocking else "Ready"
         subject = preparation["subject"] or "(no authoritative subject)"
-        text = "\n".join([
+        confirmed = [slot["attachment"]["name"] for slot in preparation["attachment_slots"]
+                     if slot["attachment"]]
+        suggested = [
+            f"{slot['label']} \u2192 " + (slot["candidates"][0]["name"] if slot["suggested_source_id"]
+                                          else "no single candidate")
+            for slot in preparation["attachment_slots"] if not slot["attachment"]]
+        lines = [
             f"From: {preparation['sender']}",
             f"To: {preparation['recipient']}",
             f"Subject: {subject}",
             f"Readiness: {readiness}",
             f"Source: {preparation['source']['name']}",
-            "",
-            preparation["body"],
-        ])
+            f"Attachments: {', '.join(confirmed) if confirmed else '(none)'}",
+        ]
+        if suggested:
+            lines.append(f"Suggested attachments: {'; '.join(suggested)}")
+        text = "\n".join([*lines, "", preparation["body"]])
         return {"sender": preparation["sender"], "recipient": preparation["recipient"],
                 "subject": preparation["subject"], "body": preparation["body"],
-                "internal_note": preparation["internal_note"], "readiness": readiness, "text": text}
+                "internal_note": preparation["internal_note"], "readiness": readiness,
+                "attachments": confirmed, "suggested_attachments": suggested, "text": text}
 
     def get_preparation(self, preparation_id: str) -> dict:
         row = self._db.execute("SELECT * FROM preparations WHERE id = ?", (preparation_id,)).fetchone()
@@ -376,5 +654,9 @@ class SmartMail:
         preparation["readiness_findings"] = [dict(r) for r in self._db.execute(
             "SELECT code, detail, blocking FROM readiness_findings WHERE preparation_id = ? ORDER BY rowid",
             (preparation_id,))]
+        preparation["corrections"] = [dict(r) for r in self._db.execute(
+            "SELECT field, value, prior FROM corrections WHERE preparation_id = ? ORDER BY rowid",
+            (preparation_id,))]
+        preparation["attachment_slots"] = self.list_attachment_slots(preparation_id)
         preparation["ready"] = not any(finding["blocking"] for finding in preparation["readiness_findings"])
         return preparation

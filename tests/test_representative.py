@@ -67,3 +67,46 @@ class RepresentativeMaterialTests(unittest.TestCase):
                 self.assertNotIn("Research source", laird["body"])
                 self.assertIn("Research source", laird["internal_note"])
                 self.assertEqual({f["code"] for f in laird["readiness_findings"]}, {"missing_subject"})
+
+    def test_supplied_drafts_suggest_the_student_cv_and_accept_corrections(self):
+        with tempfile.TemporaryDirectory() as home:
+            with SmartMail(Path(home)) as core:
+                campaign = core.create_campaign("Representative pilot")
+                student = core.create_student("Sipei Yao", "artsipei@163.com")
+                imported = core.import_master(
+                    campaign["id"], student["id"], Path(os.environ["SMARTMAIL_SAMPLE_ZIP"]))
+                core.prepare_from_documents(imported["id"])
+                cv = next(s for s in core.get_import(imported["id"])["sources"]
+                          if s["name"].endswith("CV.docx"))
+
+                preparations = [core.get_preparation(p["id"])
+                                for p in core.list_preparations(campaign["id"])]
+                self.assertEqual(len(preparations), 17)
+                for preparation in preparations:
+                    slots = preparation["attachment_slots"]
+                    self.assertEqual([s["label"] for s in slots], ["Student CV"])
+                    self.assertEqual([c["name"] for c in slots[0]["candidates"]], [cv["name"]])
+                    self.assertEqual(slots[0]["suggested_source_id"], cv["id"])
+                    self.assertIsNone(slots[0]["attachment"])
+                self.assertEqual(
+                    [p for p in preparations if p["attachment_slots"][0]["attachment"]], [])
+
+                laird = next(p for p in preparations if p["association"]["supervisor"] == "Tessa Laird")
+                self.assertFalse(laird["ready"])
+                corrected = core.set_subject(laird["id"], "PhD supervision enquiry")
+                self.assertTrue(corrected["ready"])
+                self.assertEqual(core.preview_preparation(laird["id"])["readiness"], "Ready")
+
+                attachment = core.confirm_attachment(
+                    laird["id"], corrected["attachment_slots"][0]["id"]
+                )["attachment_slots"][0]["attachment"]
+                self.assertEqual(attachment["sha256"], cv["sha256"])
+                self.assertEqual(core.read_attachment(attachment["id"]), core.read_source(cv["id"]))
+
+                exceptions = core.list_exceptions(campaign["id"])
+                self.assertEqual([e["code"] for e in exceptions], ["invalid_recipient"] * 4)
+                self.assertTrue(all(e["blocking"] for e in exceptions))
+                self.assertTrue(all(e["source"]["name"].endswith(".xlsx") for e in exceptions))
+                morton = next(e for e in exceptions if "Morton" in e["supervisor_name"])
+                self.assertEqual([f["code"] for f in morton["readiness_findings"]],
+                                 ["missing_subject"])

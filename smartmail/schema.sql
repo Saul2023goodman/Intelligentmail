@@ -58,6 +58,20 @@ CREATE TABLE IF NOT EXISTS readiness_findings (
     id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),
     code TEXT NOT NULL, detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS corrections (
+    id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    field TEXT NOT NULL, value TEXT NOT NULL, prior TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS attachment_slots (
+    id TEXT PRIMARY KEY, preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    label TEXT NOT NULL, declared TEXT NOT NULL, basis TEXT NOT NULL,
+    suggested_source_id TEXT REFERENCES sources(id),
+    UNIQUE(preparation_id, label)
+);
+CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY, slot_id TEXT NOT NULL UNIQUE REFERENCES attachment_slots(id),
+    name TEXT NOT NULL, content BLOB NOT NULL, sha256 TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS document_findings (
     id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id),
     code TEXT NOT NULL, detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1

@@ -41,14 +41,42 @@ def main() -> int:
     prepare = commands.add_parser("prepare", help="Associate draft documents and prepare local messages")
     prepare.add_argument("--import", dest="import_id", required=True, help="Import ID from imports list")
 
-    preparation = commands.add_parser("preparation", help="Inspect and preview local Preparations").add_subparsers(dest="action", required=True)
+    preparation = commands.add_parser("preparation", help="Inspect, correct and preview local Preparations").add_subparsers(dest="action", required=True)
     preparation.add_parser("list").add_argument("--campaign", required=True)
     preparation.add_parser("show").add_argument("id")
     preparation.add_parser("preview").add_argument("id", help="Print the full local message")
+    subject = preparation.add_parser("set-subject", help="Correct the authoritative subject")
+    subject.add_argument("id")
+    subject.add_argument("subject")
+    recipient = preparation.add_parser("set-recipient", help="Correct the recipient address")
+    recipient.add_argument("id")
+    recipient.add_argument("address")
+    preparation.add_parser("suggest", help="Refresh advisory attachment slots").add_argument("id")
+    confirm = preparation.add_parser("confirm", help="Confirm a slot's suggested attachment")
+    confirm.add_argument("id")
+    confirm.add_argument("--slot", required=True)
+    attach = preparation.add_parser("attach", help="Confirm or replace a slot's file")
+    attach.add_argument("id")
+    attach.add_argument("--slot", required=True)
+    attach.add_argument("--source", help="Source Material ID from imports show")
+    attach.add_argument("--file", type=Path, help="A local file to snapshot verbatim")
+    add = preparation.add_parser("add-attachment", help="Add an operator-defined attachment slot")
+    add.add_argument("id")
+    add.add_argument("--label", required=True)
+    add.add_argument("--source", help="Source Material ID from imports show")
+    add.add_argument("--file", type=Path, help="A local file to snapshot verbatim")
+    remove = preparation.add_parser("remove-attachment", help="Remove an attachment slot")
+    remove.add_argument("id")
+    remove.add_argument("--slot", required=True)
 
     tasks = commands.add_parser("task", help="Inspect Outreach Tasks and Exceptions").add_subparsers(dest="action", required=True)
     tasks.add_parser("list").add_argument("--campaign", required=True)
     tasks.add_parser("show").add_argument("id")
+    tasks.add_parser("confirm-identity", help="Confirm a Task's Supervisor identity").add_argument("id")
+
+    exceptions = commands.add_parser("exceptions", help="List and inspect blocking Exceptions").add_subparsers(dest="action", required=True)
+    exceptions.add_parser("list").add_argument("--campaign", required=True)
+    exceptions.add_parser("show").add_argument("id")
 
     source = commands.add_parser("source", help="Open a fresh copy of preserved original bytes").add_subparsers(dest="action", required=True)
     opening = source.add_parser("open")
@@ -88,11 +116,32 @@ def main() -> int:
                     result = core.list_preparations(args.campaign)
                 elif args.action == "show":
                     result = core.get_preparation(args.id)
-                else:
+                elif args.action == "preview":
                     print(core.preview_preparation(args.id)["text"])
                     return 0
+                elif args.action == "set-subject":
+                    result = core.set_subject(args.id, args.subject)
+                elif args.action == "set-recipient":
+                    result = core.set_recipient(args.id, args.address)
+                elif args.action == "suggest":
+                    result = core.suggest_attachment_slots(args.id)
+                elif args.action == "confirm":
+                    result = core.confirm_attachment(args.id, args.slot)
+                elif args.action == "attach":
+                    result = core.set_attachment(args.id, args.slot, source_id=args.source, path=args.file)
+                elif args.action == "add-attachment":
+                    result = core.add_attachment_slot(args.id, args.label, source_id=args.source, path=args.file)
+                else:
+                    result = core.remove_attachment_slot(args.id, args.slot)
             elif args.command == "task":
-                result = core.list_tasks(args.campaign) if args.action == "list" else core.get_task(args.id)
+                if args.action == "list":
+                    result = core.list_tasks(args.campaign)
+                elif args.action == "show":
+                    result = core.get_task(args.id)
+                else:
+                    result = core.confirm_task_identity(args.id)
+            elif args.command == "exceptions":
+                result = core.list_exceptions(args.campaign) if args.action == "list" else core.get_exception(args.id)
             else:
                 path = core.materialize_source(args.id)
                 if not args.path_only:

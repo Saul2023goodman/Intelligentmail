@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 and 02 provide a local terminal application to import and inspect Outreach Tasks and to prepare local messages from existing draft documents. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations and SQLite persistence.
+Tickets 01 to 03 provide a local terminal application to import and inspect Outreach Tasks, to prepare local messages from existing draft documents, and to resolve readiness Exceptions and attach supporting files. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections and SQLite persistence.
 
 ## Run
 
@@ -47,7 +47,32 @@ Associate the imported draft documents with their Outreach Tasks and prepare loc
 
 `prepare` associates each supported `<Institution>_<Supervisor name>.docx` to exactly one Outreach Task, extracts the recipient, message body and any separated internal research note, and records the Transformation Records. `preparation preview` prints the full local message with sender, recipient, subject, readiness and source. `imports findings` lists documents that produced no single Preparation. Preparation is local only: it writes no external mailbox draft and does not modify preserved bytes.
 
-Readiness is separate from sending authority. A draft with no authoritative subject, a recipient that conflicts with the Supervisor's recorded address, an identity conflict, or an unassociated document is surfaced as a blocking finding and is never invented or silently resolved. Supplying a subject and resolving findings is the next slice.
+Readiness is separate from sending authority. A draft with no authoritative subject, a recipient that conflicts with the Supervisor's recorded address, an identity conflict, or an unassociated document is surfaced as a blocking finding and is never invented or silently resolved. A prepared message is Ready only when its blocking findings are cleared; Ready does not authorize sending.
+
+## Resolve readiness Exceptions and attachments
+
+Inspect the blocking Exceptions of a Campaign with their Source Material evidence and the readiness findings of the Preparation on the same Task:
+
+```powershell
+.\.venv\Scripts\python -m smartmail exceptions list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail exceptions show EXCEPTION_ID
+```
+
+Correct fields and confirm attachments. Corrections are explicit operator input; they never guess a subject, recipient or identity:
+
+```powershell
+.\.venv\Scripts\python -m smartmail preparation set-subject PREPARATION_ID 'PhD supervision enquiry'
+.\.venv\Scripts\python -m smartmail preparation set-recipient PREPARATION_ID name@example.edu
+.\.venv\Scripts\python -m smartmail task confirm-identity TASK_ID
+.\.venv\Scripts\python -m smartmail preparation suggest PREPARATION_ID
+.\.venv\Scripts\python -m smartmail preparation confirm PREPARATION_ID --slot SLOT_ID
+.\.venv\Scripts\python -m smartmail preparation attach PREPARATION_ID --slot SLOT_ID --source SOURCE_ID
+.\.venv\Scripts\python -m smartmail preparation attach PREPARATION_ID --slot SLOT_ID --file 'C:\path\CV.pdf'
+.\.venv\Scripts\python -m smartmail preparation add-attachment PREPARATION_ID --label 'Transcript' --file 'C:\path\transcript.pdf'
+.\.venv\Scripts\python -m smartmail preparation remove-attachment PREPARATION_ID --slot SLOT_ID
+```
+
+When a draft declares an enclosed file, `prepare` creates an **advisory** attachment slot (for example `Student CV`) and shows the best filename candidate. Slots never block readiness and are never confirmed automatically: confirm the suggested candidate, replace it with a preserved Source Material or a local file, add further slots, or remove them. Confirmed bytes are snapshotted with their SHA-256 and are never converted, merged or modified, so later edits to the original file path cannot change them. Every correction is recorded and the whole Preparation is revalidated.
 
 Successful commands print UTF-8 JSON, except `preparation preview`, which prints the message. Core errors return JSON on stderr; argument errors print usage. Both exit with code 2. Task summaries include names and Exception counts; `task show` includes participant records, source row/cell evidence and blocking Exceptions. Successful intake does not establish Ready Preparation or authorize sending.
 
@@ -55,7 +80,7 @@ Successful commands print UTF-8 JSON, except `preparation preview`, which prints
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); required-title, attachment and correction work is the next slice.
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md). Rewrite with inspectable history is the next slice.
 
 ## Verify
 
@@ -70,4 +95,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md) and [ticket 02 validation](docs/ticket-02-validation.md) for measured outcomes and the retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md) and [ticket 03 validation](docs/ticket-03-validation.md) for measured outcomes and the retained terminal pilots.
