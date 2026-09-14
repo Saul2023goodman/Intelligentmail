@@ -154,6 +154,75 @@ def build_parser() -> argparse.ArgumentParser:
     duplicates.add_argument("--campaign", required=True)
     duplicate.add_parser("show").add_argument("id")
 
+    reply = commands.add_parser(
+        "reply", help="Review reliable, automatic and ambiguous reply associations"
+    ).add_subparsers(dest="action", required=True)
+    reply_list = reply.add_parser("list", help="List reply associations for a Campaign")
+    reply_list.add_argument("--campaign", required=True)
+    reply_list.add_argument(
+        "--status", choices=["associated", "ambiguous", "dismissed"],
+        help="Filter by association status")
+    reply.add_parser("show", help="Inspect one association and its evidence").add_argument("id")
+    reply_resolve = reply.add_parser(
+        "resolve", help="Pin an ambiguous reply to an Outreach Task or dismiss it")
+    reply_resolve.add_argument("id")
+    reply_resolve.add_argument("--task", help="Outreach Task ID the reply belongs to")
+    reply_resolve.add_argument(
+        "--dismiss", action="store_true",
+        help="Record that the message is not outreach correspondence")
+
+    followup = commands.add_parser(
+        "followup", help="Configure Follow-up Rules, review Follow-up Due and prepare actions"
+    ).add_subparsers(dest="action", required=True)
+    followup_configure = followup.add_parser(
+        "configure", help="Configure follow-up timing, maximum count and optional templates")
+    followup_configure.add_argument("--campaign", required=True)
+    followup_configure.add_argument("--delay-days", type=int, dest="delay_days")
+    followup_configure.add_argument("--max", type=int, dest="maximum_count")
+    followup_configure.add_argument("--subject-template", dest="subject_template")
+    followup_configure.add_argument("--body-template", dest="body_template")
+    followup_status = followup.add_parser(
+        "status", help="Compute deterministic Follow-up Due eligibility per Task")
+    followup_status.add_argument("--campaign", required=True)
+    followup_prepare = followup.add_parser(
+        "prepare", help="Create due linked Follow-up Actions for a Campaign or Task")
+    followup_prepare.add_argument("--campaign", required=True)
+    followup_prepare.add_argument("--task", dest="task_id")
+    followup_list = followup.add_parser("list", help="List linked Follow-up Actions")
+    followup_list.add_argument("--campaign", required=True)
+    followup.add_parser("show", help="Inspect one Follow-up Action").add_argument("id")
+    followup_action = followup.add_parser(
+        "prepare-action",
+        help="Prepare content for a Follow-up Action marked due for operator preparation")
+    followup_action.add_argument("id")
+    followup_action.add_argument("--source", required=True, help="Source Material ID from imports show")
+
+    report = commands.add_parser(
+        "report", help="Operational summaries with task and evidence drill-down"
+    ).add_subparsers(dest="action", required=True)
+    report_show = report.add_parser("show", help="Summarize a Campaign's operations")
+    report_show.add_argument("--campaign", required=True)
+    report_show.add_argument("--student")
+    report_show.add_argument("--supervisor")
+    report_show.add_argument("--institution")
+    report_show.add_argument("--mailbox")
+    report_show.add_argument(
+        "--message-status", dest="message_status",
+        choices=["locally_planned", "externally_scheduled", "sent",
+                 "observed_failure", "unknown_outcome"])
+    report_show.add_argument(
+        "--duplicate-status", dest="duplicate_status",
+        choices=["no_duplicate_found", "duplicate_suspicion", "ambiguous_match",
+                 "repeat_execution", "linked_follow_up", "unchecked"])
+    report_show.add_argument(
+        "--exceptions", choices=["blocking", "any", "none"])
+    report_show.add_argument(
+        "--follow-up", dest="follow_up",
+        choices=["due", "waiting", "ordinary_reply_received", "reply_review_required",
+                 "maximum_reached", "no_initial_send", "follow_up_open", "rule_not_configured"])
+    report.add_parser("task", help="Drill down into one Outreach Task and its evidence"
+                      ).add_argument("id")
+
     plan = commands.add_parser(
         "plan", help="Configure, propose, adjust and confirm deterministic Sending Plans"
     ).add_subparsers(dest="action", required=True)

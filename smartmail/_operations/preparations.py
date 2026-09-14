@@ -126,7 +126,8 @@ class PreparationOperations:
     def rewrite(self, preparation_id: str, source_id: str) -> dict:
         """Replace an active Preparation with a fresh one, keeping the prior version inspectable."""
         prior = self._db.execute(
-            "SELECT id, task_id, superseded_by FROM preparations WHERE id = ?",
+            "SELECT id, task_id, superseded_by, action_kind, linked_sent_record_id "
+            "FROM preparations WHERE id = ?",
             (preparation_id,)).fetchone()
         if prior is None:
             raise SmartMailError(f"Preparation not found: {preparation_id}")
@@ -165,12 +166,27 @@ class PreparationOperations:
             fresh_id = self._insert_preparation(task, source, parsed, task["sender"], key)
             self._db.execute(
                 "UPDATE preparations SET superseded_by = ? WHERE id = ?", (fresh_id, preparation_id))
+            if prior["action_kind"] != "initial":
+                # A rewritten Follow-up stays the same separate linked Communication
+                # Action; it must never become duplicate-checkable initial outreach.
+                self._db.execute(
+                    "UPDATE preparations SET action_kind = 'follow_up', "
+                    "linked_sent_record_id = ? WHERE id = ?",
+                    (prior["linked_sent_record_id"], fresh_id))
+                self._db.execute(
+                    "UPDATE follow_up_actions SET preparation_id = ? WHERE preparation_id = ?",
+                    (fresh_id, preparation_id))
+                self._record_transformation(
+                    fresh_id, "follow_up_linked",
+                    "Rewritten Preparation keeps the separate linked Follow-up Action for "
+                    f"Sent Record {prior['linked_sent_record_id']}")
             self._db.execute(
                 "UPDATE confirmations SET status = 'invalidated', invalidated_reason = 'rewrite' "
                 "WHERE preparation_id = ? AND status = 'active'", (preparation_id,))
             self._db.execute(
                 "DELETE FROM document_findings WHERE source_id = ? AND code = 'replacement_requires_rewrite'",
                 (source_id,))
+            self._clear_follow_up_reply_pause_if_resolved(prior["task_id"])
         self.suggest_attachment_slots(fresh_id)
         return self.get_preparation(fresh_id)
 

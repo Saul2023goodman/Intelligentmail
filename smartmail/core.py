@@ -9,6 +9,9 @@ from .mailbox import DisabledMailbox
 from ._operations.records import RecordsOperations
 from ._operations.reconciliation import ReconciliationOperations
 from ._operations.duplicates import DuplicateOperations
+from ._operations.replies import ReplyOperations
+from ._operations.followups import FollowUpOperations
+from ._operations.reporting import ReportingOperations
 from ._operations.attachments import AttachmentOperations
 from ._operations.preparations import PreparationOperations
 from ._operations.confirmations import ConfirmationOperations
@@ -21,6 +24,9 @@ class SmartMail(
     RecordsOperations,
     ReconciliationOperations,
     DuplicateOperations,
+    ReplyOperations,
+    FollowUpOperations,
+    ReportingOperations,
     AttachmentOperations,
     PreparationOperations,
     ConfirmationOperations,

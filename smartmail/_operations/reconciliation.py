@@ -95,7 +95,8 @@ class ReconciliationOperations:
             direction = "ambiguous"
         if not folder:
             ambiguity = ambiguity or "Folder is unavailable"
-        if status not in ("received", "sent", "draft", "deleted", "spam", "ambiguous"):
+        if status not in ("received", "sent", "scheduled", "draft", "deleted", "spam",
+                          "ambiguous"):
             ambiguity = ambiguity or f"Unsupported observed message status: {status}"
             status = "ambiguous"
         evidence = message.get("evidence", {})
@@ -122,6 +123,8 @@ class ReconciliationOperations:
             "messages_observed": 0,
             "matched_sent_records": 0,
             "matched_execution_attempts": 0,
+            "associated_replies": 0,
+            "automatic_replies": 0,
             "ambiguous": 0,
             "unassociated": 0,
             "local_state_changed": False,
@@ -164,10 +167,16 @@ class ReconciliationOperations:
                 summary["unassociated"] += 1
                 continue
             if message["direction"] == "inbound":
-                self._insert_reconciliation_finding(
-                    reconciliation_id, message["id"], "unassociated_inbound",
-                    detail="Reply association is outside this verified reconciliation slice")
-                summary["unassociated"] += 1
+                outcome = self._associate_inbound_reply(
+                    mailbox, message, reconciliation_id)
+                if outcome == "associated":
+                    summary["associated_replies"] += 1
+                elif outcome == "automatic":
+                    summary["automatic_replies"] += 1
+                elif outcome == "ambiguous":
+                    summary["ambiguous"] += 1
+                else:
+                    summary["unassociated"] += 1
                 continue
 
             sent_matches = [

@@ -180,6 +180,42 @@ CREATE TABLE IF NOT EXISTS reconciliation_findings (
     basis TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS reply_associations (
+    id TEXT PRIMARY KEY,
+    task_id TEXT REFERENCES tasks(id),
+    student_id TEXT NOT NULL REFERENCES students(id),
+    message_observation_id TEXT NOT NULL UNIQUE REFERENCES mailbox_message_observations(id),
+    status TEXT NOT NULL,
+    reply_kind TEXT NOT NULL DEFAULT '',
+    basis TEXT NOT NULL DEFAULT '',
+    matched_rule TEXT NOT NULL DEFAULT '',
+    evidence TEXT NOT NULL,
+    candidate_task_ids TEXT NOT NULL DEFAULT '[]',
+    evidence_coverage TEXT NOT NULL DEFAULT '{}',
+    resolved_by_operator INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    resolved_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS follow_up_rules (
+    campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
+    delay_days INTEGER NOT NULL,
+    maximum_count INTEGER NOT NULL,
+    subject_template TEXT NOT NULL DEFAULT '',
+    body_template TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS follow_up_actions (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+    sequence INTEGER NOT NULL,
+    follows_sent_record_id TEXT REFERENCES sent_records(id),
+    status TEXT NOT NULL,
+    due_at TEXT NOT NULL,
+    preparation_id TEXT REFERENCES preparations(id),
+    detail TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    UNIQUE(task_id, sequence)
+);
 CREATE TABLE IF NOT EXISTS plan_configurations (
     campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
     timezone TEXT NOT NULL,

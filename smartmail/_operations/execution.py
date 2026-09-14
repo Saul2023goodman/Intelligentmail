@@ -44,6 +44,18 @@ class ExecutionOperations:
                 self._db.commit()
                 paused = True
                 break
+            preparation = self.get_preparation(confirmation["preparation_id"])
+            if preparation["action_kind"] != "initial":
+                new_reply = self._post_confirmation_reply_block(confirmation)
+                if new_reply is not None:
+                    self._pause_flow(campaign_id, "new_associated_reply", {
+                        "detail": "A reliable Ordinary Reply arrived after this Follow-up "
+                                  f"Action was confirmed (association {new_reply['id']}); the "
+                                  "confirmed follow-up would be obsolete",
+                        "reply_association_id": new_reply["id"]})
+                    self._db.commit()
+                    paused = True
+                    break
             existing = self._db.execute(
                 "SELECT * FROM execution_attempts WHERE confirmation_id = ? "
                 "ORDER BY rowid DESC LIMIT 1", (confirmation["id"],)).fetchone()
@@ -160,6 +172,9 @@ class ExecutionOperations:
             if state == "sent":
                 try:
                     self._record_sent(confirmation, attempt_id, request, adapter_evidence)
+                    self._db.execute(
+                        "UPDATE follow_up_actions SET status = 'sent' WHERE preparation_id = ?",
+                        (confirmation["preparation_id"],))
                     self._db.execute(
                         "UPDATE confirmations SET status = 'consumed' WHERE id = ?",
                         (confirmation["id"],))
@@ -353,7 +368,8 @@ class ExecutionOperations:
         return {"id": row["id"], "preparation_id": row["preparation_id"], "task_id": row["task_id"],
                 "attempt_id": row["attempt_id"], **json.loads(row["content"]),
                 "attachments": attachments, "evidence": json.loads(row["evidence"]),
-                "reference": row["reference"]}
+                "reference": row["reference"], "action_kind": row["action_kind"],
+                "follows_sent_record_id": row["follows_sent_record_id"]}
 
     def list_sent_records(self, campaign_id: str) -> list[dict]:
         self.get_campaign(campaign_id)

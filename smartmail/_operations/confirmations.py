@@ -99,6 +99,11 @@ class ConfirmationOperations:
                 if blocking:
                     raise SmartMailError(
                         f"Preparation is not Ready; resolve: {', '.join(blocking)}")
+                if preparation["action_kind"] != "initial" and \
+                        self._ordinary_reply_for_task(preparation["task_id"]):
+                    raise SmartMailError(
+                        "A reliable Ordinary Reply is associated with this Outreach Task; the "
+                        "linked Follow-up Action is no longer eligible")
                 content_digest = self._content_digest(preparation)
                 attachments_digest = self._attachments_digest(preparation)
                 active = self._db.execute(

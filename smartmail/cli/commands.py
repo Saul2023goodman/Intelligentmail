@@ -121,6 +121,41 @@ def dispatch(core, args):
             result = core.list_duplicate_checks(args.campaign)
         else:
             result = core.get_duplicate_check(args.id)
+    elif args.command == "reply":
+        if args.action == "list":
+            result = core.list_reply_associations(
+                args.campaign, status=args.status)
+        elif args.action == "show":
+            result = core.get_reply_association(args.id)
+        else:
+            result = core.resolve_reply_association(
+                args.id, args.task, dismiss=args.dismiss)
+    elif args.command == "followup":
+        if args.action == "configure":
+            result = core.configure_follow_up_rule(
+                args.campaign, delay_days=args.delay_days,
+                maximum_count=args.maximum_count,
+                subject_template=args.subject_template,
+                body_template=args.body_template)
+        elif args.action == "status":
+            result = core.follow_up_status(args.campaign)
+        elif args.action == "prepare":
+            result = core.prepare_follow_ups(args.campaign, task_id=args.task_id)
+        elif args.action == "list":
+            result = core.list_follow_up_actions(args.campaign)
+        elif args.action == "prepare-action":
+            result = core.prepare_follow_up_action(args.id, source_id=args.source)
+        else:
+            result = core.get_follow_up_action(args.id)
+    elif args.command == "report":
+        if args.action == "task":
+            result = core.report_task(args.id)
+        else:
+            result = core.operations_report(
+                args.campaign, student_id=args.student, supervisor_id=args.supervisor,
+                institution_id=args.institution, mailbox=args.mailbox,
+                message_status=args.message_status, duplicate_status=args.duplicate_status,
+                exceptions=args.exceptions, follow_up=args.follow_up)
     elif args.command == "plan":
         if args.action == "configure":
             result = core.configure_plan(

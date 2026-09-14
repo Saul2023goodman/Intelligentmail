@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -72,10 +73,18 @@ class ExecutionTestCase(unittest.TestCase):
         self.directory = Path(self.temp.name)
         self.home = self.directory / "state"
         self.mailbox = ControlledMailbox()
-        self.core = SmartMail(self.home, mailbox=self.mailbox)
+        self.moment = None
+        self.core = SmartMail(
+            self.home, mailbox=self.mailbox,
+            clock=lambda: self.moment or datetime.now(timezone.utc))
         self.addCleanup(self.core.__exit__)
         self.campaign = self.core.create_campaign("2027 outreach")
         self.student = self.core.create_student("Test Student", "student@163.com")
+
+    def at(self, moment):
+        """Pin the controlled clock; pass None to return to wall-clock time."""
+        self.moment = moment
+        return moment
 
     def script(self, *outcomes):
         self.mailbox = ControlledMailbox(list(outcomes))
