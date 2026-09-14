@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SmartMail 邮箱连接</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <h1>SmartMail · 163 邮箱</h1>
+  <p id="status" role="status" aria-live="polite">正在读取连接状态…</p>
+  <p>连接当前已登录的邮箱标签页。邮件准备与发送确认在 SmartMail 中完成。</p>
+  <button id="connect">连接当前邮箱</button><button id="disconnect" class="secondary">断开连接</button>
+  <p class="note">连接不代表发送授权。首次使用须安装本机桥接。发送扩展尚待实邮验收，默认禁用。</p>
+  <details><summary>安装时使用的扩展 ID</summary><code id="extension-id"></code></details>
+  <script src="popup.js"></script>
+</body>
+</html>

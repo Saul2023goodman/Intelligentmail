@@ -2,6 +2,15 @@
 
 Tickets 01 to 10 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, recover interrupted execution with explicit operator takeover, execute operator-confirmed immediate sends in the real 163.com compose interface with Sent-folder evidence, and propose, adjust and confirm deterministic Sending Plans under configured windows, timezone, spacing and daily limits. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, Sending Plans, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence.
 
+## Code organization
+
+The public `SmartMail` interface is assembled in `smartmail/core.py`; its internal
+operation groups separate records, Preparation, attachments, Confirmation,
+Execution, recovery, Reconciliation, duplicates and Sending Plans. Terminal
+arguments, command dispatch and runtime handling live in `smartmail/cli/`.
+See [the code structure guide](docs/code-structure.md) for ownership and transaction
+rules when adding or changing behavior.
+
 ## Run
 
 From the repository root, with Python 3.11 or newer:

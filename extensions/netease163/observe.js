@@ -1,87 +1,31 @@
-async page => {
-  const now = new Date().toISOString();
-  const body = await page.locator("body").innerText();
-  const account = (body.match(/[A-Z0-9._%+-]+@163\.com/i) || [null])[0];
-  if (!page.url().includes("/js6/main.jsp") || !account) {
-    return {
-      status: "authentication_required",
-      mailbox_address: account || "",
-      observed_at: now,
-      detail: "Complete 163.com login, verification, or CAPTCHA in the headed browser, then refresh again",
-      coverage: { folders: [], complete: false, supported_scope_complete: false },
-      messages: []
-    };
-  }
-  const intendedMailbox = __INTENDED_MAILBOX__;
-  if (account.toLowerCase() !== intendedMailbox) {
-    return {
-      status: "wrong_mailbox",
-      mailbox_address: account.toLowerCase(),
-      observed_at: now,
-      detail: `Browser is logged into ${account.toLowerCase()}; intended Mailbox is ${intendedMailbox}`,
-      coverage: { folders: [], complete: false, supported_scope_complete: false },
-      messages: []
-    };
-  }
+/* Read-only built-in folder scan. No message-body endpoint or mailbox mutations. */
+(() => {
+  const api = globalThis.SmartMail163;
+  api.observe = async (mailboxAddress, deadline) => {
+    const account = api.account();
+    if (account !== mailboxAddress) return api.observationFailure(
+      account ? "wrong_mailbox" : "authentication_required", "Reconnect the intended logged-in Mailbox", account);
+    const folderDefinitions = [
+      { folder: "inbox", fid: 1, label: "收件箱" },
+      { folder: "drafts", fid: 2, label: "草稿箱" },
+      { folder: "sent", fid: 3, label: "已发送" },
+      { folder: "deleted", fid: 4, label: "已删除" },
+      { folder: "spam", fid: 5, label: "垃圾邮件" }
+    ];
+    const tree = Array.from(document.querySelectorAll('[role="treeitem"]'));
+    const other = tree.find(node => /^其他\d+个文件夹/.test(node.textContent.trim()));
+    if (other && other.getAttribute("aria-expanded") !== "true") {
+      other.click();
+      await api.delay(300);
+    }
+    const labels = Array.from(document.querySelectorAll('[role="treeitem"]')).map(node => node.textContent.trim());
+    const definitions = folderDefinitions.filter(definition => labels.some(
+      label => label === definition.label || label.startsWith(definition.label + "(")));
 
-  const folderDefinitions = [
-    { folder: "inbox", fid: 1, label: "收件箱" },
-    { folder: "drafts", fid: 2, label: "草稿箱" },
-    { folder: "sent", fid: 3, label: "已发送" },
-    { folder: "deleted", fid: 4, label: "已删除" },
-    { folder: "spam", fid: 5, label: "垃圾邮件" }
-  ];
-  const otherFolders = page.getByRole("treeitem", { name: /^其他\d+个文件夹/ }).first();
-  if (await otherFolders.count() && await otherFolders.getAttribute("aria-expanded") !== "true") {
-    await otherFolders.click({ timeout: 10000 });
-    await page.waitForTimeout(300);
-  }
-  const discovered = [];
-  for (const definition of folderDefinitions) {
-    const locator = page.getByRole("treeitem", {
-      name: new RegExp(`^${definition.label}(?:\\(|$)`)
-    }).first();
-    if (await locator.count()) discovered.push(definition);
-  }
-
-  const scan = await page.evaluate(async ({ definitions, mailboxAddress }) => {
-    const sid = new URL(location.href).searchParams.get("sid");
     const pageSize = 50;
-    const valueOf = node => {
-      if (!node) return null;
-      if (node.tagName === "int" || node.tagName === "long") {
-        const value = Number(node.textContent || 0);
-        return Number.isFinite(value) ? value : null;
-      }
-      if (node.tagName === "boolean") return node.textContent === "true";
-      if (node.tagName === "array") return Array.from(node.children).map(valueOf);
-      if (node.tagName === "object") {
-        const value = {};
-        for (const child of Array.from(node.children)) {
-          const name = child.getAttribute("name") || child.tagName;
-          const decoded = valueOf(child);
-          if (Object.prototype.hasOwnProperty.call(value, name)) {
-            value[name] = Array.isArray(value[name]) ? [...value[name], decoded] : [value[name], decoded];
-          } else {
-            value[name] = decoded;
-          }
-        }
-        return value;
-      }
-      return node.textContent || "";
-    };
-    const xmlDocument = async response => new DOMParser().parseFromString(
-      new TextDecoder("utf-8").decode(await response.arrayBuffer()), "application/xml");
-    const post = async (func, xml) => fetch(
-      `/js6/s?sid=${encodeURIComponent(sid)}&func=${encodeURIComponent(func)}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ var: xml })
-      });
+    const { valueOf, xmlDocument, post, codeOf } = api;
     const listPayload = (fid, start) => `<?xml version="1.0"?><object><int name="fid">${fid}</int><string name="order">date</string><boolean name="desc">true</boolean><int name="limit">${pageSize}</int><int name="start">${start}</int><boolean name="skipLockedFolders">false</boolean><boolean name="returnTag">true</boolean><boolean name="returnTotal">true</boolean></object>`;
-    const readPayload = id => `<?xml version="1.0"?><object><string name="id">${id}</string><boolean name="header">true</boolean><boolean name="returnImageInfo">true</boolean><boolean name="returnAntispamInfo">true</boolean><boolean name="autoName">true</boolean><boolean name="supportTNEF">true</boolean></object>`;
-    const codeOf = document => document.querySelector("code")?.textContent || "";
+    const readPayload = id => `<?xml version="1.0"?><object><string name="id">${api.escapeXML(id)}</string><boolean name="header">true</boolean><boolean name="returnImageInfo">true</boolean><boolean name="returnAntispamInfo">true</boolean><boolean name="autoName">true</boolean><boolean name="supportTNEF">true</boolean></object>`;
     const addressIn = value => {
       const match = String(value || "").match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
       return match ? match[0].toLowerCase() : "";
@@ -109,7 +53,8 @@ async page => {
       let pagesSucceeded = 0;
       const errors = [];
       const ids = new Set();
-      while (total === null || start < total) {
+      while ((total === null || start < total) && start < 5000) {
+        api.assertDeadline(deadline);
         pagesRequested += 1;
         try {
           const response = await post("mbox:listMessages", listPayload(definition.fid, start));
@@ -121,7 +66,7 @@ async page => {
           const pageRows = Array.from(container?.children || [])
             .filter(node => node.tagName === "object").map(valueOf);
           const totalNode = document.querySelector('[name="total"]');
-          const reportedTotal = Number(totalNode?.textContent);
+          const reportedTotal = totalNode ? Number(totalNode.textContent) : NaN;
           if (Number.isFinite(reportedTotal)) total = reportedTotal;
           pagesSucceeded += 1;
           for (const row of pageRows) {
@@ -157,6 +102,7 @@ async page => {
     }
 
     for (let offset = 0; offset < rows.length; offset += 5) {
+      api.assertDeadline(deadline);
       await Promise.all(rows.slice(offset, offset + 5).map(async item => {
         const folderCoverage = folders.find(folder => folder.folder_id === item.definition.fid);
         folderCoverage.details_requested += 1;
@@ -221,33 +167,15 @@ async page => {
         }
       };
     });
-    return { folders, messages };
-  }, { definitions: discovered, mailboxAddress: account.toLowerCase() });
 
-  const supportedScopeComplete = discovered.length === folderDefinitions.length &&
-    scan.folders.every(folder => folder.complete);
-  return {
-    status: supportedScopeComplete ? "complete" : "partial",
-    mailbox_address: account.toLowerCase(),
-    observed_at: now,
-    detail: "Read-only folder enumeration and metadata detail scan in the authenticated 163.com browser session",
-    coverage: {
-      scope: "recognized built-in folders discovered in the live DOM",
-      complete: false,
-      supported_scope_complete: supportedScopeComplete,
-      folder_discovery: {
-        method: "live_dom",
-        recognized: discovered.map(folder => ({ folder: folder.folder, folder_id: folder.fid })),
-        expected_recognized: folderDefinitions.length,
-        complete: discovered.length === folderDefinitions.length
-      },
-      folders: scan.folders,
-      limitations: [
-        "Virtual views and unrecognized custom folders are not scanned",
-        "Message bodies are not fetched because the body endpoint changes unread state",
-        "Whole-mailbox completeness is not claimed beyond the recognized built-in folder scope"
-      ]
-    },
-    messages: scan.messages
+    const supportedScopeComplete = definitions.length === folderDefinitions.length && folders.every(folder => folder.complete);
+    return {
+      status: supportedScopeComplete ? "complete" : "partial", mailbox_address: account,
+      observed_at: new Date().toISOString(), detail: "Dedicated extension metadata-only observation",
+      coverage: { complete: false, supported_scope_complete: supportedScopeComplete, folders,
+        scope: "recognized built-in folders discovered in the connected tab",
+        limitations: ["Custom folders excluded", "Message bodies excluded to preserve unread state", "At most 5000 rows per folder"] },
+      messages
+    };
   };
-}
+})();

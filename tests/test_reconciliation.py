@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 from smartmail import SmartMail
-from smartmail.mailbox import ControlledMailbox, NetEase163Mailbox
+from smartmail.mailbox import ControlledMailbox, NetEase163ExtensionMailbox
 from tests.test_execution import ExecutionTestCase, SUBJECT
 
 
@@ -117,13 +117,10 @@ class ReconciliationBoundaryTests(unittest.TestCase):
         self.assertTrue(controlled["immediate_send"]["available"])
         self.assertFalse(controlled["native_scheduling"]["available"])
 
-        live = NetEase163Mailbox().capabilities()
-        self.assertTrue(live["read_history"]["available"])
-        self.assertTrue(live["read_history"]["verified"])
-        # Ticket 09 verifies immediate sending; native scheduling, cancellation
-        # and Recall remain independently disabled until separately verified.
-        self.assertTrue(live["immediate_send"]["available"])
-        self.assertTrue(live["immediate_send"]["verified"])
+        live = NetEase163ExtensionMailbox(self.home).capabilities()
+        self.assertFalse(live["read_history"]["available"], "an extension must be connected explicitly")
+        self.assertFalse(live["read_history"]["verified"], "legacy acceptance does not verify the extension")
+        self.assertFalse(live["immediate_send"]["available"])
         for capability in ("native_scheduling", "schedule_cancellation", "recall"):
             self.assertFalse(live[capability]["available"])
 
