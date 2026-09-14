@@ -6,10 +6,22 @@ import os
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 from . import SmartMail, SmartMailError
 from .mailbox import ControlledMailbox, NetEase163Mailbox
+
+
+def controlled_clock(value):
+    """A fixed instant so planning and expiry decisions are reproducible."""
+    if not value:
+        return None
+    try:
+        moment = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as error:
+        raise SmartMailError(f"Unsupported --now value: {value}") from error
+    return lambda: moment
 
 
 def main() -> int:
@@ -22,6 +34,8 @@ def main() -> int:
                         help="Outcome script for the controlled adapter (development and testing)")
     parser.add_argument("--browser-session", default="smartmail-163",
                         help="Named Playwright CLI session used by the read-only 163 browser adapter")
+    parser.add_argument("--now",
+                        help="Controlled ISO-8601 time for reproducible planning and expiry acceptance")
     commands = parser.add_subparsers(dest="command", required=True)
 
     campaign = commands.add_parser("campaign", help="Create, list or inspect Campaigns").add_subparsers(dest="action", required=True)
@@ -160,6 +174,33 @@ def main() -> int:
     duplicates.add_argument("--campaign", required=True)
     duplicate.add_parser("show").add_argument("id")
 
+    plan = commands.add_parser(
+        "plan", help="Configure, propose, adjust and confirm deterministic Sending Plans"
+    ).add_subparsers(dest="action", required=True)
+    plan_configure = plan.add_parser(
+        "configure", help="Configure allowed windows, timezone, spacing and daily limits")
+    plan_configure.add_argument("--campaign", required=True)
+    plan_configure.add_argument("--timezone", help="IANA timezone such as Asia/Shanghai")
+    plan_configure.add_argument("--window", action="append", dest="windows",
+                                help="Repeatable allowed window, e.g. 'MON-FRI 09:00-17:00'")
+    plan_configure.add_argument("--spacing", type=int, dest="spacing_minutes",
+                                help="Minimum minutes between two actions")
+    plan_configure.add_argument("--daily-limit", type=int)
+    plan_configure.add_argument("--horizon-days", type=int)
+    plan_propose = plan.add_parser(
+        "propose", help="Propose sending times under the configured constraints")
+    plan_propose.add_argument("--campaign", required=True)
+    plan_list = plan.add_parser("list", help="List the Campaign's Sending Plans and their status")
+    plan_list.add_argument("--campaign", required=True)
+    plan.add_parser("show", help="Review every planned action before Confirmation").add_argument("id")
+    plan_adjust = plan.add_parser(
+        "adjust", help="Set one planned action's exact time before Confirmation")
+    plan_adjust.add_argument("id")
+    plan_adjust.add_argument("--preparation", required=True)
+    plan_adjust.add_argument("--time", required=True, help="Exact ISO-8601 time in the plan timezone")
+    plan.add_parser(
+        "confirm", help="Authorize every scheduled action of a Sending Plan").add_argument("id")
+
     source = commands.add_parser("source", help="Open a fresh copy of preserved original bytes").add_subparsers(dest="action", required=True)
     opening = source.add_parser("open")
     opening.add_argument("id")
@@ -173,7 +214,7 @@ def main() -> int:
                        else ControlledMailbox())
         elif args.adapter == "163-browser":
             mailbox = NetEase163Mailbox(session=args.browser_session)
-        with SmartMail(args.home, mailbox=mailbox) as core:
+        with SmartMail(args.home, mailbox=mailbox, clock=controlled_clock(args.now)) as core:
             if args.command == "campaign":
                 if args.action == "create":
                     result = core.create_campaign(args.name)
@@ -289,6 +330,22 @@ def main() -> int:
                     result = core.list_duplicate_checks(args.campaign)
                 else:
                     result = core.get_duplicate_check(args.id)
+            elif args.command == "plan":
+                if args.action == "configure":
+                    result = core.configure_plan(
+                        args.campaign, timezone=args.timezone, windows=args.windows,
+                        spacing_minutes=args.spacing_minutes, daily_limit=args.daily_limit,
+                        horizon_days=args.horizon_days)
+                elif args.action == "propose":
+                    result = core.propose_plan(args.campaign)
+                elif args.action == "list":
+                    result = core.list_plans(args.campaign)
+                elif args.action == "adjust":
+                    result = core.adjust_plan(args.id, args.preparation, args.time)
+                elif args.action == "confirm":
+                    result = core.confirm_plan(args.id)
+                else:
+                    result = core.get_plan(args.id)
             else:
                 path = core.materialize_source(args.id)
                 if not args.path_only:

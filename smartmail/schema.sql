@@ -180,3 +180,37 @@ CREATE TABLE IF NOT EXISTS reconciliation_findings (
     basis TEXT NOT NULL DEFAULT '',
     detail TEXT NOT NULL DEFAULT ''
 );
+CREATE TABLE IF NOT EXISTS plan_configurations (
+    campaign_id TEXT PRIMARY KEY REFERENCES campaigns(id),
+    timezone TEXT NOT NULL,
+    windows TEXT NOT NULL,
+    spacing_minutes INTEGER NOT NULL,
+    daily_limit INTEGER NOT NULL,
+    horizon_days INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sending_plans (
+    id TEXT PRIMARY KEY,
+    campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'proposed',
+    timezone TEXT NOT NULL,
+    windows TEXT NOT NULL,
+    spacing_minutes INTEGER NOT NULL,
+    daily_limit INTEGER NOT NULL,
+    horizon_days INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sending_plan_proposals (
+    id TEXT PRIMARY KEY,
+    plan_id TEXT NOT NULL REFERENCES sending_plans(id),
+    preparation_id TEXT NOT NULL REFERENCES preparations(id),
+    task_id TEXT NOT NULL REFERENCES tasks(id),
+    sequence INTEGER NOT NULL,
+    status TEXT NOT NULL DEFAULT 'scheduled',
+    reason TEXT NOT NULL DEFAULT '',
+    constraint_name TEXT NOT NULL DEFAULT '',
+    detail TEXT NOT NULL DEFAULT '',
+    scheduled_at TEXT NOT NULL DEFAULT '',
+    scheduled_utc TEXT NOT NULL DEFAULT '',
+    confirmation_id TEXT REFERENCES confirmations(id),
+    UNIQUE(plan_id, preparation_id)
+);

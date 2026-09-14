@@ -19,11 +19,27 @@ validation in "Verify".
 - `smartmail/__main__.py` — argparse terminal shell; adapters chosen via `--adapter`.
 - `smartmail/schema.sql` — schema; new columns are added via the idempotent `_migrate` tuples.
 
+## Sending Plans (ticket 10)
+- Terminal `plan configure|propose|list|show|adjust|confirm`; core `configure_plan`, `propose_plan`,
+  `get_plan`, `list_plans`, `adjust_plan`, `confirm_plan`. Tables `plan_configurations`,
+  `sending_plans`, `sending_plan_proposals` (created idempotently by `schema.sql`).
+- Configuration: IANA timezone, repeatable `--window 'MON-FRI 09:00-17:00'`, spacing minutes, daily
+  limit, horizon days. Defaults in `PLAN_DEFAULTS`. `tzdata` is required on Windows for `zoneinfo`.
+- **Controlled time:** `SmartMail(home, mailbox=..., clock=callable)` and the terminal's global
+  `--now ISO-8601`. `_now()` is an instance method; use it for new timestamps.
+- A plan holds a configuration *snapshot*; `adjust_plan` validates against that snapshot, and any
+  refused adjustment leaves the plan untouched. Moving a confirmed action invalidates its
+  Confirmation (`adjusted`); unchanged re-confirmation is idempotent, changed content renews.
+- A `scheduled` Confirmation is never executed as an immediate send: `_require_immediate_kind`
+  refuses before any attempt/mailbox check, so the operator sees the unverified native-scheduling
+  capability rather than "execution disabled". Elapsed times pause (`confirmation_expired`) with the
+  explicit "replacement time required, never immediate" detail.
+
 ## Tests
-`\.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests` (157 tests, 5 opt-in skips).
-`.venv` has openpyxl. Adapter tests use a fake Playwright runner (`tests/test_live_send.py`) — keep
-tests independent of live accounts; verify the real browser separately in live acceptance. Throwaway
-pilots belong in `.smartmail/` (gitignored), e.g. `.smartmail/ticket09-pilot.py`.
+`\.\.venv\Scripts\python.exe -X utf8 -m unittest discover -s tests` (196 tests, 5 opt-in skips).
+`.venv` has openpyxl and tzdata. Adapter tests use a fake Playwright runner (`tests/test_live_send.py`) —
+keep tests independent of live accounts; verify the real browser separately in live acceptance.
+Throwaway pilots belong in `.smartmail/` (gitignored), e.g. `.smartmail/ticket10-pilot.py`.
 
 ## Live 163.com acceptance (hard-won)
 - **Use a persistent profile.** Playwright's default context is incognito-like: cookies live only in
