@@ -120,8 +120,11 @@ class ReconciliationBoundaryTests(unittest.TestCase):
         live = NetEase163Mailbox().capabilities()
         self.assertTrue(live["read_history"]["available"])
         self.assertTrue(live["read_history"]["verified"])
-        for capability in ("immediate_send", "native_scheduling",
-                           "schedule_cancellation", "recall"):
+        # Ticket 09 verifies immediate sending; native scheduling, cancellation
+        # and Recall remain independently disabled until separately verified.
+        self.assertTrue(live["immediate_send"]["available"])
+        self.assertTrue(live["immediate_send"]["verified"])
+        for capability in ("native_scheduling", "schedule_cancellation", "recall"):
             self.assertFalse(live[capability]["available"])
 
     def test_folder_scan_coverage_and_non_delivery_states_are_preserved(self):

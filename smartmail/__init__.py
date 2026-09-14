@@ -4,6 +4,8 @@ import sqlite3
 import hashlib
 import json
 import re
+import shutil
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from uuid import uuid4
@@ -1710,8 +1712,10 @@ class SmartMail:
                     (json.dumps(evidence, ensure_ascii=False), now, now, attempt_id))
             self._db.commit()
 
+            attachment_files, cleanup_attachments = self._materialize_attachments(
+                confirmation["preparation_id"])
             try:
-                evidence = self._submit(request)
+                evidence = self._submit(request, attachment_files)
                 if not isinstance(evidence, dict) or evidence.get("outcome") not in {
                         "sent", "failed", "unknown", "authentication_required"}:
                     raise SmartMailError("Mailbox adapter returned an unsupported execution outcome")
@@ -1750,6 +1754,8 @@ class SmartMail:
                 self._pause_flow(campaign_id, "recovery_required", evidence)
                 self._db.commit()
                 raise
+            finally:
+                cleanup_attachments()
 
             adapter_evidence = dict(evidence)
             state = adapter_evidence["outcome"]
@@ -1851,11 +1857,41 @@ class SmartMail:
                 "subject": preparation["subject"], "body": preparation["body"],
                 "attachments": attachments, "kind": execution["kind"]}
 
-    def _submit(self, request: dict) -> dict:
+    def _submit(self, request: dict, attachments=None) -> dict:
         try:
-            return self.mailbox.submit(request)
+            return self.mailbox.submit(request, attachments)
         except MailboxCapabilityError as error:
             raise SmartMailError(str(error)) from error
+
+    @staticmethod
+    def _safe_attachment_name(name: str) -> str:
+        candidate = Path(str(name)).name
+        candidate = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", candidate).strip(" .")
+        return candidate or "attachment"
+
+    def _materialize_attachments(self, preparation_id: str):
+        """Copy the confirmed attachment bytes to private files for the adapter.
+
+        Only adapters that upload from disk need this.  Each attachment gets its
+        own folder so the exact confirmed filename is preserved and colliding
+        names cannot overwrite one another.  The copies are removed after the
+        single submission; preserved bytes are never modified.
+        """
+        if not getattr(self.mailbox, "needs_attachment_files", False):
+            return [], (lambda: None)
+        preparation = self.get_preparation(preparation_id)
+        confirmed = [slot for slot in preparation["attachment_slots"] if slot["attachment"]]
+        if not confirmed:
+            return [], (lambda: None)
+        directory = tempfile.mkdtemp(prefix="smartmail-send-")
+        paths = []
+        for index, slot in enumerate(confirmed):
+            folder = Path(directory) / f"slot{index}"
+            folder.mkdir()
+            target = folder / self._safe_attachment_name(slot["attachment"]["name"])
+            target.write_bytes(self.read_attachment(slot["attachment"]["id"]))
+            paths.append(target)
+        return paths, (lambda: shutil.rmtree(directory, ignore_errors=True))
 
     def _record_sent(self, confirmation: dict, attempt_id: str, request: dict, evidence: dict) -> str:
         """Freeze the exact content and attachment bytes that the mailbox confirmed as sent."""

@@ -62,7 +62,12 @@ class MailboxCapability:
             "messages": [],
         }
 
-    def submit(self, request: dict) -> dict:
+    #: Whether an adapter needs the confirmed attachment bytes materialized to
+    #: private files before submission. The controlled adapter does not; the
+    #: live browser adapter uploads them from disk.
+    needs_attachment_files = False
+
+    def submit(self, request: dict, attachments=None) -> dict:
         raise MailboxCapabilityError("No external mailbox capability is enabled")
 
 
@@ -72,7 +77,7 @@ class DisabledMailbox(MailboxCapability):
     name = "disabled"
     enabled = False
 
-    def submit(self, request: dict) -> dict:
+    def submit(self, request: dict, attachments=None) -> dict:
         raise MailboxCapabilityError(
             "External execution is disabled: no verified mailbox capability is enabled")
 
@@ -118,7 +123,7 @@ class ControlledMailbox(MailboxCapability):
             raise MailboxCapabilityError("Controlled observation must be a JSON object")
         return {"mailbox_address": mailbox_address, **scripted}
 
-    def submit(self, request: dict) -> dict:
+    def submit(self, request: dict, attachments=None) -> dict:
         scripted = self._outcomes.pop(0) if self._outcomes else self._default
         if isinstance(scripted, dict) and scripted.get("crash") == "before_submission":
             raise MailboxCrash("before_submission")
@@ -155,28 +160,45 @@ class ControlledMailbox(MailboxCapability):
 
 
 class NetEase163Mailbox(MailboxCapability):
-    """Scan recognized folders and message metadata in an operator-owned browser.
+    """Observe history and carry out confirmed immediate sends in an operator browser.
 
     The adapter intentionally uses the Playwright CLI session rather than
     storing mailbox credentials. If login, verification, or a CAPTCHA is
     required it opens a headed browser and returns ``authentication_required``;
-    the operator completes that interaction and runs refresh again.
+    the operator completes that interaction and runs the command again.
 
-    This adapter has no execution capability. It enumerates canonical IDs from
-    folder-level list requests and reads header/MIME metadata without fetching
-    message-body HTML, whose endpoint changes unread state.
+    Read-only history enumerates canonical IDs from folder-level list requests
+    and reads header/MIME metadata without fetching message-body HTML, whose
+    endpoint changes unread state. Immediate sending opens the real compose
+    interface for the exact confirmed content and only reports ``sent`` when
+    the Sent folder confirms the message. Native scheduling, cancellation and
+    Recall stay disabled: their verification is a separate capability.
     """
 
     name = "163-browser"
-    enabled = False
+    enabled = True
+    needs_attachment_files = True
     _SESSION_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 
-    def __init__(self, session: str = "smartmail-163", runner=None):
+    def __init__(self, session: str = "smartmail-163", runner=None, profile=None):
         if not self._SESSION_RE.fullmatch(session):
             raise MailboxCapabilityError(
                 "Browser session may contain only letters, digits, underscores, and hyphens")
         self.session = session
         self._runner = runner or subprocess.run
+        self.profile = Path(profile) if profile else self._default_profile()
+
+    @staticmethod
+    def _default_profile() -> Path:
+        """A stable user-data directory so the operator login survives restarts.
+
+        Playwright's default context is incognito-like: cookies live only in
+        memory and vanish the moment the browser closes.  A persistent profile
+        keeps the authenticated session on disk across daemon restarts, so the
+        operator logs in once and every later refresh/execution reuses it.
+        """
+        configured = os.environ.get("SMARTMAIL_BROWSER_PROFILE")
+        return Path(configured) if configured else Path.cwd() / ".smartmail" / "browser-163"
 
     def capabilities(self) -> dict:
         capabilities = super().capabilities()
@@ -189,10 +211,17 @@ class NetEase163Mailbox(MailboxCapability):
                 "remain excluded to preserve unread state"
             ),
         }
-        for capability in (
-                "immediate_send", "native_scheduling", "schedule_cancellation", "recall"):
+        capabilities["immediate_send"] = {
+            "available": True,
+            "verified": True,
+            "basis": (
+                "Confirmed operator execution opens and fills the real compose interface "
+                "and reports Sent only after the Sent folder confirms the message"
+            ),
+        }
+        for capability in ("native_scheduling", "schedule_cancellation", "recall"):
             capabilities[capability]["basis"] = (
-                "Not enabled; read-only history verification does not verify this capability")
+                "Not enabled; immediate-send verification does not verify this capability")
         return capabilities
 
     def observe(self, mailbox_address: str) -> dict:
@@ -258,6 +287,68 @@ class NetEase163Mailbox(MailboxCapability):
             }
         return observation
 
+    def submit(self, request: dict, attachments=None) -> dict:
+        """Carry out one confirmed immediate send and report observed evidence.
+
+        The compose interface is opened and filled only with the exact confirmed
+        snapshot.  ``sent`` is returned solely when the Sent folder confirms the
+        message; an unconfirmed submission stays ``unknown``.  Authentication
+        interruptions are handed to the operator rather than bypassed.
+        """
+        if not isinstance(request, dict):
+            raise MailboxCapabilityError("A confirmed execution request is required")
+        files = [str(Path(path)) for path in (attachments or [])]
+        collector = Path(__file__).with_name("netease_163_sender.js").read_text(encoding="utf-8")
+        # ensure_ascii keeps the injected literals ASCII-safe for the command
+        # line; JavaScript decodes the escapes natively.
+        collector = collector.replace("__SEND_REQUEST__", json.dumps(request))
+        collector = collector.replace("__ATTACHMENT_FILES__", json.dumps(files))
+        try:
+            result = self._run_cli("--json", "run-code", collector)
+        except subprocess.TimeoutExpired:
+            return self._send_result("unknown", "Confirmed 163.com submission timed out")
+        if result.returncode != 0:
+            combined = result.stdout + result.stderr
+            if "is not open" in combined:
+                try:
+                    self._open_browser()
+                except subprocess.TimeoutExpired:
+                    return self._send_result(
+                        "unknown", "Opening the headed 163.com browser timed out")
+                return self._send_result(
+                    "authentication_required",
+                    "The headed 163.com browser is open. Complete login, verification, or "
+                    "CAPTCHA as the operator, then run execution again")
+            try:
+                detail = json.loads(result.stdout).get("error", "Browser submission failed")
+            except json.JSONDecodeError:
+                detail = (result.stderr or result.stdout or "Browser submission failed").strip()
+            return self._send_result("unknown", detail)
+        try:
+            envelope = json.loads(result.stdout)
+            evidence = json.loads(envelope["result"])
+        except (json.JSONDecodeError, KeyError, TypeError) as error:
+            snippet = (result.stdout or result.stderr or "").strip()[:400]
+            raise MailboxCapabilityError(
+                f"163.com returned an unsupported or ambiguous send result: "
+                f"{snippet or 'no output'}") from error
+        if not isinstance(evidence, dict) or evidence.get("outcome") not in {
+                "sent", "failed", "unknown", "authentication_required"}:
+            raise MailboxCapabilityError(
+                "163.com returned an unsupported or ambiguous send outcome")
+        evidence.setdefault("reference", "")
+        evidence.setdefault("detail", "")
+        return evidence
+
+    @staticmethod
+    def _send_result(outcome: str, detail: str) -> dict:
+        return {
+            "outcome": outcome,
+            "reference": "",
+            "detail": detail,
+            "observed_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     def _command(self, *arguments: str) -> list[str]:
         prefix = ["npx.cmd"]
         node = shutil.which("node")
@@ -295,7 +386,9 @@ class NetEase163Mailbox(MailboxCapability):
             encoding="utf-8", timeout=300)
 
     def _open_browser(self) -> None:
-        result = self._run_cli("open", "https://mail.163.com", "--headed")
+        result = self._run_cli(
+            "open", "https://mail.163.com", "--headed",
+            "--persistent", "--profile", str(self.profile))
         if result.returncode != 0:
             raise MailboxCapabilityError(
                 "Cannot open the headed 163.com browser; verify Node.js/npm and Playwright CLI")

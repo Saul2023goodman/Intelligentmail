@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 to 08 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a controlled mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, and recover interrupted execution with explicit operator takeover. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence.
+Tickets 01 to 09 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, recover interrupted execution with explicit operator takeover, and execute operator-confirmed immediate sends in the real 163.com compose interface with Sent-folder evidence. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence.
 
 ## Run
 
@@ -138,7 +138,20 @@ Every refresh persists the observation, canonical platform references, list and 
 .\.venv\Scripts\python -m smartmail reconciliation show RECONCILIATION_ID
 ```
 
-Reconciliation links exact observable matches and leaves unsupported, ambiguous and unassociated observations explicit. It never treats the mailbox as SmartMail's primary store and does not change an unresolved attempt merely because a list row looks similar. The controlled adapter accepts an `observations` array in its JSON script for repeatable command-boundary tests. Reading is an independent capability: the live adapter leaves immediate send, native scheduling, cancellation and Recall disabled.
+Reconciliation links exact observable matches and leaves unsupported, ambiguous and unassociated observations explicit. It never treats the mailbox as SmartMail's primary store and does not change an unresolved attempt merely because a list row looks similar. The controlled adapter accepts an `observations` array in its JSON script for repeatable command-boundary tests. Reading is an independent capability and turns on no state-changing operation.
+
+The adapter opens a **persistent** browser profile (default `.smartmail/browser-163`, override with `SMARTMAIL_BROWSER_PROFILE`) so the operator authenticates once and later refreshes and executions reuse the saved session. Playwright's default incognito-like context keeps cookies only in memory; a persistent profile is required for a reusable login.
+
+## Execute a confirmed immediate send in 163.com
+
+Confirmed immediate sending uses the same command boundary as the controlled adapter, against the same named session:
+
+```powershell
+.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 confirmation confirm PREPARATION_ID
+.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 execution run CONFIRMATION_ID
+```
+
+Execution opens and fills the real compose interface with the **exact confirmed** sender, recipient, subject, body and attachment snapshot, attaches the confirmed bytes, and submits once. It reports `sent` only when the Sent folder confirms the message; a submission that is not confirmed stays `unknown`, and authentication interruptions are handed to the operator. 163 interposes a promotional "智能优化您的英文邮件" modal on the first submit; the adapter dismisses that prompt and completes the blocked submission rather than treating it as sent. A confirmed `sent` creates an immutable Sent Record (frozen content, attachment bytes and platform reference) and consumes the Confirmation. Set `SMARTMAIL_BROWSER_PROFILE` to relocate the profile. Native scheduling, cancellation and Recall remain disabled capabilities.
 
 ## Detect historical duplicates before execution
 
@@ -164,7 +177,7 @@ Another Student addressing the same Supervisor is never a duplicate, and a linke
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md); crash recovery and Manual Takeover are documented under [Supported Execution Recovery Pattern 08](docs/recovery-pattern-08.md).
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md); crash recovery and Manual Takeover are documented under [Supported Execution Recovery Pattern 08](docs/recovery-pattern-08.md); confirmed immediate sending in the real 163.com compose interface is documented under [Supported Immediate Send Pattern 09](docs/immediate-send-pattern-09.md).
 
 ## Verify
 
@@ -179,4 +192,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md), [ticket 05 validation](docs/ticket-05-validation.md), [ticket 07 validation](docs/ticket-07-validation.md), and [ticket 08 validation](docs/ticket-08-validation.md) for measured outcomes and the retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md), [ticket 05 validation](docs/ticket-05-validation.md), [ticket 07 validation](docs/ticket-07-validation.md), [ticket 08 validation](docs/ticket-08-validation.md), and [ticket 09 validation](docs/ticket-09-validation.md) for measured outcomes and the retained terminal pilots.

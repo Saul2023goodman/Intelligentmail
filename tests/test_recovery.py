@@ -10,14 +10,14 @@ from tests.test_execution import ExecutionTestCase, SUBJECT
 class CrashBeforeSubmissionMailbox(ControlledMailbox):
     """The process fails at the adapter boundary before external submission."""
 
-    def submit(self, request):
+    def submit(self, request, attachments=None):
         raise RuntimeError("simulated process crash before submission")
 
 
 class CrashDuringSubmissionMailbox(ControlledMailbox):
     """The adapter received the request but the process lost the response."""
 
-    def submit(self, request):
+    def submit(self, request, attachments=None):
         self.requests.append(request)
         raise RuntimeError("simulated process crash during submission")
 
