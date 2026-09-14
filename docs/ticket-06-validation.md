@@ -1,7 +1,13 @@
-# Ticket 06 Validation: 163.com Observation and Reconciliation
+# Ticket 06 Validation: 163.com Observation and Reconciliation (historical)
 
-Date: 2026-09-11  
-Platform: real 163.com webmail in a named, headed Playwright CLI browser session  
+> Historical record: this validation was completed against the retired Playwright
+> CLI adapter on 2026-09-11. The current product uses the dedicated extension
+> described in [the pivot guide](browser-extension-pivot.md). These measurements
+> remain useful evidence about the 163.com mailbox surface, but they do not mark
+> the extension's capabilities verified.
+
+Date: 2026-09-11
+Platform: retired real 163.com webmail Playwright CLI session
 Safety boundary: live-DOM discovery, folder pagination and metadata-only detail reads
 
 ## Command-boundary verification
@@ -55,7 +61,7 @@ Exploration separately tested the body-HTML URL with tracking suppression enable
 
 Screenshots and the Playwright trace were captured locally under ignored `output/playwright/` and `.playwright-cli/` paths. They intentionally are not repository artifacts.
 
-## Capability result
+## Legacy capability result
 
 | Capability | Available | Live verified |
 | --- | --- | --- |
@@ -65,4 +71,6 @@ Screenshots and the Playwright trace were captured locally under ignored `output
 | Schedule cancellation | No | No |
 | Recall | No | No |
 
-The browser adapter's execution guard remains disabled. Successful history reading cannot authorize or imply any state-changing operation.
+The retired browser adapter's execution guard remained disabled. Successful history
+reading could not authorize or imply any state-changing operation. Re-run this
+acceptance through `163-extension` before recording current live verification.

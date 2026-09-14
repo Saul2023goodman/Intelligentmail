@@ -68,7 +68,10 @@ mailbox evidence. Keep those tests independent of the internal method grouping.
 
 ```powershell
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
+node --test extensions/netease163/tests/commands.test.mjs
 ```
 
 Representative-material tests require the explicitly configured archive described
-in the README. The ordinary regression suite does not send real email.
+in the README. The ordinary regression suite does not send real email. The optional
+extension browser smoke test and its required environment variables are documented
+in [extension validation](extension-validation.md).

@@ -2,7 +2,7 @@
 
 Validated on Windows with Python 3.14.5, openpyxl 3.1.5 and SQLite on 2026-09-11.
 
-The agreed testing seam is the core command/query boundary used by the terminal, with real temporary local stores. Implementation followed one failing behavior test, minimal implementation, then a passing run per slice: fresh Rewrite identity and hidden Superseded versions, history inspection, the `replacement_requires_rewrite` document finding, rewrite validation and repeated Rewrite, snapshot independence and restart persistence, then the terminal shell. No private methods or database queries are used as test assertions, and no browser adapter exists or is required in this slice.
+The agreed testing seam is the core command/query boundary used by the terminal, with real temporary local stores. Implementation followed one failing behavior test, minimal implementation, then a passing run per slice: fresh Rewrite identity and hidden Superseded versions, history inspection, the `replacement_requires_rewrite` document finding, rewrite validation and repeated Rewrite, snapshot independence and restart persistence, then the terminal shell. No private methods or database queries are used as test assertions, and no external mailbox capability is required in this slice.
 
 The seam was confirmed with the operator before any test was written: `preparation rewrite PREPARATION_ID --source SOURCE_ID` creates the fresh Preparation, a new `preparation history PREPARATION_ID` query exposes the version chain while active views hide Superseded versions, and a new import whose document targets a Task that already has active work records a blocking `replacement_requires_rewrite` finding instead of replacing it.
 

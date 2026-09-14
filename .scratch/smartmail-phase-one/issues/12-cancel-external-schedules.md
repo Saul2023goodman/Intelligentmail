@@ -17,11 +17,10 @@ Blocked by: 11
 
 ## Testing boundary
 
-Exercise operator-visible behavior through the core command/query boundary used by the terminal shell, with persistent local state and a controlled mailbox adapter where needed. Verify enabled real browser capabilities separately; do not test internal implementation structure.
+Exercise operator-visible behavior through the core command/query boundary used by the terminal shell, with persistent local state and a controlled mailbox adapter where needed. Verify enabled external mailbox capabilities through the dedicated extension separately; do not test internal implementation structure.
 
 ## Scope and references
 
 Parent: SmartMail Phase One: Supervisor Outreach Operations specification. Use the canonical domain glossary. No AI, no phase-one frontend, and no routine exported-workbook workflow. Each slice includes its terminal interaction, core behavior, persistence, and behavioral tests.
 
 Recall is optional capability behavior folded into this slice, not a standalone delivery requirement. Unavailable or unverified Recall must not block this ticket, any dependent ticket, or integrated completion. Cancellation acceptance is independent of Recall.
-

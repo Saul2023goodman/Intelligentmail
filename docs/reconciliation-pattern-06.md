@@ -1,61 +1,80 @@
 # Supported Mailbox Observation Pattern 06
 
-Established against the real 163.com webmail on 2026-09-11 with operator-assisted authentication. The pattern verifies live-DOM folder discovery, folder-level pagination, canonical message identifiers and metadata-only detail reads. It does not fetch message-body HTML or verify sending, scheduling, cancellation or Recall.
+This pattern observes a real 163.com Mailbox through the dedicated SmartMail
+Chrome/Edge extension. The extension runs in the operator's explicitly selected,
+authenticated mailbox tab and connects to the local application through the
+versioned Native Messaging host. It does not launch a browser or receive mailbox
+credentials. This pattern covers read-only observation and Reconciliation; it
+does not verify immediate sending, native scheduling, cancellation or Recall.
 
-## Operator-assisted browser access
+## Operator-assisted connection
+
+Install and register the extension using [the migration guide](browser-extension-pivot.md),
+then open `https://mail.163.com` and log in in the intended tab. The extension popup
+must show the same address as the Student's registered Mailbox before a refresh is
+accepted:
 
 ```powershell
-python -m smartmail --adapter 163-browser --browser-session smartmail-163 mailbox refresh --student STUDENT_ID
+python -m smartmail.bridge --home .smartmail status
+python -m smartmail --home .smartmail --adapter 163-extension mailbox capabilities
+python -m smartmail --home .smartmail --adapter 163-extension mailbox refresh --student STUDENT_ID
 ```
 
-The adapter uses a named, headed Playwright CLI browser session and stores no mailbox password. When no session is open it opens `https://mail.163.com`. Login, verification and CAPTCHA completion belong to the Operator. A refresh during that interruption persists `authentication_required` with empty Evidence Coverage. The Operator reruns refresh after reaching the mailbox.
+Connection and authentication are operator actions. If login, verification or a
+CAPTCHA is required, or the tab/document is reloaded, the extension reports an
+interruption and SmartMail persists it. Reconnect the selected tab after resolving
+the interruption. A tab logged into another address is persisted as `wrong_mailbox`
+and its message rows are discarded.
 
-The intended Mailbox comes from the selected Student. If the authenticated 163.com address differs, SmartMail persists `wrong_mailbox` and imports no messages from that account.
+## Read-only observation boundary
 
-## Verified observation boundary
+After the extension has connected, refresh performs only these actions:
 
-After authentication, refresh performs only these interactions:
+1. Confirm the authenticated account matches the intended Mailbox.
+2. Discover the five recognized built-in folders from the visible DOM: Inbox,
+   Drafts, Sent, Deleted and Spam.
+3. Enumerate canonical message IDs in bounded pages and read header, MIME-part and
+   attachment metadata for each ID.
+4. Return direction, folder, canonical ID, counterpart, subject, observed time,
+   mailbox status, list evidence and metadata-detail evidence.
 
-1. Expand the live DOM's built-in-folder group when needed and recognize Inbox, Drafts, Sent, Deleted and Spam with their platform folder IDs.
-2. Read each recognized folder in pages of 50 until its reported total of canonical message IDs is enumerated.
-3. Fetch structured header, MIME-part and attachment metadata for every enumerated ID through `mbox:readMessage`.
-4. Return direction, folder, exact canonical ID, counterpart, subject, observed time, mailbox state, list evidence and detail evidence.
+The extension never opens Compose during observation, fetches message-body HTML,
+edits a draft, sends, schedules, deletes, cancels or recalls. Draft, Deleted and
+Spam rows remain explicit non-delivery states. Sent is established only by positive
+platform metadata; otherwise the row is `ambiguous`.
 
-The browser collector does not select a message, invoke toolbar mutations or visit Compose. Inbox messages become `received`; Drafts, Deleted and Spam retain explicit `draft`, `deleted` and `spam` states and are not treated as delivery evidence. A Sent message becomes `sent` only when platform metadata establishes recipient success; otherwise its status stays `ambiguous`.
-
-Each folder's Evidence Coverage records its ID, reported total, enumerated-ID count, page size, requested and successful pages, requested/attempted/successful/failed details, errors, enumeration completeness and detail completeness. Rate-limited metadata reads receive bounded backoff retries, and exhausted retries remain explicit failures. `supported_scope_complete` is true only when all five recognized built-in folders and every enumerated detail complete. Top-level `complete` remains false because virtual views, unrecognized custom folders and message bodies remain outside scope. Therefore an unmatched local record is not proof that a corresponding mailbox message does not exist outside that declared scope.
-
-`mbox:readMessage` metadata reads preserve unread flags. The separate body-HTML endpoint does not: live exploration showed that fetching it marks an unread message read. The body endpoint is therefore excluded and every message records that exclusion in its evidence.
+Each folder retains its reported total, enumerated-ID count, page and detail
+attempts, failures and completeness. Supported-scope completeness is separate from
+whole-mailbox completeness: custom folders, virtual views and bodies are outside
+the declared scope. A missing local match therefore remains qualified by the
+available Evidence Coverage.
 
 ## Persistence and Reconciliation
 
-Every manual refresh creates an immutable Mailbox observation run plus message observations in the local SQLite store. It retains:
+Every refresh persists an immutable Mailbox observation run with the Student,
+Mailbox, extension adapter, capability snapshot, interruption detail, Evidence
+Coverage and per-message evidence. The same operation creates a Reconciliation.
 
-- intended Student and Mailbox;
-- adapter and per-capability snapshot;
-- time, status and interruption detail;
-- Evidence Coverage;
-- canonical platform reference plus list and structured detail evidence;
-- explicit ambiguity text where supported fields were unavailable.
-
-The same command creates a Reconciliation. Outbound Sent evidence can link to one exact local Sent Record by platform reference or by exact recipient and subject. If there is no Sent Record, it can link to one unresolved Execution Attempt by exact recipient and subject. Multiple matches remain `ambiguous_local_match`; unmatched rows remain unassociated. Draft, Deleted and Spam observations become `observed_non_delivery_state` findings rather than delivery claims. Inbox reply association is intentionally deferred and recorded as `unassociated_inbound` rather than guessed.
-
-Reconciliation in this slice records evidence and links for inspection. It reports `local_state_changed: false`: the mailbox is not the primary store, and a similar list row does not automatically resolve or retry an Execution Attempt.
+An exact platform reference can link an outbound observation to one local Sent
+Record. Exact recipient and subject can link it to one unresolved Execution Attempt
+when no Sent Record exists. Multiple candidates remain ambiguous; an unmatched row
+remains unassociated. Inbox replies are not guessed into an Outreach Task by this
+pattern. `local_state_changed` remains false: Mailbox evidence is retained for
+inspection and does not rewrite the Execution Ledger or resolve an attempt on its
+own.
 
 ## Independent capabilities
 
-`mailbox capabilities` reports all platform operations independently.
+The extension adapter reports each platform capability separately. A connected
+extension makes read history available for this observation scope, but it does not
+make that capability live-verified. Immediate sending is disabled unless the
+operator explicitly enables extension acceptance mode, and remains unverified
+until real-extension acceptance is recorded. Native scheduling, schedule
+cancellation and Recall stay disabled. Reading never grants a state-changing
+capability.
 
-| Capability | Live 163 browser adapter |
-| --- | --- |
-| Read history | Available and live-verified for the declared folder and metadata-detail scope above |
-| Immediate send | Disabled and unverified |
-| Native scheduling | Disabled and unverified |
-| Schedule cancellation | Disabled and unverified |
-| Recall | Disabled and unverified |
-
-Successful reading never enables or verifies a state-changing capability.
-
-## Controlled fixtures
-
-Ordinary tests pass `observations` through the controlled adapter script and exercise refresh, inspection, persistence, wrong-mailbox refusal, explicit ambiguity and Reconciliation at the same core command/query boundary as the terminal shell. These fixtures establish repeatable SmartMail behavior but do not count as live platform verification.
+Controlled `observations` fixtures and the extension bridge tests exercise this
+same command/query boundary without a live account. Simulated results do not count
+as platform verification. The earlier Playwright-based acceptance is retained only
+as historical evidence in [Ticket 06 validation](ticket-06-validation.md); it does
+not establish the current extension's verification state.

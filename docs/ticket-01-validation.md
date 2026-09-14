@@ -8,7 +8,7 @@ The agreed testing seam is the core command/query boundary used by the terminal,
 
 The suite covers Campaign restart, explicit Student/Mailbox ownership, import and participant inspection, reordered aliases and merged-cell evidence, byte preservation after original deletion and restart, edited-open-copy isolation, recipient Blockers, reliable multi-address Supervisor identity, Student/Campaign task separation, unresolved identities on all affected tasks, contradictory profiles/shared addresses, unsupported-layout rejection without partial imports, repeated unresolved-row identity, accumulated profile evidence and explicit Campaign selection.
 
-The opt-in representative archive test checks independently observed values and archive hash. Without `SMARTMAIL_SAMPLE_ZIP`, this test reports a skip instead of claiming real-material validation.
+The opt-in representative archive test checks independently observed values and archive hash. Without `SMARTMAIL_SAMPLE_ZIP`, this test reports a skip instead of claiming real-material validation. No external mailbox capability is exercised in this slice.
 
 Final run with the representative archive configured: **15 tests passed, no skips**. A terminal import without `--campaign` was also rejected before executing intake.
 

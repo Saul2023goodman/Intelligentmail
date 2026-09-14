@@ -70,7 +70,7 @@ const { chromium } = require(process.env.SMARTMAIL_PLAYWRIGHT_MODULE || "playwri
     assert.equal(sendCount, 1);
     const popup = await context.newPage();
     await popup.goto(worker.url().replace(/background\.js$/, "popup.html"));
-    await popup.waitForSelector("#extension-id");
+    await popup.waitForSelector("#extension-id", { state: "attached" });
     const output = path.resolve("output/playwright");
     fs.mkdirSync(output, { recursive: true });
     await popup.screenshot({ path: path.join(output, "extension-popup.png") });

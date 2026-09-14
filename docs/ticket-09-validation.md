@@ -1,7 +1,13 @@
-# Ticket 09 Validation: Confirmed Immediate Send in 163.com
+# Ticket 09 Validation: Confirmed Immediate Send in 163.com (historical)
 
-Date: 2026-09-11  
-Platform: real 163.com webmail in a named, headed, **persistent** Playwright CLI browser session  
+> Historical record: this validation was completed against the retired Playwright
+> CLI adapter on 2026-09-11. The current product removes that runtime path and
+> uses the dedicated extension described in [the pivot guide](browser-extension-pivot.md).
+> The real-account results below remain immutable history; they do not verify the
+> extension or enable its sending capability.
+
+Date: 2026-09-11
+Platform: retired real 163.com webmail Playwright CLI session
 Safety boundary: only operator-confirmed immediate sending; native scheduling, cancellation and Recall stay disabled
 
 ## Command-boundary verification
@@ -106,7 +112,7 @@ The post-send `mailbox refresh` recognised all five built-in folders with comple
 
 Test messages went only to the operator-approved recipient `3356198166@qq.com`. On the first account two clearly-marked messages were delivered: one during the diagnostic that established the modal behaviour, and one for the recorded end-to-end acceptance. On the second account three were delivered: two short-lived diagnostics that isolated the attachment/dialog behaviour, and the recorded acceptance (`#1789124147`). No leftover draft remained in Drafts on either account — the second account's Drafts folder was empty and stayed empty. No Inbox message was opened; the collector still fetches headers and MIME metadata only, so unread state is unchanged. Screenshots and traces stay under ignored `output/playwright/` and `.playwright-cli/` paths and are not repository artifacts.
 
-## Capability result
+## Legacy capability result
 
 | Capability | Available | Live verified |
 | --- | --- | --- |
@@ -116,4 +122,6 @@ Test messages went only to the operator-approved recipient `3356198166@qq.com`. 
 | Schedule cancellation | No | No |
 | Recall | No | No |
 
-Immediate sending is verified independently of scheduling: the capability report enables `immediate_send` while `native_scheduling`, `schedule_cancellation` and `recall` remain disabled with an explicit basis.
+The retired adapter verified immediate sending independently of scheduling. That
+result is not inherited by `163-extension`; extension immediate sending remains
+disabled by default and unverified until a new extension acceptance is recorded.

@@ -2,28 +2,29 @@
 
 Status: resolved
 Labels: implemented
+Current validation: dedicated-extension live acceptance pending
 Blocked by: 01
 
-**What to build:** Observe the real mailbox through a browser adapter and expose persisted evidence and manual Reconciliation in SmartMail.
+**What to build:** Observe the real mailbox through the dedicated extension and expose persisted evidence and manual Reconciliation in SmartMail.
 
 ## Acceptance criteria
 
-- [x] Open the intended student's mailbox with operator-assisted login, verification, or CAPTCHA handling; do not bypass interactive authentication.
+- [x] Connect the intended student's Mailbox through the operator-selected dedicated extension after login, verification, or CAPTCHA handling; do not bypass interactive authentication.
 - [x] Read supported mailbox history and message observations without creating external drafts or changing sending state.
 - [x] Persist inspectable observations, platform references where available, and Evidence Coverage; unsupported or ambiguous observations remain explicit.
 - [x] Manual refresh reconciles available observations into the local record without treating mailbox state as the primary store.
 - [x] Expose per-capability availability without assuming that successful reading verifies sending, scheduling, cancellation, or Recall.
-- [x] Use controlled real-mailbox acceptance checks for observable evidence and authentication; use adapter fixtures for repeatable command-boundary tests.
+- [x] Use controlled real-extension acceptance checks for observable evidence and authentication; use extension-peer and adapter fixtures for repeatable command-boundary tests.
 
 ## Testing boundary
 
-Exercise operator-visible behavior through the core command/query boundary used by the terminal shell, with persistent local state and a controlled mailbox adapter where needed. Verify enabled real browser capabilities separately; do not test internal implementation structure.
+Exercise operator-visible behavior through the core command/query boundary used by the terminal shell, with persistent local state and controlled extension-peer evidence where needed. Verify enabled extension capabilities separately; do not test internal implementation structure.
 
 ## Scope and references
 
 Parent: SmartMail Phase One: Supervisor Outreach Operations specification. Use the canonical domain glossary. No AI, no phase-one frontend, and no routine exported-workbook workflow. Each slice includes its terminal interaction, core behavior, persistence, and behavioral tests.
 
-Controlled mailbox access is required for browser verification. Never mark live behavior verified from simulated evidence.
+Controlled extension access is required for live mailbox verification. Never mark live behavior verified from simulated evidence.
 
 ## Comments
 
@@ -36,4 +37,6 @@ Metadata-only detail calls preserve unread state. Exploration established that t
 Manual refresh persisted 294 observations and 294 explicit Reconciliation findings, and inspection after a separate CLI restart returned all canonical IDs and structured detail objects. Reconciliation preserves `draft`, `deleted` and `spam` as non-delivery states and does not mutate canonical local state (`local_state_changed: false`). All four state-changing 163 capabilities remain independently disabled and unverified.
 
 Final ordinary suite: 120 tests passed with 5 representative-material tests skipped by their opt-in environment gate. Ticket 06 has eight controlled boundary tests covering persisted refresh/restart, folder/detail Evidence Coverage, preserved non-delivery states, wrong-mailbox refusal, explicit ambiguity, per-capability isolation, exact Sent Record and unresolved-attempt links without canonical mutation, and terminal inspection. See [pattern](../../../docs/reconciliation-pattern-06.md) and [validation](../../../docs/ticket-06-validation.md).
+
+2026-09-14 pivot: the retired Playwright CLI implementation and its named browser-session commands are no longer the product path. The current implementation uses the dedicated `Mailbox Extension` and an explicit `Extension Connection` through Native Messaging. Existing live measurements above remain historical evidence about the 163.com surface; they do not verify the extension. Re-run the acceptance through `--adapter 163-extension` before marking `read_history` verified. See [extension validation](../../../docs/extension-validation.md) and [pivot guide](../../../docs/browser-extension-pivot.md).
 

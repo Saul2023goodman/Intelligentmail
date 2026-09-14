@@ -9,7 +9,7 @@ Blocked by: 07, 08, 10
 ## Acceptance criteria
 
 - [ ] Use the shared confirmation, duplicate, reconciliation, and interruption safeguards without depending on the immediate-send capability.
-- [ ] Create the native schedule through the browser only for a confirmed exact Preparation and time, preserving observed external schedule identity.
+- [ ] Create the native schedule through the dedicated extension only for a confirmed exact Preparation and time, preserving observed external schedule identity.
 - [ ] Mark Externally Scheduled only with external evidence; keep local plans, Unknown Outcome, and Sent distinct.
 - [ ] Verify mailbox-owned execution while the local application is offline through controlled acceptance; do not substitute a local timer if native scheduling is unavailable.
 - [ ] Reconcile later outcomes and recover uncertain schedule placement without duplicate submission; time elapsing alone cannot establish Sent.
@@ -18,9 +18,8 @@ Blocked by: 07, 08, 10
 
 ## Testing boundary
 
-Exercise operator-visible behavior through the core command/query boundary used by the terminal shell, with persistent local state and a controlled mailbox adapter where needed. Verify enabled real browser capabilities separately; do not test internal implementation structure.
+Exercise operator-visible behavior through the core command/query boundary used by the terminal shell, with persistent local state and a controlled mailbox adapter where needed. Verify enabled external mailbox capabilities through the dedicated extension separately; do not test internal implementation structure.
 
 ## Scope and references
 
 Parent: SmartMail Phase One: Supervisor Outreach Operations specification. Use the canonical domain glossary. No AI, no phase-one frontend, and no routine exported-workbook workflow. Each slice includes its terminal interaction, core behavior, persistence, and behavioral tests.
-

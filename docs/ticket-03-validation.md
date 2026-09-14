@@ -2,7 +2,7 @@
 
 Validated on Windows with Python 3.14.5, openpyxl 3.1.5 and SQLite on 2026-09-11.
 
-The agreed testing seam is the core command/query boundary used by the terminal, with real temporary local stores. Implementation followed one failing behavior test, minimal implementation, then a passing run per slice; readiness-finding computation was centralized in one revalidation step so every correction is reflected everywhere. No private methods or database queries are used as test assertions, and no browser adapter exists or is required in this slice.
+The agreed testing seam is the core command/query boundary used by the terminal, with real temporary local stores. Implementation followed one failing behavior test, minimal implementation, then a passing run per slice; readiness-finding computation was centralized in one revalidation step so every correction is reflected everywhere. No private methods or database queries are used as test assertions, and no external mailbox capability is required in this slice.
 
 ## Automated coverage
 

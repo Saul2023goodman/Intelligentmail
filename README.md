@@ -1,6 +1,6 @@
 # SmartMail
 
-Tickets 01 to 10 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, recover interrupted execution with explicit operator takeover, execute operator-confirmed immediate sends in the real 163.com compose interface with Sent-folder evidence, and propose, adjust and confirm deterministic Sending Plans under configured windows, timezone, spacing and daily limits. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, Sending Plans, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence.
+Tickets 01 to 10 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, recover interrupted execution with explicit operator takeover, execute operator-confirmed immediate sends in the real 163.com compose interface with Sent-folder evidence, and propose, adjust and confirm deterministic Sending Plans under configured windows, timezone, spacing and daily limits. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, Sending Plans, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence. The current 163.com connection uses the dedicated browser extension documented below.
 
 ## Code organization
 
@@ -127,16 +127,19 @@ A mailbox-confirmed `sent` creates an immutable Sent Record (frozen content and 
 
 Successful commands print UTF-8 JSON, except `preparation preview`, which prints the message. Core errors return JSON on stderr; argument errors print usage. Both exit with code 2. Task summaries include names and Exception counts; `task show` includes participant records, source row/cell evidence and blocking Exceptions. Successful intake does not establish Ready Preparation or authorize sending.
 
-## Inspect and reconcile a real 163.com mailbox
+## Connect and reconcile a real 163.com mailbox
 
-Register the intended Student and Mailbox first. Start a manual read-only refresh with the live browser adapter and a named browser session:
+The 163.com connection now runs through the dedicated Chrome/Edge extension in `extensions/netease163`. The extension connects one operator-selected, already authenticated 163 mailbox tab to a local Native Messaging host. SmartMail does not launch a browser, discover profiles, receive credentials, or use a Playwright runtime in production.
+
+Install and connect the extension as described in the [extension pivot and migration guide](docs/browser-extension-pivot.md). Register the intended Student and Mailbox first. After the extension popup shows the matching mailbox address, run a read-only refresh with the same `--home` directory used during installation:
 
 ```powershell
-.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 mailbox capabilities
-.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 mailbox refresh --student STUDENT_ID
+.\.venv\Scripts\python -m smartmail.bridge --home .smartmail status
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension mailbox capabilities
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension mailbox refresh --student STUDENT_ID
 ```
 
-If authentication, verification or a CAPTCHA is required, SmartMail opens a headed 163.com browser and persists the interruption. Complete it yourself in that browser; SmartMail does not store credentials or bypass the challenge. Then run the same `mailbox refresh` command again. Refresh discovers recognized built-in folders in the live DOM, enumerates every canonical message ID through paginated folder reads, and fetches structured header, MIME and attachment metadata for each ID. It does not open Compose, create or edit a draft, send, schedule, delete, cancel or Recall anything.
+If the operator has not logged in, the mailbox tab is on a verification/CAPTCHA page, the tab is closed, or the Native Messaging host is unavailable, SmartMail persists the interruption. Complete the interaction in the selected tab and reconnect the extension; SmartMail does not bypass authentication. A tab connected to a different account is persisted as `wrong_mailbox` and contributes no message rows. Refresh discovers recognized built-in folders in the live DOM, enumerates canonical message IDs through bounded paginated reads, and fetches structured header, MIME and attachment metadata for each ID. It does not open Compose, create or edit a draft, send, schedule, delete, cancel or Recall anything.
 
 Every refresh persists the observation, canonical platform references, list and metadata-detail evidence, the adapter capability snapshot, and explicit per-folder Evidence Coverage: declared total, enumerated IDs, requested/successful pages, and requested/attempted/successful/failed details. Supported-scope completeness is distinct from whole-mailbox completeness. Virtual views, unrecognized custom folders and message-body HTML are not claimed; body HTML is deliberately excluded because its endpoint changes unread state. Inspect retained evidence and the Reconciliation it produced:
 
@@ -149,18 +152,16 @@ Every refresh persists the observation, canonical platform references, list and 
 
 Reconciliation links exact observable matches and leaves unsupported, ambiguous and unassociated observations explicit. It never treats the mailbox as SmartMail's primary store and does not change an unresolved attempt merely because a list row looks similar. The controlled adapter accepts an `observations` array in its JSON script for repeatable command-boundary tests. Reading is an independent capability and turns on no state-changing operation.
 
-The adapter opens a **persistent** browser profile (default `.smartmail/browser-163`, override with `SMARTMAIL_BROWSER_PROFILE`) so the operator authenticates once and later refreshes and executions reuse the saved session. Playwright's default incognito-like context keeps cookies only in memory; a persistent profile is required for a reusable login.
-
 ## Execute a confirmed immediate send in 163.com
 
-Confirmed immediate sending uses the same command boundary as the controlled adapter, against the same named session:
+Confirmed immediate sending uses the same command boundary as the controlled adapter, through the connected extension. The extension's send capability is disabled by default and is not considered verified until a separate real-mailbox acceptance is completed. To opt into that acceptance mode explicitly:
 
 ```powershell
-.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 confirmation confirm PREPARATION_ID
-.\.venv\Scripts\python -m smartmail --adapter 163-browser --browser-session smartmail-163 execution run CONFIRMATION_ID
+.\.venv\Scripts\python -m smartmail --home .smartmail confirmation confirm PREPARATION_ID
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension --enable-extension-send execution run CONFIRMATION_ID
 ```
 
-Execution opens and fills the real compose interface with the **exact confirmed** sender, recipient, subject, body and attachment snapshot, attaches the confirmed bytes, and submits once. It reports `sent` only when the Sent folder confirms the message; a submission that is not confirmed stays `unknown`, and authentication interruptions are handed to the operator. 163 interposes a promotional "智能优化您的英文邮件" modal on the first submit; the adapter dismisses that prompt and completes the blocked submission rather than treating it as sent. A confirmed `sent` creates an immutable Sent Record (frozen content, attachment bytes and platform reference) and consumes the Confirmation. Set `SMARTMAIL_BROWSER_PROFILE` to relocate the profile. Native scheduling, cancellation and Recall remain disabled capabilities.
+Execution asks the extension to prepare the exact confirmed sender, recipient, subject, body and attachment snapshot in the selected tab. Before the one submission permit is issued, the Native Messaging host rechecks the persisted Confirmation, active Execution Attempt, content and attachment digests, readiness Blockers, pause state and Sent history. The extension checks the authenticated account, exact fields, attachment selection and upload completion, then clicks Send once. It reports `sent` only when a new canonical Sent-folder record uniquely matches the confirmed recipient, subject, sender, positive send status and time window. A click, prompt, old matching message or timeout is not Sent; an unconfirmed result stays `unknown` and requires Reconciliation. A confirmed `sent` creates an immutable Sent Record and consumes the Confirmation. Native scheduling, cancellation and Recall remain independently disabled capabilities.
 
 ## Detect historical duplicates before execution
 
@@ -207,12 +208,13 @@ Every command accepts the global `--now ISO-8601` option, which fixes the store'
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md); crash recovery and Manual Takeover are documented under [Supported Execution Recovery Pattern 08](docs/recovery-pattern-08.md); confirmed immediate sending in the real 163.com compose interface is documented under [Supported Immediate Send Pattern 09](docs/immediate-send-pattern-09.md); windows, timezone, spacing, daily limits and batch Confirmation of exact sending times are documented under [Supported Sending Plan Pattern 10](docs/sending-plan-pattern-10.md).
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md); crash recovery and Manual Takeover are documented under [Supported Execution Recovery Pattern 08](docs/recovery-pattern-08.md); confirmed immediate sending in the real 163.com compose interface is documented under [Supported Immediate Send Pattern 09](docs/immediate-send-pattern-09.md); windows, timezone, spacing, daily limits and batch Confirmation of exact sending times are documented under [Supported Sending Plan Pattern 10](docs/sending-plan-pattern-10.md). The current dedicated-extension architecture, installation, migration and validation status are documented in [the extension pivot guide](docs/browser-extension-pivot.md) and [extension validation](docs/extension-validation.md).
 
 ## Verify
 
 ```powershell
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
+node --test extensions/netease163/tests/commands.test.mjs
 ```
 
 The ordinary suite uses anonymized fixtures derived from the observed layout. An additional pilot test reads the supplied representative archive when explicitly configured:
@@ -222,4 +224,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md), [ticket 05 validation](docs/ticket-05-validation.md), [ticket 07 validation](docs/ticket-07-validation.md), [ticket 08 validation](docs/ticket-08-validation.md), [ticket 09 validation](docs/ticket-09-validation.md), and [ticket 10 validation](docs/ticket-10-validation.md) for measured outcomes and the retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md), [ticket 05 validation](docs/ticket-05-validation.md), [ticket 06 historical validation](docs/ticket-06-validation.md), [ticket 07 validation](docs/ticket-07-validation.md), [ticket 08 validation](docs/ticket-08-validation.md), [ticket 09 historical validation](docs/ticket-09-validation.md), [ticket 10 validation](docs/ticket-10-validation.md), and [current extension validation](docs/extension-validation.md) for measured outcomes and retained terminal pilots.

@@ -15,7 +15,7 @@ Provide SmartMail as a local application for one active operator on one machine.
 
 SmartMail imports existing representative materials into an explicitly selected Campaign, applies supported deterministic rules, associates students and supervisors, prepares communications, and surfaces Exceptions. Normal preparation requires no separate human acceptance. Ready Preparation does not authorize sending: the operator explicitly confirms an immediate send or a Sending Plan, including exact message contents and execution details.
 
-A browser-operation adapter drives the real 163.com mailbox for execution and observation. Native mailbox scheduling owns future execution once externally confirmed; it is not a local timer. The adapter assists with repetitive mailbox work while preserving operator takeover, evidence-based outcomes, and reliable restart recovery. Unverified capabilities are disabled independently.
+A dedicated Chrome/Edge browser extension operates the real 163.com Mailbox for execution and observation. It connects one operator-selected, authenticated tab to the local SmartMail core through a Native Messaging host and does not receive credentials or arbitrary commands. Native mailbox scheduling owns future execution once externally confirmed; it is not a local timer. The extension assists with repetitive mailbox work while preserving operator takeover, evidence-based outcomes, and reliable restart recovery. Unverified capabilities are disabled independently.
 
 SmartMail retains source evidence, hidden Superseded Preparations, immutable Sent Records, and an Execution Ledger. Reconciliation supports duplicate detection, observed sending state, reply association, and follow-up eligibility. Operational reporting provides task-level drill-down. Concrete intake rules are determined during coding from representative materials rather than imposed as new input templates in advance.
 
@@ -92,12 +92,12 @@ SmartMail retains source evidence, hidden Superseded Preparations, immutable Sen
 
 ### Delivery and boundaries
 
-- This is a new implementation: the repository currently contains agent guidance and the domain glossary, with no application code or existing test suite.
-- Use one headless core with a stable command/query boundary and a terminal shell. The boundary supports imports, inspection, corrections, Rewrite, planning, Confirmation, execution, Reconciliation, intervention, and reporting. No frontend is required in phase one.
-- Keep preparation, workflow rules, readiness, Confirmation, history, and reporting independent of the browser adapter. Additional platforms can attach through the same capability boundary later.
+- The implementation is a local Python application with a persisted SQLite store and an existing behavioral test suite. This specification remains the product scope; current implementation and validation details live in the repository documentation.
+- Use one headless core with a stable command/query boundary and a terminal shell. The boundary supports imports, inspection, corrections, Rewrite, planning, Confirmation, execution, Reconciliation, intervention, and reporting. The extension popup is a connection control, not a replacement for the headless SmartMail operator interface.
+- Keep preparation, workflow rules, readiness, Confirmation, history, and reporting independent of the browser adapter. The current 163 adapter is a dedicated extension transport; additional platforms can attach through the same capability boundary later.
 - Use deterministic code only: explicit rules, matching, validation, state transitions, scheduling, and statistics. No AI, semantic inference, or inferred content. Unresolved evidence becomes an Exception.
 - One machine, one active Operator, and one local store. Persist source evidence, preparations, associations, confirmations, workflow state, execution evidence, and immutable Sent Records within SmartMail.
-- Programming language, persistence engine, browser library, and exact command syntax remain implementation choices. This specification does not prescribe an unvalidated technology stack.
+- Use a Manifest V3 Chrome/Edge extension plus Native Messaging for the 163 webmail seam. The native host has a bounded, versioned, single-delivery protocol and a durable transport queue separate from the SmartMail business store. The extension is explicitly connected to one authenticated tab; it has no cookies, debugger or arbitrary-site permission. The previous Playwright CLI path is not a production fallback. Browser layout selectors and live capability claims remain acceptance-dependent.
 
 ### Intake, readiness, and content lifecycle
 
@@ -119,10 +119,11 @@ SmartMail retains source evidence, hidden Superseded Preparations, immutable Sen
 
 ### Browser execution and scheduling
 
-- The initial adapter operates the real 163.com webpage. It is the intended execution channel, including native scheduling and supported cancellation or Recall, rather than a fallback for mail protocols.
-- The adapter exposes capability availability and evidence-bearing observations, including Sent, Externally Scheduled, failed or not completed where established, and Unknown Outcome. UI interaction alone is not proof that the external operation occurred.
+- The dedicated extension operates the real 163.com webpage in an explicitly selected authenticated tab. It is the intended execution channel, including native scheduling and supported cancellation or Recall, rather than a fallback for mail protocols.
+- The Native Messaging protocol supports only connection, bounded observation/submit commands, attachment-byte chunks, one submission permit and result evidence. Reconnection never replays a claimed command; the host rechecks persisted Confirmation before permitting the single submit.
+- The extension exposes capability availability and evidence-bearing observations, including Sent, Externally Scheduled, failed or not completed where established, and Unknown Outcome. UI interaction alone is not proof that the external operation occurred.
 - Once confirmed externally, native scheduling is owned by the mailbox. Verify offline behavior with controlled acceptance tests before relying on it. Do not silently substitute local timed sending for an unavailable native scheduling capability.
-- Operator presence is not required throughout a confirmed batch. Authentication, verification, CAPTCHA, ambiguous outcomes, or blocking execution failures pause the current Execution Flow for intervention. Local preparation and reporting remain available.
+- Operator presence is not required throughout a confirmed batch. Authentication, verification, CAPTCHA, ambiguous outcomes, tab/document changes, connection loss or blocking execution failures pause the current Execution Flow for intervention. Local preparation and reporting remain available.
 - A local pause does not cancel existing external schedules. Keep outstanding externally scheduled commitments visible.
 - Explicit operator control is required for actions that create or change actual sending commitments, including cancellation, deletion of scheduled drafts, replacement, and Recall. Automatic local preparation does not grant that authority.
 
@@ -157,7 +158,7 @@ SmartMail retains source evidence, hidden Superseded Preparations, immutable Sen
 ## Testing Decisions
 
 - Primary testing seam, confirmed by the user: the stable core command/query boundary used by the terminal shell. Exercise complete workflows against persisted local state and a controlled mailbox adapter, asserting operator-visible results, authorized external requests, ledger evidence, and recovery behavior rather than internal helper calls or storage layout.
-- Supplement that seam with controlled real-browser acceptance tests for each enabled 163.com capability. Simulated adapter results cannot establish actual platform support. Keep ordinary workflow tests independent of live accounts.
+- Supplement that seam with controlled extension-peer tests, a local browser smoke test for packaged scripts, and controlled real-extension acceptance for each enabled 163.com capability. Simulated adapter or fixture results cannot establish actual platform support. Keep ordinary workflow tests independent of live accounts.
 - There are no existing application tests or prior test seams in this repository. The confirmed boundary follows the agreed headless-core design.
 - The scenarios cover intake/preparation, Confirmation and planning, execution and persistence, Reconciliation, duplicate detection, replies/follow-ups, and operational reporting through the same high-level boundary. Use controllable time and explicit external evidence for reproducible scheduling and failure cases.
 - Establish a representative case set before evaluating the pilot. During coding, turn source samples and supported variants into acceptance fixtures with expected associations, prepared content, and Exceptions; define unsupported cases explicitly. Do not use test coverage as a claim of correctness for arbitrary inputs.
@@ -213,5 +214,5 @@ Completion requires correct handling of supported representative cases, no uncon
 - This specification synthesizes the final confirmed conversation decisions. They supersede earlier proposals for standing delegation, workbook-based Exceptions, physical deletion of old preparation, continued batch execution after blockers, and mandatory restart reapproval.
 - The domain glossary is the canonical vocabulary. This document supplies behavioral scope and acceptance criteria rather than adding implementation details to that glossary.
 - Concrete intake patterns, precedence rules, supported transformations, and reply-association/detection evidence must be established and tested during implementation. Representative materials have not yet been supplied in the workspace; that is an implementation dependency, not a reason to reopen the agreed product scope.
-- Real-page navigation, observable identifiers, schedule removal races, sending-time interpretation, offline scheduling, and history coverage need controlled browser verification. Native scheduling must not be presented as verified solely because it appears in this specification.
+- Real-page navigation, extension account identification, observable identifiers, schedule removal races, sending-time interpretation, offline scheduling, and history coverage need controlled extension verification. The retired Playwright acceptance is historical evidence only. Native scheduling and extension immediate sending must not be presented as verified solely because they appear in this specification.
 - The portfolio narrative should explain the process, information ownership, exception handling, operator authority, and measured scenario outcomes. Do not claim guaranteed correctness beyond the supported and validated handling boundary.
