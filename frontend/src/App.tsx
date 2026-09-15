@@ -572,7 +572,7 @@ export default function App() {
 
         <main className="board" hidden={!!selected}>
           <header className="matrix-title">
-            <div><span className="micro">SMARTMAIL / OPERATIONS</span><h1>外联作业台 <span>FLOW MATRIX</span></h1></div>
+            <div><span className="micro">SMARTMAIL / OPERATIONS · 交互预览</span><h1>外联作业台 <span>CHECKPOINT WORKBENCH</span></h1></div>
             <div className="matrix-side">
               <span className="matrix-health"><span className="beacon" style={{ color: pauses.length ? 'var(--alarm)' : 'var(--verified)' }} /> {tasks.length} 个任务 · {pauses.length ? `${pauses.length} 项执行暂停` : '执行流正常'}</span>
               <span className="matrix-actions">

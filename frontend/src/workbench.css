@@ -1,0 +1,106 @@
+/* Business checkpoints share a rail, never a completed-progress fill. */
+.wb { --wb-green:#327b69; --wb-red:#b95049; --wb-amber:#a97924; display:flex; flex-direction:column; flex:1; background:#fff; min-width:0; }
+.wb-toolbar { display:flex; align-items:center; justify-content:space-between; padding:0 26px; min-height:62px; border-bottom:1px solid #e4e8ec; gap:20px; }
+.wb-tabs { display:flex; align-self:stretch; gap:25px; }
+.wb-tabs button { position:relative; display:flex; align-items:center; gap:9px; font-size:13px; color:#7b8792; }
+.wb-tabs button[aria-pressed=true] { color:#243e59; font-weight:600; }
+.wb-tabs button[aria-pressed=true]:after { content:''; position:absolute; bottom:-1px; left:0; right:0; height:2px; background:#294b69; }
+.wb-tabs b { padding:2px 6px; border-radius:4px; background:#edf1f5; font-size:10px; }
+.wb-search { display:flex; align-items:center; gap:8px; border:1px solid #e1e6ea; border-radius:6px; padding:6px 10px; color:#8994a0; background:#fafbfc; }
+.wb-search input { border:0; background:none; outline:none; width:205px; font-size:12px; color:#364b5d; }
+.wb-search:focus-within { border-color:#718ca5; box-shadow:0 0 0 2px #edf2f7; }
+.wb-guide { display:flex; align-items:center; gap:25px; flex-wrap:wrap; padding:17px 26px; font-size:11px; }
+.wb-guide b { font-size:12px; margin-right:10px; color:#40566a; }
+.wb-guide>span:last-child { margin-left:auto; }
+.wb-muted { color:#83909b; font-size:11px; }
+.wb-legend { display:flex; gap:17px; color:#637281; }
+.wb-legend>span { display:flex; align-items:center; gap:6px; }
+.wb-symbol,.wb-node { font-family:Arial,sans-serif; font-style:normal; display:inline-flex; align-items:center; justify-content:center; border:1px solid; border-radius:50%; font-weight:600; flex:none; }
+.wb-symbol { width:15px; height:15px; font-size:11px; }
+.wb .pass { background:#eef6f2; color:var(--wb-green); border-color:#9cc4b6; }
+.wb .fail { background:#fff0ed; color:var(--wb-red); border-color:#d99891; }
+.wb .pending { background:#fffbf0; color:var(--wb-amber); border-color:#ccac6e; border-style:dashed; }
+.wb .na { background:#f8f9fa; color:#9ea9b3; border-color:#dce2e7; }
+.wb-scroll { overflow-x:auto; padding-bottom:1px; }
+.wb-table { width:100%; min-width:1120px; table-layout:fixed; border-collapse:separate; border-spacing:0; font-size:12px; }
+.wb-select-col { width:36px; }.wb-person-col { width:245px; }.wb-check-col { width:calc((100% - 645px)/7); }.wb-status-col { width:104px; }.wb-issue-col { width:158px; }.wb-action-col { width:102px; }
+.wb-table th { font-weight:500; color:#687989; text-align:center; background:#f8fafb; }
+.wb-family-row th { height:40px; border-top:1px solid #e2e7ec; border-bottom:1px solid #e4e9ee; }
+.wb-family-row th[colspan] { color:#314d64; background:#f1f5f7; border-right:3px solid #fff; font-size:12px; }
+.wb-family-row th small { color:#8a99a5; font-weight:400; margin-left:10px; font-size:10px; }
+.wb-family-number { font-family:var(--font-mono); color:#9aadb9; margin-right:9px; font-size:10px; }
+.wb-family-row .wb-person-head { text-align:left; padding-left:8px; }
+.wb-person-head small { display:block; letter-spacing:1.4px; margin:6px 0 0!important; font-size:9px!important; }
+.wb-label-row th { height:39px; border-bottom:1px solid #dbe3e9; }
+.wb-label-row button { display:flex; align-items:center; justify-content:center; gap:5px; width:100%; height:30px; font-size:11px; border-radius:4px; white-space:nowrap; }
+.wb-label-row button span { color:#9aa7b2; font-size:9px; }
+.wb-label-row button:hover,.wb-label-row button[aria-pressed=true] { background:#e1ebf3; color:#284d6a; }
+.wb-table td { height:68px; border-bottom:1px solid #edf0f3; text-align:center; background:#fff; }
+.wb-table tbody tr:nth-child(even) td { background:#fcfdfd; }
+.wb-table tbody tr:hover td { background:#f4f8fb; }
+.wb-table tbody tr[data-selected=true] td { background:#edf4fa; }
+.wb-table input[type=checkbox] { accent-color:#304f6a; width:13px; height:13px; cursor:pointer; }
+.wb-person { display:flex; flex-direction:column; gap:8px; width:100%; text-align:left; padding:10px 12px 10px 8px; min-width:0; }
+.wb-person>span { font-size:13px; color:#334c60; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wb-person b { font-weight:600; color:#233c50; }.wb-person i { font-style:normal; color:#a4b0b9; margin:0 10px; }
+.wb-person small { display:flex; align-items:center; gap:7px; color:#8a98a4; font-size:10px; min-width:0; }
+.wb-person small>span:last-child { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.wb-person em { font-style:normal; padding:0 4px; background:#f0f3f6; border-radius:3px; white-space:nowrap; color:#728392; }
+.wb-person .mono { flex:none; }
+.wb-rail-cell { position:relative; }
+.wb-rail-cell:before { content:''; position:absolute; height:1px; top:50%; left:0; right:0; background:#dce5e8; pointer-events:none; }
+.wb-rail-cell[data-family-end=true]:after { content:''; position:absolute; top:15px; bottom:15px; right:0; border-right:1px dashed #e5eaee; pointer-events:none; }
+.wb-node { position:relative; z-index:1; width:23px; height:23px; font-size:13px; box-shadow:0 0 0 5px #fff; transition:transform .15s,box-shadow .15s; }
+.wb-node.pending { font-size:24px; line-height:1; }
+.wb-node.na { font-size:11px; }
+.wb-node:hover,.wb-node[aria-expanded=true] { transform:scale(1.14); box-shadow:0 0 0 5px #e7eef4; }
+.wb-outcome-head,.wb-outcome { border-left:14px solid #fff; }
+.wb-outcome span { font-size:10px; color:#718292; display:inline-block; padding:4px 7px; background:#f2f5f7; border-radius:4px; white-space:nowrap; }
+.wb-outcome span[data-status=unknown_outcome] { color:#9c7437; background:#fcf5e9; }
+.wb-outcome span[data-status=sent] { color:#41806e; background:#edf6f1; }
+.wb-issue { padding:0 8px; }.wb-issue>span { display:block; text-overflow:ellipsis; overflow:hidden; white-space:nowrap; color:#778591; font-size:11px; }
+.wb-issue small { color:#b56d51; }
+.wb-next { display:inline-flex; gap:9px; border:1px solid #dbe4eb; border-radius:5px; background:#fff; padding:6px 9px; color:#3a5670; font-size:11px; white-space:nowrap; }
+.wb-next span { color:#9aaebb; }.wb-next:hover { border-color:#8ca4b8; background:#edf4fa; }
+.wb-filterbar { padding:9px 26px; display:flex; flex-wrap:wrap; gap:12px; align-items:center; background:#f3f7fa; border-top:1px solid #e6ecf1; }
+.wb-chip { background:#e4edf5; padding:4px 8px; border-radius:4px; color:#375872; font-size:11px; }
+.wb-filterbar select { font-size:11px; color:#476075; border:1px solid #d6e1e9; border-radius:4px; padding:5px; background:white; }
+.wb-evidence { position:fixed; bottom:34px; right:24px; z-index:30; width:min(710px,calc(100vw - 48px)); display:flex; gap:14px; align-items:center; border:1px solid #d8e4ed; border-left:3px solid #6e91ad; padding:16px; border-radius:5px; background:#f7fafc; box-shadow:0 8px 36px #203d5926; color:#405b70; font-size:12px; }
+.wb-evidence div { flex:1; }.wb-evidence b span { margin-left:8px; font-weight:400; color:#788e9c; }.wb-evidence p { margin:6px 0 0; color:#718491; font-size:11px; }.wb-evidence button { font-size:11px; }
+.wb-footer { display:flex; justify-content:space-between; gap:15px; flex-wrap:wrap; padding:16px 26px; color:#8e9ba6; font-size:10px; border-top:1px solid #e7edf1; margin-top:auto; }
+.wb-divider { margin:0 15px; color:#c7d0d7; }.wb-empty { padding:50px; text-align:center; color:#8193a2; }.wb-empty button { color:#385c7b; margin-left:15px; }
+.wb button:focus-visible { outline:2px solid #587f9f; outline-offset:3px; }.wb button:disabled { opacity:.4; cursor:not-allowed; }
+@media(max-width:760px) { .wb-toolbar { flex-wrap:wrap; padding:10px 16px; gap:15px; }.wb-tabs { min-height:38px; }.wb-guide { padding:14px 16px; gap:15px; }.wb-guide>span:last-child { display:none; }.wb-evidence { margin:12px; flex-wrap:wrap; }.wb-table { min-width:1120px; }.wb-search { flex:1; }.wb-footer { padding:14px 16px; } }
+
+/* One uninterrupted baseline. Scale, weight and spacing carry hierarchy. */
+.wb-table { min-width:1390px; }
+.wb-person-col { width:195px; }
+.wb-main-col { width:calc((100% - 545px)/5); }
+.wb-status-col { width:88px; }.wb-issue-col { width:134px; }.wb-action-col { width:92px; }
+.wb-main-header th { height:62px; border-top:1px solid #e3e9ee; border-bottom:1px solid #dce5ec; background:#f7f9fb; }
+.wb-main-header .wb-person-head { text-align:left; padding-left:8px; }
+.wb-linear-labels,.wb-linear-rail { display:grid; align-items:center; justify-items:center; width:100%; }
+.wb-linear-labels { min-height:62px; }
+.wb-main-label { font-size:12px; font-weight:650; letter-spacing:-.4px; color:#28485f; white-space:nowrap; padding:8px 2px; border-radius:4px; }
+.wb-sub-label { font-size:9px; font-weight:400; letter-spacing:-.4px; color:#8a9aa6; white-space:nowrap; padding:8px 0; border-radius:4px; }
+.wb-main-label[aria-pressed=true],.wb-sub-label[aria-pressed=true] { background:#e1ebf3; color:#234e6f; box-shadow:inset 0 -2px #6c91ad; }
+.wb-main-label:hover,.wb-sub-label:hover { color:#234e6f; background:#edf3f8; }
+.wb-table td { height:66px; }
+.wb-milestone-cell { padding:0!important; }
+.wb-linear-rail { position:relative; min-height:66px; }
+.wb-linear-rail:before { content:''; position:absolute; left:0; right:0; top:50%; height:1px; background:#dbe5ea; pointer-events:none; }
+.wb-major-node { width:25px; height:25px; font-size:12px; border-width:1.5px; box-shadow:0 0 0 5px white; }
+.wb-major-node.pass { background:#4c8b7c; border-color:#4c8b7c; color:white; }
+.wb-major-node.fail { background:#b96359; border-color:#b96359; color:white; }
+.wb-major-node.pending { font-size:22px; background:#fcf8ef; }
+.wb-minor-node { width:12px; height:12px; font-size:8px; box-shadow:0 0 0 4px white; }
+.wb-minor-node.pass { background:#f1f7f4; border-color:#a8c7bd; color:#6b9b8c; }
+.wb-minor-node.pending { font-size:13px; }.wb-minor-node.na { font-size:7px; }
+.wb-minor-node:hover { transform:scale(1.3); }
+.wb-person>span { font-size:12px; }
+.wb-next { border-color:transparent; background:transparent; color:#52708a; }
+.wb-next:hover { border-color:#cfdee8; background:#f4f8fb; }
+.wb-outcome span { background:transparent; }
+.wb-issue>span { color:#8a96a0; font-size:10px; }
+.wb-table tbody tr:hover .wb-node { box-shadow:0 0 0 4px #f4f8fb; }
+@media(max-width:760px) { .wb-table { min-width:1390px; } }
