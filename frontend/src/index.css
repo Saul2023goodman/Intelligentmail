@@ -1,68 +1,456 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   SmartMail Console — "Filament"
+   A cold graphite instrument panel lit by one warm amber filament.
+   Layer 1: design tokens. Every visual decision resolves to a token here.
+   ═══════════════════════════════════════════════════════════════════════ */
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
+  /* ── Surfaces: cold graphite ramp, 6 steps of elevation ──────────────
+     No pure #000 — it smears on OLED and kills the sense of depth.      */
+  --void: #060709;
+  --surface-0: #0a0c0f; /* app base                       */
+  --surface-1: #0e1114; /* board well, rail, inspector    */
+  --surface-2: #13171b; /* cards, gutters, dock           */
+  --surface-3: #191e24; /* hover fill, popovers           */
+  --surface-4: #212830; /* pressed fill                   */
+  --surface-glass: rgba(16, 20, 25, 0.82);
 
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #242424;
+  /* ── Hairlines: the only permitted separator ─────────────────────── */
+  --line: rgba(255, 255, 255, 0.065);
+  --line-strong: rgba(255, 255, 255, 0.13);
+  --edge-hi: rgba(255, 255, 255, 0.07); /* top-edge highlight on raised */
 
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
+  /* ── Ink: hierarchy by luminance, never by border weight ───────────
+     All four pass WCAG AA (≥4.5:1) against --surface-2 except ink-4,
+     which is reserved for disabled/decorative text (WCAG-exempt).      */
+  --ink-1: #eef2f6; /* identifiers, values          14.9:1 */
+  --ink-2: #9aa7b4; /* labels, recipients            7.4:1 */
+  --ink-3: #778593; /* metadata, units, times        4.7:1 */
+  --ink-4: #59636e; /* disabled / decorative only    2.9:1 */
+
+  /* ── Filament: the single interactive accent ─────────────────────
+     One warm light in a cold room. Reserved for: focus, primary
+     action, "needs your decision", planned time. Never decorative. */
+  --amber: #ffb445;
+  --amber-hi: #ffc978;
+  --amber-deep: #d68f22;
+  --amber-wash: rgba(255, 180, 69, 0.1);
+  --amber-wash-2: rgba(255, 180, 69, 0.16);
+  --amber-glow: rgba(255, 180, 69, 0.34);
+  --on-amber: #17110a;
+
+  /* ── Semantic channels: two, and only two ───────────────────────
+     verified = a fact was established by external evidence
+     alarm    = something is blocked or failed
+     cool     = informational, local-only, no external commitment
+     unknown  = NOT a colour: dashed hollow outline, never red/green */
+  --verified: #35e0a1;
+  --verified-wash: rgba(53, 224, 161, 0.11);
+  --verified-dim: #1f8f68;
+
+  --alarm: #ff5f52;
+  --alarm-wash: rgba(255, 95, 82, 0.11);
+  --alarm-dim: #a63a32;
+
+  --cool: #56b6f0;
+  --cool-wash: rgba(86, 182, 240, 0.1);
+  --cool-dim: #2f7ba8;
+
+  /* ── Radii: tight. This is an instrument, not a consumer app. ──── */
+  --r-xs: 3px;
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 11px;
+  --r-xl: 15px;
+  --r-pill: 999px;
+
+  /* ── Elevation: exactly three shadows, no ad-hoc values ────────── */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.45);
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, 0.5);
+  --shadow-3: 0 24px 68px rgba(0, 0, 0, 0.64), 0 2px 8px rgba(0, 0, 0, 0.4);
+
+  /* ── Motion: one expo curve for everything, spring for arrivals ── */
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.32, 0.64, 1);
+  --ease-in: cubic-bezier(0.55, 0, 1, 0.45);
+  --d-instant: 90ms;
+  --d-fast: 140ms;
+  --d-base: 220ms;
+  --d-slow: 340ms;
+  --d-glide: 460ms;
+  --d-sweep: 1400ms;
+
+  /* ── Type ───────────────────────────────────────────────────────── */
+  --font-ui: "IBM Plex Sans", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "IBM Plex Mono", "SFMono-Regular",
+    "Cascadia Mono", ui-monospace, monospace;
+
+  /* Scale: 9.5 (micro) → 34 (count). tabular-nums on every number. */
+  --t-micro: 9.5px;
+  --t-mini: 10.5px;
+  --t-label: 11.5px;
+  --t-body: 12.5px;
+  --t-md: 13.5px;
+  --t-lg: 15px;
+  --t-xl: 18px;
+  --t-2xl: 22px;
+  --t-count: 30px;
+
+  --track: 0.1em; /* uppercase micro-label tracking */
+  --track-wide: 0.16em;
+
+  /* ── Layout metrics ─────────────────────────────────────────────── */
+  --rail-w: 62px;
+  --rail-w-open: 218px;
+  --env-h: 58px;
+  --toolbar-h: 46px;
+  --gutter-w: 186px;
+  --inspector-w: 396px;
+  --dock-h: 32px;
+  --dock-h-open: 188px;
+  --card-w: 216px;
+
+  /* Density-driven metrics (overridden by [data-density] below) */
+  --card-pad-y: 9px;
+  --card-pad-x: 12px;
+  --lane-gap: 4px;
+  --card-h-min: 86px;
+
+  /* ── Ambient depth ──────────────────────────────────────────────── */
+  --ambient: radial-gradient(
+      900px 520px at 12% -8%,
+      rgba(255, 180, 69, 0.05),
+      transparent 62%
+    ),
+    radial-gradient(
+      1100px 640px at 96% 108%,
+      rgba(86, 182, 240, 0.038),
+      transparent 60%
+    );
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
+/* Density: compact tightens card padding and lane gaps. */
+[data-density="compact"] {
+  --card-pad-y: 7px;
+  --card-pad-x: 10px;
+  --lane-gap: 3px;
+  --card-h-min: 76px;
+  --t-count: 26px;
 }
-a:hover {
-  color: #535bf2;
+[data-density="cozy"] {
+  --card-pad-y: 11px;
+  --card-pad-x: 13px;
+  --lane-gap: 6px;
+  --card-h-min: 96px;
+  --t-count: 32px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Layer 2: reset & base
+   ═══════════════════════════════════════════════════════════════════════ */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#root {
+  height: 100%;
 }
 
 body {
-  margin: 0;
-  display: flex;
-  place-items: center;
-  min-width: 320px;
-  min-height: 100vh;
+  font-family: var(--font-ui);
+  font-size: var(--t-body);
+  line-height: 1.45;
+  color: var(--ink-1);
+  background: var(--void);
+  font-synthesis-weight: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  /* Prevent iOS/Android tap highlight from fighting our own press states */
+  -webkit-tap-highlight-color: transparent;
 }
 
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  outline: none;
 }
 
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
   cursor: pointer;
-  transition: border-color 0.25s;
-}
-button:hover {
-  border-color: #646cff;
-}
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+  touch-action: manipulation;
 }
 
-@media (prefers-color-scheme: light) {
-  :root {
-    color: #213547;
-    background-color: #ffffff;
+ul,
+ol {
+  list-style: none;
+}
+
+svg {
+  display: block;
+  flex: none;
+}
+
+/* Every number in the product is tabular: columns must not shift as
+   values change during sync sweeps or stage glides. */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "zero" 1;
+}
+
+/* ── Focus: amber ring + glow. Never removed, never hover-only. ────── */
+:focus-visible {
+  outline: 2px solid var(--amber);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 0 4px var(--amber-wash);
+}
+
+::selection {
+  background: var(--amber-wash-2);
+  color: var(--amber-hi);
+}
+
+/* ── Scrollbars: thin, recessed, only visible on hover of the region ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--surface-4) transparent;
+}
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--surface-4);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--r-pill);
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #2d3742;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── Reduced motion: honour it globally, then components opt back in ── */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
-  a:hover {
-    color: #747bff;
-  }
-  button {
-    background-color: #f9f9f9;
-  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Layer 3: shared primitives
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Uppercase micro-label — the product's signature section header.
+   Uses small caps + tracking instead of a filled block. */
+.micro {
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: var(--track-wide);
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Keyboard hint chip */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-family: var(--font-mono);
+  font-size: var(--t-mini);
+  font-weight: 500;
+  line-height: 1;
+  color: var(--ink-2);
+  background: rgba(255, 255, 255, 0.045);
+  border: 1px solid var(--line-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* Buttons ────────────────────────────────────────────────────────────
+   One primary (amber filament) in the entire product. Everything else
+   is a quiet ghost that gains a hairline on hover.                   */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 11px;
+  font-size: var(--t-body);
+  font-weight: 500;
+  white-space: nowrap;
+  border-radius: var(--r-sm);
+  border: 1px solid transparent;
+  transition: background var(--d-fast) var(--ease),
+    color var(--d-fast) var(--ease), border-color var(--d-fast) var(--ease),
+    transform var(--d-instant) var(--ease), box-shadow var(--d-fast) var(--ease);
+}
+.btn:active:not(:disabled) {
+  transform: scale(0.972);
+}
+.btn:disabled {
+  cursor: not-allowed;
+  color: var(--ink-4);
+  background: rgba(255, 255, 255, 0.022);
+  border-color: var(--line);
+}
+
+.btn-ghost {
+  color: var(--ink-2);
+  border-color: var(--line);
+}
+.btn-ghost:hover:not(:disabled) {
+  color: var(--ink-1);
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+.btn-quiet {
+  height: 26px;
+  padding: 0 8px;
+  font-size: var(--t-label);
+  color: var(--ink-2);
+}
+.btn-quiet:hover:not(:disabled) {
+  color: var(--amber-hi);
+  background: var(--amber-wash);
+}
+
+/* The single amber filament key */
+.btn-primary {
+  color: var(--on-amber);
+  background: linear-gradient(180deg, var(--amber-hi), var(--amber));
+  border-color: var(--amber-deep);
+  box-shadow: 0 0 0 1px rgba(255, 180, 69, 0.22), 0 0 18px -4px var(--amber-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  font-weight: 600;
+}
+.btn-primary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffd48c, var(--amber-hi));
+  box-shadow: 0 0 0 1px rgba(255, 180, 69, 0.34), 0 0 26px -3px var(--amber-glow),
+    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.btn-danger {
+  color: var(--alarm);
+  border-color: rgba(255, 95, 82, 0.3);
+  background: var(--alarm-wash);
+}
+.btn-danger:hover:not(:disabled) {
+  background: rgba(255, 95, 82, 0.17);
+  border-color: rgba(255, 95, 82, 0.48);
+}
+
+/* Status pill — always colour + shape + text, never colour alone. */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 19px;
+  padding: 0 7px;
+  font-family: var(--font-mono);
+  font-size: var(--t-micro);
+  font-weight: 500;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  border-radius: var(--r-xs);
+  border: 1px solid currentColor;
+}
+.pill::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  flex: none;
+  background: currentColor;
+}
+.pill-solid::before {
+  border-radius: 50%;
+}
+.pill-diamond::before {
+  border-radius: 1px;
+  transform: rotate(45deg) scale(0.86);
+}
+/* Unknown: hollow + dashed. No red/green judgement is ever implied. */
+.pill-unknown {
+  color: var(--ink-2);
+  border-style: dashed;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(154, 167, 180, 0.09) 0 3px,
+    transparent 3px 6px
+  );
+}
+.pill-unknown::before {
+  background: none;
+  border: 1px dashed currentColor;
+  border-radius: 50%;
+}
+
+.pill-verified {
+  color: var(--verified);
+  background: var(--verified-wash);
+}
+.pill-alarm {
+  color: var(--alarm);
+  background: var(--alarm-wash);
+}
+.pill-amber {
+  color: var(--amber);
+  background: var(--amber-wash);
+}
+.pill-cool {
+  color: var(--cool);
+  background: var(--cool-wash);
+}
+.pill-mute {
+  color: var(--ink-3);
+  background: rgba(255, 255, 255, 0.03);
 }
