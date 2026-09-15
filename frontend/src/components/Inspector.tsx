@@ -99,12 +99,12 @@ const duplicateCopy: Record<
   },
   duplicate_suspicion: {
     label: '疑似重复',
-    cls: 'pill-amber',
+    cls: 'pill-caution',
     note: '待裁决，未裁决前不可授权',
   },
   ambiguous_match: {
     label: '歧义匹配',
-    cls: 'pill-amber',
+    cls: 'pill-caution',
     note: '身份或覆盖不足，待人工裁决',
   },
   repeat_execution: {
@@ -160,7 +160,7 @@ function AttachmentRow({
         <span className="attach-meta">
           <span>{Math.round(a.bytes / 1024)} KB</span>
           <span className="sha">sha {a.sha}</span>
-          {a.state === 'advisory' && <span style={{ color: 'var(--amber)' }}>建议</span>}
+          {a.state === 'advisory' && <span style={{ color: 'var(--caution)' }}>建议</span>}
           {a.state === 'confirmed' && <span style={{ color: 'var(--verified)' }}>已确认</span>}
         </span>
       </span>
@@ -312,7 +312,7 @@ export function Inspector({
     return (
       <aside className="inspector" aria-label="任务检查">
         <div className="insp-head">
-          <span className="micro">任务检查 · inspector</span>
+          <span className="micro">任务详情 · 操作与证据</span>
         </div>
         <EmptyInspector trackCount={trackCount} />
       </aside>
@@ -357,8 +357,8 @@ export function Inspector({
   return (
     <aside className="inspector" aria-label={`任务检查 ${task.id}`}>
       <div className="insp-head">
-        <span className="micro">任务检查 · inspector</span>
-        <button className="icon-btn" onClick={onClose} aria-label="取消选中">
+        <span className="micro">任务详情 · 操作与证据</span>
+        <button className="icon-btn" onClick={onClose} aria-label="返回作业台">
           <Icon.close size={14} />
         </button>
       </div>
@@ -377,7 +377,7 @@ export function Inspector({
             ) : task.readiness === 'confirmed' ? (
               <span className="pill pill-cool pill-diamond">confirmed</span>
             ) : (
-              <span className="pill pill-amber pill-diamond">ready</span>
+              <span className="pill pill-caution pill-diamond">ready</span>
             )}
           </div>
 
@@ -568,10 +568,6 @@ export function Inspector({
               </span>
             </div>
             <div className="body-preview">{task.body}</div>
-            <button className="btn btn-quiet" style={{ alignSelf: 'flex-start', paddingLeft: 0 }}>
-              <Icon.file size={12} />
-              打开全文预览
-            </button>
           </div>
         </div>
 

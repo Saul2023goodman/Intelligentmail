@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './console.css'
+import './matrix.css'
 import type { ExecutionPause, OutreachTask, RecordEntry, StageId } from './domain'
 import {
   campaigns,
@@ -13,7 +14,7 @@ import {
   tasks as seedTasks,
 } from './data'
 import { EnvironmentBar, PauseBanner, RailNav, RecordDock } from './components/Shell'
-import { TaskTable, TrackLane, applyFilters, filters } from './components/Board'
+import { FlowMatrix } from './components/FlowMatrix'
 import { Inspector } from './components/Inspector'
 import { CommandPalette, ConfirmDialog, Toasts } from './components/Overlays'
 import type { Toast } from './components/Overlays'
@@ -34,8 +35,6 @@ function deriveStage(t: OutreachTask): StageId {
 
 const withStage = (t: OutreachTask): OutreachTask => ({ ...t, stage: deriveStage(t) })
 
-const SENT_VISIBLE = 10
-
 let recordSeq = 100
 const nowHHMM = () =>
   new Date().toLocaleTimeString('zh-CN', {
@@ -46,14 +45,25 @@ const nowHHMM = () =>
 
 export default function App() {
   const [tasks, setTasks] = useState<OutreachTask[]>(() => seedTasks.map(withStage))
-  const [selectedId, setSelectedId] = useState<string | null>('T-1042')
-  const [view, setView] = useState<'board' | 'list'>('board')
-  const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set())
-  const [density, setDensity] = useState<'cozy' | 'compact'>('cozy')
+  const [selectedId, setSelectedTaskId] = useState<string | null>(() =>
+    window.location.hash.match(/^#\/tasks\/(T-\d+)$/)?.[1] ?? null,
+  )
+  const boardScroll = useRef(0)
+  const setSelectedId = useCallback((id: string | null) => {
+    if (!window.location.hash.startsWith('#/tasks/')) boardScroll.current = window.scrollY
+    const destination = id ? `#/tasks/${id}` : '#/'
+    if (window.location.hash !== destination) window.history.pushState(null, '', destination)
+    setSelectedTaskId(id)
+    window.requestAnimationFrame(() => window.scrollTo(0, id ? 0 : boardScroll.current))
+  }, [])
+  useEffect(() => {
+    const onPopState = () => setSelectedTaskId(window.location.hash.match(/^#\/tasks\/(T-\d+)$/)?.[1] ?? null)
+    window.addEventListener('popstate', onPopState)
+    return () => window.removeEventListener('popstate', onPopState)
+  }, [])
   const [railOpen, setRailOpen] = useState(false)
   const [dockOpen, setDockOpen] = useState(false)
   const [sectionId, setSectionId] = useState('console')
-  const [sentExpanded, setSentExpanded] = useState(false)
 
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [confirmQueue, setConfirmQueue] = useState<OutreachTask[]>([])
@@ -67,11 +77,6 @@ export default function App() {
   const [syncing, setSyncing] = useState(false)
   const [linkState, setLinkState] = useState(mailboxLink)
 
-  const [glideId, setGlideId] = useState<string | null>(null)
-  const [rejectId, setRejectId] = useState<string | null>(null)
-  const [arrivingId, setArrivingId] = useState<string | null>(null)
-
-  const [sort, setSort] = useState({ key: 'id', dir: 'asc' as 'asc' | 'desc' })
   const [campaignId, setCampaignId] = useState(campaigns[0].id)
 
   const toastSeq = useRef(0)
@@ -104,27 +109,14 @@ export default function App() {
     ])
   }, [])
 
-  const flash = useCallback(
-    (setter: (id: string | null) => void, id: string, ms = 520) => {
-      setter(id)
-      later(() => setter(null), ms)
-    },
-    [later],
-  )
-
   /* ── Derived views ────────────────────────────────────────────────── */
-
-  const visible = useMemo(
-    () => applyFilters(tasks, activeFilters),
-    [tasks, activeFilters],
-  )
 
   const byStage = useMemo(() => {
     const map = new Map<StageId, OutreachTask[]>()
     for (const s of stages) map.set(s.id, [])
-    for (const t of visible) map.get(t.stage)?.push(t)
+    for (const t of tasks) map.get(t.stage)?.push(t)
     return map
-  }, [visible])
+  }, [tasks])
 
   /* Flat order matches reading order: risk first, sent last. */
   const flatOrder = useMemo(
@@ -133,37 +125,6 @@ export default function App() {
   )
 
   const selected = tasks.find((t) => t.id === selectedId) ?? null
-
-  /* Alarm pulse is capped at four simultaneous cards so the board never
-     strobes. Risk order decides which four earn it. */
-  const pulsingIds = useMemo(() => {
-    const set = new Set<string>()
-    for (const t of flatOrder) {
-      if (set.size >= 4) break
-      if (t.status === 'unknown_outcome' || t.blockers.length > 0) set.add(t.id)
-    }
-    return set
-  }, [flatOrder])
-
-  const sortedTable = useMemo(() => {
-    const rows = [...visible]
-    const dir = sort.dir === 'asc' ? 1 : -1
-    rows.sort((a, b) => {
-      const get = (t: OutreachTask) =>
-        sort.key === 'blockers'
-          ? t.blockers.length
-          : sort.key === 'stage'
-            ? stages.findIndex((s) => s.id === t.stage)
-            : ((t as unknown as Record<string, unknown>)[sort.key] as string) ?? ''
-      const va = get(a)
-      const vb = get(b)
-      if (typeof va === 'number' && typeof vb === 'number') return (va - vb) * dir
-      return String(va).localeCompare(String(vb)) * dir
-    })
-    return rows
-  }, [visible, sort])
-
-  const readyBatch = byStage.get('ready') ?? []
 
   /* ── Mutations ────────────────────────────────────────────────────── */
 
@@ -181,11 +142,11 @@ export default function App() {
   )
 
   const reject = useCallback(
-    (id: string, reason: string) => {
-      flash(setRejectId, id, 200)
+    (_id: string, reason: string) => {
+
       pushToast(reason, 'alarm')
     },
-    [flash, pushToast],
+    [pushToast],
   )
 
   /* Path 1 — clear a blocker. Saving revalidates the whole preparation and
@@ -245,7 +206,6 @@ export default function App() {
         annotation: becameReady ? undefined : task.annotation,
       })
 
-      flash(setGlideId, taskId)
       pushRecord({
         channel: 'preparation',
         text: `${taskId} ${blocker?.label ?? '阻断项'} 已处置${becameReady ? ' · 转为就绪' : ''}`,
@@ -265,7 +225,7 @@ export default function App() {
         pushToast(`${taskId} 已更新 · 剩余 ${remaining.length} 项待处理`, 'neutral')
       }
     },
-    [tasks, patchTask, flash, pushRecord, pushToast, reject],
+    [tasks, patchTask, pushRecord, pushToast, reject],
   )
 
   const confirmAttachment = useCallback(
@@ -328,7 +288,7 @@ export default function App() {
         ],
         annotation: undefined,
       })
-      flash(setGlideId, task.id)
+
       pushRecord({
         channel: 'confirmation',
         text: `Confirmation 绑定摘要 · ${task.id} · ${mode === 'plan' ? '计划发送' : '立即发送'}`,
@@ -344,7 +304,7 @@ export default function App() {
       })
       setConfirmIndex(0)
     },
-    [patchTask, flash, pushRecord, pushToast],
+    [patchTask, pushRecord, pushToast],
   )
 
   /* Path 3 — unknown outcome. Reconcile first; a blind retry is never offered. */
@@ -369,8 +329,8 @@ export default function App() {
       })
       setPauses((prev) => prev.filter((p) => p.taskId !== taskId))
       setPauseIndex(0)
-      flash(setArrivingId, taskId, 700)
-      flash(setGlideId, taskId, 700)
+
+
       pushRecord({
         channel: 'reconciliation',
         text: `${taskId} 对账取得正向证据 · unknown_outcome → sent，Execution Flow 已恢复`,
@@ -379,7 +339,7 @@ export default function App() {
       })
       pushToast(`${taskId} 已对账 · 判定为 sent，暂停已解除`, 'verified')
     },
-    [tasks, patchTask, flash, pushRecord, pushToast],
+    [tasks, patchTask, pushRecord, pushToast],
   )
 
   const adjudicate = useCallback(
@@ -399,7 +359,7 @@ export default function App() {
         ],
         annotation: undefined,
       })
-      flash(setGlideId, taskId)
+
       pushRecord({
         channel: 'reply',
         text: `${taskId} 歧义回复已裁决 · 关联至该任务`,
@@ -408,7 +368,7 @@ export default function App() {
       })
       pushToast(`${taskId} 已裁决 · 跟进资格转为 ordinary_reply_received`, 'verified')
     },
-    [tasks, patchTask, flash, pushRecord, pushToast],
+    [tasks, patchTask, pushRecord, pushToast],
   )
 
   /* Read-only sync: it can never change outbound state. */
@@ -428,13 +388,9 @@ export default function App() {
     }, 1500)
   }, [syncing, later, pushRecord, pushToast])
 
-  const pausePrimary = useCallback(
-    (p: ExecutionPause) => {
-      if (p.reason === 'unknown_outcome') reconcile(p.taskId)
-      else setSelectedId(p.taskId)
-    },
-    [reconcile],
-  )
+  const pausePrimary = useCallback((p: ExecutionPause) => {
+    setSelectedId(p.taskId)
+  }, [setSelectedId])
 
   /* ── Selection & keyboard ─────────────────────────────────────────── */
 
@@ -448,7 +404,7 @@ export default function App() {
           : flatOrder[Math.min(Math.max(i + delta, 0), flatOrder.length - 1)]
       setSelectedId(next.id)
     },
-    [flatOrder, selectedId],
+    [flatOrder, selectedId, setSelectedId],
   )
 
   const primaryFor = useCallback(
@@ -464,7 +420,7 @@ export default function App() {
         else reject(id, `${id} 受 repeat_execution 硬阻断 · 请先裁决查重结论`)
       } else setSelectedId(id)
     },
-    [tasks, reconcile, adjudicate, openConfirm, resolveBlocker, reject],
+    [tasks, reconcile, adjudicate, openConfirm, resolveBlocker, reject, setSelectedId],
   )
 
   useEffect(() => {
@@ -482,7 +438,7 @@ export default function App() {
         return
       }
       if (paletteOpen || confirmQueue.length > 0) return
-      if (typing) return
+      if (typing || el?.closest('button, select, a')) return
 
       if (e.key === 'Escape') {
         if (dockOpen) setDockOpen(false)
@@ -492,11 +448,6 @@ export default function App() {
       if (e.key === '/') {
         e.preventDefault()
         setPaletteOpen(true)
-        return
-      }
-      if (e.key === 'Enter' && pauses.length > 0) {
-        e.preventDefault()
-        pausePrimary(pauses[Math.min(pauseIndex, pauses.length - 1)])
         return
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return
@@ -544,9 +495,6 @@ export default function App() {
             else reject(selectedId, `${selectedId} 无待处理的附件槽位`)
           }
           break
-        case 'v':
-          setView((v) => (v === 'board' ? 'list' : 'board'))
-          break
         default:
           break
       }
@@ -562,6 +510,7 @@ export default function App() {
     pausePrimary,
     moveSelection,
     selectedId,
+    setSelectedId,
     tasks,
     resolveBlocker,
     confirmAttachment,
@@ -573,10 +522,6 @@ export default function App() {
 
   /* ── Render ───────────────────────────────────────────────────────── */
 
-  const sentTasks = byStage.get('sent') ?? []
-  const sentShown = sentExpanded ? sentTasks : sentTasks.slice(0, SENT_VISIBLE)
-  const sentHidden = sentTasks.length - sentShown.length
-
   const selectedBlockers = selected?.blockers.length ?? 0
   const primaryLock =
     selected?.duplicate === 'repeat_execution'
@@ -586,15 +531,14 @@ export default function App() {
         : null
 
   return (
-    <div className="app" data-density={density}>
+    <div className="app">
       <EnvironmentBar
         campaigns={campaigns}
         activeCampaignId={campaignId}
         onSwitchCampaign={(id) => {
           setCampaignId(id)
-          setActiveFilters(new Set())
           setSelectedId(null)
-          pushToast('作用域已切换 · 筛选与选中已清除，本地制备未受影响', 'neutral')
+          pushToast('作用域已切换 · 选中已清除，本地制备未受影响', 'neutral')
         }}
         link={linkState}
         onSync={runSync}
@@ -626,166 +570,40 @@ export default function App() {
           onSelect={setSectionId}
         />
 
-        <main className="board">
-          <div className="toolbar">
-            <div className="seg" role="group" aria-label="视图切换">
-              <button
-                className="seg-btn"
-                aria-pressed={view === 'board'}
-                onClick={() => setView('board')}
-              >
-                <Icon.grid />
-                看板
-              </button>
-              <button
-                className="seg-btn"
-                aria-pressed={view === 'list'}
-                onClick={() => setView('list')}
-              >
-                <Icon.rows />
-                列表
-              </button>
-            </div>
-
-            <div className="env-sep" aria-hidden="true" />
-
-            <span className="micro" style={{ flex: 'none' }}>
-              筛选
-            </span>
-            <div className="filters" role="group" aria-label="筛选">
-              {filters.map((f) => {
-                const n = tasks.filter(f.test).length
-                return (
-                  <button
-                    key={f.id}
-                    className={`chip ${f.tone === 'alarm' ? 'chip-alarm' : ''}`}
-                    aria-pressed={activeFilters.has(f.id)}
-                    onClick={() =>
-                      setActiveFilters((prev) => {
-                        const next = new Set(prev)
-                        if (next.has(f.id)) next.delete(f.id)
-                        else next.add(f.id)
-                        return next
-                      })
-                    }
-                  >
-                    {f.label}
-                    <span className="chip-count">{n}</span>
-                  </button>
-                )
-              })}
-              {activeFilters.size > 0 && (
-                <button
-                  className="btn btn-quiet"
-                  onClick={() => setActiveFilters(new Set())}
-                  style={{ color: 'var(--amber)' }}
+        <main className="board" hidden={!!selected}>
+          <header className="matrix-title">
+            <div><span className="micro">SMARTMAIL / OPERATIONS</span><h1>外联作业台 <span>FLOW MATRIX</span></h1></div>
+            <div className="matrix-side">
+              <span className="matrix-health"><span className="beacon" style={{ color: pauses.length ? 'var(--alarm)' : 'var(--verified)' }} /> {tasks.length} 个任务 · {pauses.length ? `${pauses.length} 项执行暂停` : '执行流正常'}</span>
+              <span className="matrix-actions">
+                {/* The dashboard shows the next slot only; the full timetable
+                    lives on /plans. The same schedule is never shown twice. */}
+                <span
+                  className="mono matrix-slot"
+                  title={nextPlanSlot.constraints}
                 >
-                  清除
-                </button>
-              )}
+                  <Icon.clock size={12} />
+                  下一时刻
+                  <b>{nextPlanSlot.at}</b>
+                  {nextPlanSlot.taskId}
+                </span>
+              </span>
             </div>
+          </header>
 
-            <div className="toolbar-spacer" />
-
-            {/* The dashboard shows the next slot only; the full timetable
-                lives on /plans. The same schedule is never shown twice. */}
-            <span
-              className="mono"
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 7,
-                fontSize: 'var(--t-label)',
-                color: 'var(--ink-3)',
-                flex: 'none',
-              }}
-              title={nextPlanSlot.constraints}
-            >
-              <Icon.clock size={12} />
-              下一时刻
-              <b style={{ color: 'var(--amber)', fontWeight: 600 }}>
-                {nextPlanSlot.at}
-              </b>
-              {nextPlanSlot.taskId}
-            </span>
-
-            {readyBatch.length > 1 && (
-              <button
-                className="btn btn-ghost"
-                onClick={() => openConfirm(readyBatch.map((t) => t.id))}
-                style={{ flex: 'none' }}
-              >
-                <Icon.layers size={13} />
-                批量复核
-                <span className="chip-count">{readyBatch.length}</span>
-              </button>
-            )}
-
-            <div className="seg" role="group" aria-label="密度" style={{ flex: 'none' }}>
-              <button
-                className="seg-btn"
-                aria-pressed={density === 'cozy'}
-                onClick={() => setDensity('cozy')}
-                title="舒适密度"
-              >
-                疏
-              </button>
-              <button
-                className="seg-btn"
-                aria-pressed={density === 'compact'}
-                onClick={() => setDensity('compact')}
-                title="紧凑密度"
-              >
-                密
-              </button>
-            </div>
-          </div>
-
-          {view === 'board' ? (
-            <div className="tracks" data-syncing={syncing}>
-              {stages.map((stage) => {
-                const laneTasks =
-                  stage.id === 'sent' ? sentShown : (byStage.get(stage.id) ?? [])
-                return (
-                  <TrackLane
-                    key={stage.id}
-                    stage={stage}
-                    tasks={laneTasks}
-                    selectedId={selectedId}
-                    pulsingIds={pulsingIds}
-                    glideId={glideId}
-                    rejectId={rejectId}
-                    arrivingId={arrivingId}
-                    tail={
-                      stage.id === 'sent' && sentHidden > 0 && !sentExpanded
-                        ? { label: '已发送记录 · 打开台账', count: sentHidden }
-                        : undefined
-                    }
-                    onSelect={setSelectedId}
-                    onAction={primaryFor}
-                    onTail={() => setSentExpanded(true)}
-                  />
-                )
-              })}
-            </div>
-          ) : (
-            <TaskTable
-              tasks={sortedTable}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              sort={sort}
-              onSort={(key) =>
-                setSort((s) =>
-                  s.key === key
-                    ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' }
-                    : { key, dir: 'asc' },
-                )
-              }
-            />
-          )}
+          <FlowMatrix
+            tasks={flatOrder}
+            selectedId={selectedId}
+            onOpen={setSelectedId}
+            onPrimary={primaryFor}
+            onBatchConfirm={(ids) => openConfirm(ids)}
+          />
         </main>
 
+        {selected && <main className="detail-page">
+          <header className="detail-nav"><button className="btn btn-ghost" onClick={() => setSelectedId(null)}>← 返回作业台</button><span className="micro">任务 / {selected.id} / 详细操作</span></header>
         <Inspector
+          key={selected.id}
           task={selected}
           trackCount={tasks.length}
           onClose={() => setSelectedId(null)}
@@ -797,6 +615,7 @@ export default function App() {
           onPrimary={primaryFor}
           primaryDisabledReason={primaryLock}
         />
+        </main>}
       </div>
 
       <RecordDock

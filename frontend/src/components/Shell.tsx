@@ -97,7 +97,7 @@ const linkStateCopy: Record<
   },
   needs_login: {
     label: '需要登录',
-    color: 'var(--amber)',
+    color: 'var(--caution)',
     note: '未登录或需要验证码',
   },
   wrong_mailbox: {
@@ -190,7 +190,7 @@ export function EnvironmentBar({
                       </button>
                       <button
                         className="btn btn-quiet"
-                        style={{ color: 'var(--amber-hi)' }}
+                        style={{ color: 'var(--caution-deep)' }}
                         onClick={() => {
                           onSwitchCampaign(c.id)
                           setScopeOpen(false)
@@ -216,7 +216,7 @@ export function EnvironmentBar({
                       <span className="pop-item-sub">{c.meta}</span>
                     </span>
                     {c.id === activeCampaignId && (
-                      <span className="micro" style={{ color: 'var(--amber)' }}>
+                      <span className="micro" style={{ color: 'var(--navy)' }}>
                         active
                       </span>
                     )}
@@ -385,7 +385,6 @@ export function RailNav({
                 aria-current={s.id === activeId ? 'page' : undefined}
                 onClick={() => onSelect(s.id)}
                 title={open ? undefined : `${s.label} · ${s.canonical}`}
-                style={worst ? { color: undefined } : undefined}
               >
                 <span style={{ position: 'relative', display: 'grid' }}>
                   {Glyph && <Glyph size={17} />}
@@ -397,7 +396,7 @@ export function RailNav({
                           worst.tone === 'alarm'
                             ? 'var(--alarm)'
                             : worst.tone === 'amber'
-                              ? 'var(--amber)'
+                              ? 'var(--caution)'
                               : 'var(--cool)',
                       }}
                       aria-hidden="true"
@@ -411,7 +410,7 @@ export function RailNav({
                 {s.lights?.map((l) => (
                   <span
                     key={l.label}
-                    className={`rail-lights light light-${l.tone}`}
+                    className={`rail-lights light light-${l.tone === 'amber' ? 'caution' : l.tone}`}
                     title={l.label}
                   >
                     <span className="sr-only">{l.label} </span>
@@ -480,7 +479,7 @@ export function PauseBanner({
               onClick={() => onIndex((index - 1 + pauses.length) % pauses.length)}
               aria-label="上一条暂停"
             >
-              <Icon.chevronDown size={13} style={{ transform: 'rotate(90deg)' }} />
+              <Icon.chevronLeft size={13} />
             </button>
             <span className="pause-index mono">
               {index + 1} / {pauses.length}
@@ -490,7 +489,7 @@ export function PauseBanner({
               onClick={() => onIndex((index + 1) % pauses.length)}
               aria-label="下一条暂停"
             >
-              <Icon.chevronDown size={13} style={{ transform: 'rotate(-90deg)' }} />
+              <Icon.chevronRight size={13} />
             </button>
           </>
         )}
@@ -501,7 +500,7 @@ export function PauseBanner({
         )}
         <button className="btn btn-primary" onClick={() => onPrimary(p)}>
           {p.primary}
-          <span className="kbd" style={{ borderColor: 'rgba(23,17,10,.3)', color: '#17110a' }}>
+          <span className="kbd" style={{ borderColor: 'rgba(255,255,255,.42)', color: '#ffffff', background: 'rgba(255,255,255,.1)' }}>
             ↵
           </span>
         </button>

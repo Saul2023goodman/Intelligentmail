@@ -1,0 +1,586 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Layer 5: the board page — light Swiss "Meridian"
+   Board and detail are full pages: the document itself scrolls vertically.
+   Every task is one continuous rail row:
+   identity → progress track → current issue → next action.
+   The seven workflow states themselves are the header markers, counts
+   and clickable filters; batch actions appear only in context.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+html, body, #root { width: 100%; min-width: 0; min-height: 100%; }
+/* Clip stray horizontal overflow on the document — the sticky header
+   needs a normally scrolling document, not an overflow:auto root. */
+body { overflow-x: clip; }
+.app { height: auto; min-height: 100dvh; grid-template-rows: auto auto 1fr auto; }
+.workspace { grid-template-columns: auto minmax(0, 1fr); min-width: 0; }
+
+.board { display: flex; flex-direction: column; min-width: 0; }
+.board[hidden] { display: none; }
+
+/* Chrome wraps instead of overflowing when the viewport narrows */
+.env { height: auto; min-height: var(--env-h); flex-wrap: wrap; padding-block: 8px; }
+.pause { height: auto; min-width: 0; flex-wrap: wrap; }
+.pause-body { min-width: 0; overflow-wrap: anywhere; }
+.pause-actions { flex-wrap: wrap; }
+
+/* ── Board title ──────────────────────────────────────────────────────── */
+
+.matrix-title {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 18px; flex-wrap: wrap;
+  padding: 22px 24px 18px;
+  border-bottom: 1px solid var(--line);
+  /* A white page header that settles into the board plane */
+  background: linear-gradient(180deg, #ffffff 0%, var(--surface-1) 100%);
+}
+.matrix-title .micro { color: var(--navy); letter-spacing: var(--track-wide); }
+.matrix-title h1 {
+  margin: 7px 0 0;
+  font-size: var(--t-2xl); font-weight: 600;
+  letter-spacing: -0.02em; color: var(--ink-1);
+}
+.matrix-title h1 span {
+  font-family: var(--font-mono); font-size: var(--t-mini); font-weight: 500;
+  letter-spacing: var(--track); text-transform: uppercase;
+  color: var(--ink-3); margin-left: 13px;
+}
+.matrix-side { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.matrix-health {
+  display: inline-flex; align-items: center; gap: 8px;
+  height: 30px; padding: 0 11px;
+  color: var(--ink-3); font-size: var(--t-label);
+  background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--r-md);
+}
+.matrix-health .beacon { color: var(--verified); }
+.matrix-actions { display:inline-flex; align-items: center; gap: 8px; }
+.matrix-slot {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 30px; padding: 0 11px;
+  font-size: var(--t-label); color: var(--ink-3);
+  background: var(--surface-2); border: 1px solid var(--line-strong);
+  border-radius: var(--r-md);
+  transition: border-color var(--m-feedback) var(--m-curve),
+    background var(--m-feedback) var(--m-curve);
+}
+.matrix-slot:hover { background: var(--surface-3); border-color: #acb9c7; }
+.matrix-slot b { color: var(--ink-1); font-weight: 600; }
+
+/* ── Tools bar: permanent chrome only ─────────────────────────────────── */
+
+.flow { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.flow-tools {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 8px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-1);
+}
+.flow-total { color: var(--ink-3); font-size: var(--t-mini); }
+
+/* ── Contextual strip: a status filter or row selection summons it ─────── */
+
+.flow-context {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 7px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+  animation: context-in var(--m-rise) var(--ease-out);
+}
+@keyframes context-in {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+.ctx-summary { display: inline-flex; align-items: center; gap: 8px; }
+.ctx-spacer { flex: 1 1 auto; }
+.ctx-note { color: var(--ink-4); font-size: var(--t-micro); }
+
+/* Removable context chips: signal tinted for a state filter,
+   neutral for a selection. The whole chip clears its context. */
+.ctx-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 25px; padding: 0 6px 0 10px;
+  font-size: var(--t-micro); color: var(--signal-ink, var(--ink-2));
+  background: var(--signal-wash, var(--surface-2));
+  border: 1px solid color-mix(in srgb, var(--signal, var(--line-strong)) 30%, transparent);
+  border-radius: var(--r-pill);
+  transition: background var(--m-feedback) var(--m-curve);
+}
+.ctx-chip:hover { background: color-mix(in srgb, var(--signal, var(--line-strong)) 12%, var(--surface-2)); }
+.ctx-chip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.ctx-chip .ctx-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 15px; height: 15px; border-radius: 50%;
+  font-style: normal; font-size: 11px; line-height: 1;
+  color: var(--ink-3);
+}
+.ctx-chip .ctx-x:hover { background: rgba(15,23,42,.08); color: var(--ink-1); }
+.ctx-chip-plain {
+  color: var(--ink-2); background: var(--surface-3);
+  border-color: var(--line);
+}
+
+.btn-sm { height: 26px; padding: 0 11px; font-size: var(--t-micro); gap: 6px; }
+.btn-sm .btn-count { font-size: var(--t-micro); }
+
+/* ── Rail list ────────────────────────────────────────────────────────── */
+
+.journey { flex: 1; min-width: 0; background: var(--surface-2); }
+
+.state-axis,
+.journey-row {
+  display: grid;
+  grid-template-columns:
+    40px
+    minmax(188px, 0.95fr)
+    minmax(280px, 1.5fr)
+    minmax(220px, 1.5fr)
+    128px;
+  align-items: center;
+}
+
+/* The state axis is the header: the seven states, in workflow order, each
+   one a marker + name + live count, each one a filter toggle. It is pinned
+   to the same seven-column geometry as the tracks below, dot for dot. */
+.state-axis {
+  position: sticky; top: 0; z-index: 6;
+  min-width: 0;
+  background: var(--surface-1);
+  border-bottom: 1px solid var(--line-strong);
+}
+.state-axis .micro {
+  color: var(--ink-4); letter-spacing: var(--track);
+  padding: 9px 14px;
+}
+.axis-check,
+.j-check { display: flex; align-items: center; justify-content: center; }
+.axis-track {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: start;
+  min-width: 0;
+  padding: 7px 16px 6px;
+}
+.state-mark {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 0; padding: 0 2px;
+  color: var(--ink-3);
+  border-radius: var(--r-sm);
+  transition: color var(--m-feedback) var(--m-curve);
+}
+.state-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--surface-2);
+  border: 1.5px solid var(--line-strong);
+  transition: all var(--m-feedback) var(--m-curve);
+}
+.state-name {
+  font-size: 10px; line-height: 1.15;
+  white-space: nowrap;
+}
+.state-count {
+  font-size: 10px; font-weight: 500; line-height: 1;
+  color: var(--ink-4);
+  font-variant-numeric: tabular-nums;
+}
+.state-mark:hover .state-dot {
+  border-color: var(--signal); background: var(--signal-wash);
+}
+.state-mark:hover .state-name { color: var(--signal-ink); }
+
+/* Active filter = that state speaks in its own signal color */
+.state-mark[data-active="true"] { color: var(--signal-ink); }
+.state-mark[data-active="true"] .state-dot {
+  width: 10px; height: 10px;
+  background: var(--signal); border-color: var(--signal);
+  box-shadow: 0 0 0 3.5px var(--signal-wash);
+}
+.state-mark[data-active="true"] .state-count { color: var(--signal-ink); }
+
+/* ── Rows ─────────────────────────────────────────────────────────────── */
+
+.journey-row {
+  position: relative;
+  min-height: 47px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.journey-row:nth-child(even) { background: var(--surface-1); }
+.journey-row:hover { background: var(--surface-3); }
+.journey-row[data-checked="true"] { background: var(--navy-wash); }
+.journey-row[data-selected="true"] {
+  background: var(--navy-wash);
+  box-shadow: inset 2px 0 0 var(--navy);
+}
+/* The signal tick — a 2px rail at the row's leading edge */
+.journey-row::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: var(--signal);
+}
+
+/* Batch checkboxes: dense 13px squares, the column is always live */
+.row-check {
+  appearance: none; -webkit-appearance: none;
+  width: 13px; height: 13px; margin: 0;
+  border: 1.5px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--surface-0);
+  cursor: pointer;
+  transition: background var(--m-feedback) var(--m-curve),
+    border-color var(--m-feedback) var(--m-curve),
+    box-shadow var(--m-feedback) var(--m-curve);
+}
+.row-check:hover { border-color: var(--navy); }
+.row-check:checked {
+  background: var(--navy) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2.5 6.2 5 8.5l4.5-5' fill='none' stroke='white' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/10px no-repeat;
+  border-color: var(--navy);
+}
+.row-check:indeterminate {
+  background: var(--navy); border-color: var(--navy);
+}
+.row-check:indeterminate::after {
+  content: ''; display: block; width: 7px; height: 1.5px;
+  margin: 4.25px auto 0; background: #fff; border-radius: 1px;
+}
+.row-check:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--navy-wash);
+}
+
+/* Stage signals map onto the token semantics:
+   verify = navy (the work of structure), blocked = alarm,
+   ready/followup = caution (waiting on you),
+   confirmed/executing = cool (in motion, informational),
+   sent = verified (a fact established by evidence). */
+[data-stage="verify"] {
+  --signal: var(--navy);
+  --signal-ink: var(--navy);
+  --signal-wash: var(--navy-wash);
+}
+[data-stage="blocked"] {
+  --signal: var(--alarm);
+  --signal-ink: var(--alarm-dim);
+  --signal-wash: var(--alarm-wash);
+}
+[data-stage="ready"],
+[data-stage="followup"] {
+  --signal: var(--caution);
+  --signal-ink: var(--caution-deep);
+  --signal-wash: var(--caution-wash);
+}
+[data-stage="confirmed"],
+[data-stage="executing"] {
+  --signal: var(--cool);
+  --signal-ink: var(--cool-dim);
+  --signal-wash: var(--cool-wash);
+}
+[data-stage="sent"] {
+  --signal: var(--verified);
+  --signal-ink: var(--verified-dim);
+  --signal-wash: var(--verified-wash);
+}
+
+/* ── Identity cell ────────────────────────────────────────────────────── */
+
+.j-identity {
+  display: flex; flex-direction: column; gap: 3px;
+  min-width: 0; padding: 7px 14px;
+  text-align: left;
+}
+.j-id-line { display: flex; align-items: center; gap: 7px; }
+.j-id-line b {
+  color: var(--ink-1); font-size: var(--t-label);
+  font-weight: 600; letter-spacing: -0.005em;
+}
+.j-id-line small {
+  color: var(--ink-3); font-size: var(--t-micro);
+  border: 1px solid var(--line-strong);
+  padding: 0 4px; border-radius: 3px;
+}
+.j-who {
+  color: var(--ink-2); font-size: var(--t-micro);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.j-who i { font-style: normal; color: var(--ink-4); margin: 0 5px; }
+
+/* ── Progress track ───────────────────────────────────────────────────── */
+
+.j-track { padding: 8px 16px; min-width: 0; }
+
+/* Seven equal cells — node centers land on the same sevenths as the state
+   markers in the axis. The rails are two full-width lines behind the
+   nodes; the done line ends exactly at the current node (--idx/6). */
+.track {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  align-items: center;
+  width: 100%; min-width: 0;
+}
+.track::before,
+.track::after {
+  content: ''; position: absolute; left: 0; right: 0;
+  height: 2px; pointer-events: none;
+}
+.track::before { background: var(--line); }
+.track::after {
+  background: var(--navy); opacity: .45;
+  right: auto;
+  width: calc(var(--idx, 0) / 6 * 100%);
+}
+.track-cell {
+  position: relative;
+  display: flex; align-items: center; justify-content: center;
+  min-width: 0;
+}
+
+.track-node {
+  position: relative; z-index: 1;
+  width: 9px; height: 9px; border-radius: 50%;
+  background: var(--surface-2);
+  border: 1.5px solid var(--line-strong);
+}
+.track-node.past {
+  background: var(--navy); border-color: var(--navy);
+  opacity: .55;
+}
+.track-node.now {
+  width: 12px; height: 12px;
+  background: var(--signal); border-color: var(--signal);
+  box-shadow: 0 0 0 4px var(--signal-wash);
+}
+
+/* When a task crosses stages the current node arrives from the direction
+   of the old one. --glide-from is set in FlowMatrix. */
+@keyframes node-in {
+  from { opacity: 0; transform: translateX(var(--glide-from, 6px)); }
+}
+.track-node[data-moved="true"] {
+  animation: node-in var(--m-rise) var(--ease-out);
+}
+
+/* ── Current issue cell ───────────────────────────────────────────────── */
+
+.j-issue {
+  display: flex; align-items: center; gap: 8px;
+  min-width: 0; padding: 7px 14px;
+  text-align: left;
+}
+.issue-dot {
+  flex: none; width: 6px; height: 6px; border-radius: 2px;
+  background: var(--signal);
+}
+.issue-text {
+  min-width: 0; flex: 0 1 auto;
+  color: var(--ink-2); font-size: var(--t-label);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.issue-more {
+  flex: none; font-size: var(--t-micro); color: var(--signal-ink);
+}
+
+/* ── Next action cell ─────────────────────────────────────────────────── */
+
+.j-action {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  margin: 0 18px 0 4px; height: 30px; padding: 0 11px;
+  font-size: var(--t-label); font-weight: 500;
+  color: var(--signal-ink);
+  background: var(--signal-wash);
+  border: 1px solid color-mix(in srgb, var(--signal) 22%, transparent);
+  border-radius: var(--r-sm);
+  transition: background var(--m-feedback) var(--m-curve),
+    border-color var(--m-feedback) var(--m-curve);
+}
+.j-action:hover {
+  background: color-mix(in srgb, var(--signal) 15%, var(--surface-2));
+  border-color: var(--signal);
+}
+.j-action:active { transform: translateY(.5px); }
+.j-action-label {
+  max-width: 92px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.j-kbd {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  font-family: var(--font-mono); font-size: 9px; line-height: 1;
+  color: var(--signal-ink);
+  background: color-mix(in srgb, var(--signal) 12%, transparent);
+  border: 1px solid color-mix(in srgb, var(--signal) 30%, transparent);
+  border-radius: 3px;
+}
+
+/* Informational stages get a quiet ghost button — nothing is being asked */
+.j-action.is-quiet {
+  color: var(--ink-3);
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+.j-action.is-quiet:hover {
+  color: var(--ink-2);
+  background: var(--surface-3);
+  border-color: var(--line-strong);
+}
+
+/* ── Footer & empty state ─────────────────────────────────────────────── */
+
+.flow-footer {
+  display: flex; flex-wrap: wrap; gap: 16px; align-items: center;
+  padding: 11px 24px;
+  color: var(--ink-3); font-size: var(--t-micro);
+  border-top: 1px solid var(--line);
+  background: var(--surface-1);
+}
+.flow-footer > span:first-child {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--ink-2);
+}
+.flow-footer > span:last-child { margin-left: auto; }
+
+.flow-empty {
+  padding: 48px 24px;
+  text-align: center; color: var(--ink-3);
+  font-size: var(--t-body); background: var(--surface-2);
+}
+.flow-empty button { margin-left: 12px; }
+
+/* ── Detail page ──────────────────────────────────────────────────────── */
+
+.detail-page { min-width: 0; background: var(--surface-0); }
+.detail-nav {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-2);
+}
+.detail-page .inspector {
+  position: static; width: 100%; max-width: none;
+  height: auto; box-shadow: none; border: 0;
+  background: transparent;
+  animation: none;
+}
+.detail-page .insp-scroll {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start; overflow: visible;
+  padding: 28px 24px 32px; gap: 24px;
+  width: 100%; max-width: 1060px; margin-inline: auto;
+}
+.detail-page .insp-scroll > * { min-width: 0; overflow-wrap: anywhere; }
+.detail-page .insp-foot {
+  flex-wrap: wrap;
+  background: var(--surface-2);
+  padding: 12px 24px; gap: 12px;
+}
+.detail-page .insp-lock-note { flex: 1 1 auto; justify-content: flex-start; }
+.detail-page .insp-foot .btn-primary,
+.detail-page .insp-foot .btn-ghost,
+.detail-page .insp-foot .btn-danger {
+  width: auto; min-width: 220px; margin-left: auto;
+}
+
+.dock { min-width: 0; }
+.dock-bar { min-width: 0; }
+
+/* ── Responsive ───────────────────────────────────────────────────────── */
+
+@media (max-width: 1100px) {
+  .state-axis,
+  .journey-row {
+    grid-template-columns:
+      34px
+      minmax(150px, 0.9fr)
+      minmax(230px, 1.5fr)
+      minmax(170px, 1.4fr)
+      112px;
+  }
+  .j-action { margin-inline: 10px 12px; }
+  .j-action-label { max-width: 72px; }
+}
+
+@media (max-width: 640px) {
+  .workspace { display: flex; flex-direction: column; }
+  .rail, .rail[data-open="true"] {
+    width: 100%; height: auto;
+    border-right: 0; border-bottom: 1px solid var(--line);
+  }
+  .rail-list { flex-direction: row; overflow-x: auto; padding: 4px; }
+  .rail-item { flex: none; }
+  .rail-foot { display: none; }
+
+  .matrix-title { padding: 17px 14px; }
+  .matrix-title h1 { font-size: var(--t-xl); }
+  .matrix-title h1 span {
+    display: block; margin: 5px 0 0;
+    font-size: var(--t-micro);
+  }
+  .matrix-side, .matrix-actions { width: 100%; }
+
+  .flow-tools, .flow-context, .flow-footer { padding-inline: 14px; gap: 10px; }
+
+  /* The state axis collapses into a single scrolling chip row —
+     still marker + count, still the filter. */
+  .state-axis {
+    display: block; position: static;
+  }
+  .axis-check, .axis-identity, .axis-issue, .axis-action { display: none; }
+  .axis-track {
+    display: flex; gap: 6px; overflow-x: auto;
+    padding: 8px 14px;
+  }
+  .state-mark {
+    flex-direction: row; gap: 6px; flex: none;
+    padding: 4px 9px;
+    background: var(--surface-1);
+    border: 1px solid var(--line);
+    border-radius: var(--r-pill);
+  }
+  .state-mark[data-active="true"] {
+    background: var(--signal-wash);
+    border-color: color-mix(in srgb, var(--signal) 40%, transparent);
+  }
+  .state-mark[data-active="true"] .state-dot {
+    width: 8px; height: 8px; box-shadow: none;
+  }
+
+  /* Rows become stacked cards: identity → track → issue → action */
+  .journey-row {
+    grid-template-columns: minmax(0, 1fr);
+    min-height: 0; gap: 9px;
+    padding: 11px 14px;
+  }
+  .journey-row::before {
+    top: 0; bottom: 0; width: 2px;
+  }
+  .j-check {
+    position: absolute; top: 11px; right: 12px; z-index: 2;
+  }
+  .j-identity,
+  .j-track,
+  .j-issue { padding: 0; }
+  .j-identity { padding-right: 26px; }
+  .j-who { white-space: normal; }
+  .j-track .track { min-width: 280px; }
+  .j-track {
+    overflow-x: auto;
+    margin-inline: -14px;
+    padding-inline: 14px;
+  }
+  .j-action {
+    margin: 0; height: 36px;
+  }
+  .j-action-label { max-width: none; }
+
+  .pause { padding: 10px; gap: 8px; }
+  .pause-actions { width: 100%; }
+
+  .detail-page .insp-scroll {
+    grid-template-columns: minmax(0, 1fr);
+    padding: 16px 14px;
+  }
+  .detail-page .insp-foot { padding-inline: 14px; }
+
+  .env > * { min-width: 0; max-width: 100%; }
+  .toasts { left: 12px; right: 12px; }
+  .toast { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+  .confirm-wrap { padding: 8px; }
+  .confirm-foot, .confirm-foot-actions { flex-wrap: wrap; }
+}

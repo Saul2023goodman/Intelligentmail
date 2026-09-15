@@ -319,7 +319,7 @@ export function ConfirmDialog({
               <div className="confirm-row">
                 <span className="field-label">查重</span>
                 <span className="field-value" style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                  <span className={`pill pill-solid ${dup === 'no_duplicate_found' ? 'pill-verified' : dup === 'repeat_execution' ? 'pill-alarm' : 'pill-amber'}`}>
+                  <span className={`pill pill-solid ${dup === 'no_duplicate_found' ? 'pill-verified' : dup === 'repeat_execution' ? 'pill-alarm' : 'pill-caution'}`}>
                     {dup}
                   </span>
                   <span style={{ fontSize: 'var(--t-mini)', color: 'var(--ink-3)' }}>
