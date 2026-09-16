@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { core, human } from "./core";
 import type { Campaign, Detail, Task, Workspace } from "./core";
-import { stages, tasksFor } from "./workflow-model";
+import { stages, tasksFor, stageMetric } from "./workflow-model";
 import Workflow from "./Workflow";
 import Icon from "./Icon";
+import MailboxPanel from "./MailboxPanel";
+import DraftEditor from "./DraftEditor";
 import "./App.css";
 
 export default function App() {
   const [data, setData] = useState<Workspace | null>(null);
   const [campaign, setCampaign] = useState("");
-  const [selected, setSelected] = useState("preparation");
+  const [selected, setSelected] = useState("mailbox");
   const [search, setSearch] = useState("");
   const [zoom, setZoom] = useState(0.8);
   const [error, setError] = useState("");
@@ -85,7 +87,7 @@ export default function App() {
           Math.min(
             1.1,
             (canvas.current.clientWidth - 40) / 1300,
-            (window.innerHeight - 420) / 760,
+            (window.innerHeight - 420) / 870,
           ),
         ),
       );
@@ -162,7 +164,7 @@ export default function App() {
     setDetail(null);
     detailRevision.current++;
   };
-  const count = (id: string) => (data ? tasksFor(id, data).length : "—");
+  const count = (id: string) => stageMetric(id, data).count;
   return (
     <div className="app-shell">
       <nav className="rail" aria-label="Main navigation">
@@ -495,6 +497,17 @@ export default function App() {
                               {f.detail}
                             </p>
                           ))}
+                          <DraftEditor
+                            preparation={p}
+                            sources={detail.rewrite_sources}
+                            onSaved={async () => {
+                              await load();
+                              await openTask(task);
+                              setNotice(
+                                "草稿已保存并重新校验。内容变更后请重新查重和确认。",
+                              );
+                            }}
+                          />
                           <button
                             className="secondary full"
                             disabled={busy}
@@ -504,6 +517,13 @@ export default function App() {
                           </button>
                         </section>
                       ))}
+                    <div className="section-label">草稿版本记录</div>
+                    {detail.preparations.map((p) => (
+                      <p className="source-item" key={p.id}>
+                        {p.status === "active" ? "当前版本" : "历史版本"} ·{" "}
+                        {p.subject || "未设置主题"} · {p.id.slice(0, 8)}
+                      </p>
+                    ))}
                     <div className="section-label">SOURCE MATERIALS</div>
                     {detail.sources.length ? (
                       detail.sources.map((s) => (
@@ -546,58 +566,75 @@ export default function App() {
                 <p className="description">{stage.description}</p>
                 <div className="stage-stat">
                   <strong>{count(stage.id)}</strong>
-                  <span>outreach tasks at this stage</span>
+                  <span>
+                    {stageMetric(stage.id, data).unit === "tasks"
+                      ? "outreach tasks at this stage"
+                      : stageMetric(stage.id, data).unit}
+                  </span>
                 </div>
-                <div className="section-label">
-                  {search ? "SEARCH RESULTS" : "OUTREACH TASKS"}
-                  <span>{tasks.length}</span>
-                </div>
-                <div className="task-list">
-                  {tasks.length ? (
-                    tasks.map((t) => (
-                      <button key={t.task_id} onClick={() => void openTask(t)}>
-                        <span className="task-avatar">
-                          {t.supervisor_name.slice(0, 1)}
-                        </span>
-                        <span>
-                          <strong>{t.supervisor_name}</strong>
-                          <small>
-                            {t.student_name} · {t.institution_name}
-                          </small>
-                        </span>
-                        <Icon name="arrow" size={16} />
-                      </button>
-                    ))
-                  ) : (
-                    <div className="empty-stage">
-                      <Icon name="source" size={26} />
-                      <strong>
-                        {!data
-                          ? "Waiting for Core"
-                          : search
-                            ? "No matching tasks"
-                            : "Nothing here yet"}
-                      </strong>
-                      <p>
-                        {!data
-                          ? "Connect to the local Core to inspect real campaign activity."
-                          : data.report
-                            ? "Tasks appear here when they match this stage."
-                            : "Create a campaign, then import your source materials to get started."}
-                      </p>
-                      {!data?.campaigns.length && (
-                        <button
-                          className="text-button"
-                          disabled={!data}
-                          onClick={() => setNewCampaign(true)}
-                        >
-                          Create your first campaign{" "}
-                          <Icon name="arrow" size={14} />
-                        </button>
+                {(selected === "mailbox" || selected === "database") && data ? (
+                  <MailboxPanel
+                    key={data.report?.campaign.id || "workspace"}
+                    data={data}
+                    onRefresh={load}
+                  />
+                ) : (
+                  <>
+                    <div className="section-label">
+                      {search ? "SEARCH RESULTS" : "OUTREACH TASKS"}
+                      <span>{tasks.length}</span>
+                    </div>
+                    <div className="task-list">
+                      {tasks.length ? (
+                        tasks.map((t) => (
+                          <button
+                            key={t.task_id}
+                            onClick={() => void openTask(t)}
+                          >
+                            <span className="task-avatar">
+                              {t.supervisor_name.slice(0, 1)}
+                            </span>
+                            <span>
+                              <strong>{t.supervisor_name}</strong>
+                              <small>
+                                {t.student_name} · {t.institution_name}
+                              </small>
+                            </span>
+                            <Icon name="arrow" size={16} />
+                          </button>
+                        ))
+                      ) : (
+                        <div className="empty-stage">
+                          <Icon name="source" size={26} />
+                          <strong>
+                            {!data
+                              ? "Waiting for Core"
+                              : search
+                                ? "No matching tasks"
+                                : "Nothing here yet"}
+                          </strong>
+                          <p>
+                            {!data
+                              ? "Connect to the local Core to inspect real campaign activity."
+                              : data.report
+                                ? "Tasks appear here when they match this stage."
+                                : "Create a campaign, then import your source materials to get started."}
+                          </p>
+                          {!data?.campaigns.length && (
+                            <button
+                              className="text-button"
+                              disabled={!data}
+                              onClick={() => setNewCampaign(true)}
+                            >
+                              Create your first campaign{" "}
+                              <Icon name="arrow" size={14} />
+                            </button>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                </div>
+                  </>
+                )}
                 <div className="inspector-note">
                   <Icon name="shield" size={18} />
                   <p>
@@ -735,7 +772,9 @@ export default function App() {
                   Readiness and confirmation are separate. Sending, scheduling,
                   reconciliation, and follow-up preparation use the existing
                   Core CLI and dedicated mailbox extension. This first page
-                  supports inspection, campaign creation, and duplicate checks.
+                  supports read-only mailbox intake, persisted observation
+                  inspection, duplicate checks, local subject/recipient
+                  correction and source-based Rewrite.
                 </p>
                 <p className="muted">
                   Connections show supported paths, not a timeline or a promise

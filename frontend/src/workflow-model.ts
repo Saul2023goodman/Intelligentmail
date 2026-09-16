@@ -2,26 +2,59 @@ import type { Task, Workspace } from "./core";
 
 export const stages = [
   {
+    id: "mailbox",
+    label: "读取外部邮箱",
+    caption: "扩展只读观察",
+    icon: "mail",
+    color: "blue",
+    x: 55,
+    y: 75,
+    description:
+      "通过已连接的 163 邮箱扩展读取邮件元数据及证据覆盖范围。每次读取会交给 Core 保存并对账，不会自动创建任务或授权发送。",
+  },
+  {
+    id: "database",
+    label: "SmartMail 数据库",
+    caption: "持久化记录与证据",
+    icon: "database",
+    color: "purple",
+    x: 295,
+    y: 75,
+    description:
+      "保存邮箱观察批次、来源材料、任务、草稿版本和执行证据。外部观察与本地 Preparation 分开存储；后续比对和查重使用这些记录。",
+  },
+  {
+    id: "comparison",
+    label: "比对与查重",
+    caption: "任务匹配 · 历史发送检查",
+    icon: "filter",
+    color: "amber",
+    x: 550,
+    y: 75,
+    description:
+      "读取入库时 Core 对账并关联可识别的证据；选中已有 Preparation 的任务可执行查重，检查本 Campaign 内的发送记录及该学生邮箱的观察历史。重复疑似进入人工处理，覆盖不足会明确展示。",
+  },
+  {
     id: "intake",
     label: "Source materials",
     caption: "Outreach tasks",
     icon: "source",
     color: "blue",
     x: 55,
-    y: 257,
+    y: 367,
     description:
       "Preserved source materials are explicitly associated with a student, supervisor, and campaign.",
   },
   {
     id: "preparation",
-    label: "Preparation",
-    caption: "Local message content",
+    label: "更新 / 调整草稿",
+    caption: "本地 Preparation · 保留历史",
     icon: "mail",
     color: "blue",
     x: 295,
-    y: 257,
+    y: 367,
     description:
-      "The Core associates documents and prepares message content. Select a task to inspect its source, message, and attachments.",
+      "选择任务后可调整主题、收件人，或通过修订来源文档 Rewrite 正文。修改后重新校验、重新查重和确认；外部草稿观察不会自动覆盖本地内容。",
   },
   {
     id: "ready",
@@ -30,7 +63,7 @@ export const stages = [
     icon: "check",
     color: "green",
     x: 550,
-    y: 132,
+    y: 242,
     description:
       "Preparations with no blocking readiness findings. Readiness does not grant sending authorization.",
   },
@@ -41,7 +74,7 @@ export const stages = [
     icon: "shield",
     color: "green",
     x: 790,
-    y: 132,
+    y: 242,
     description:
       "Operator authorization binds exact content and execution details. The Core rechecks expiry and blockers before execution.",
   },
@@ -52,7 +85,7 @@ export const stages = [
     icon: "filter",
     color: "rose",
     x: 550,
-    y: 382,
+    y: 492,
     description:
       "Inspect blocking readiness findings, task exceptions, or duplicate suspicions. Corrections and revalidation remain Core operations.",
   },
@@ -63,7 +96,7 @@ export const stages = [
     icon: "clock",
     color: "amber",
     x: 790,
-    y: 382,
+    y: 492,
     description:
       "Available evidence cannot establish the outcome. Inspect the execution ledger and reconcile before explicit continuation.",
   },
@@ -74,7 +107,7 @@ export const stages = [
     icon: "clock",
     color: "blue",
     x: 1040,
-    y: 132,
+    y: 242,
     description:
       "The mailbox has confirmed a schedule. Elapsed time alone never establishes a sent message.",
   },
@@ -85,7 +118,7 @@ export const stages = [
     icon: "send",
     color: "green",
     x: 1040,
-    y: 257,
+    y: 367,
     description:
       "A sent outcome is established by mailbox evidence and retained as immutable history.",
   },
@@ -96,7 +129,7 @@ export const stages = [
     icon: "stop",
     color: "rose",
     x: 1040,
-    y: 382,
+    y: 492,
     description:
       "A failed external attempt pauses the execution flow for operator handling. Acknowledgment is not proof of sending.",
   },
@@ -107,7 +140,7 @@ export const stages = [
     icon: "reply",
     color: "purple",
     x: 550,
-    y: 602,
+    y: 712,
     description:
       "A reliably associated ordinary reply prevents no-reply follow-up eligibility. Automatic replies are recorded separately.",
   },
@@ -118,7 +151,7 @@ export const stages = [
     icon: "branch",
     color: "purple",
     x: 790,
-    y: 602,
+    y: 712,
     description:
       "The Core evaluates campaign timing and count limits. Every follow-up is a separate action needing its own preparation and confirmation.",
   },
@@ -132,6 +165,7 @@ export function tasksFor(stage: string, data: Workspace): Task[] {
     switch (stage) {
       case "intake":
         return true;
+      case "comparison":
       case "preparation":
         return prepared(task).length > 0;
       case "ready":
@@ -164,4 +198,23 @@ export function tasksFor(stage: string, data: Workspace): Task[] {
         return false;
     }
   });
+}
+
+export function stageMetric(
+  stage: string,
+  data: Workspace | null,
+): { count: number | string; unit: string } {
+  if (stage === "mailbox")
+    return { count: data?.mailboxes.length ?? "—", unit: "学生邮箱" };
+  if (stage === "database")
+    return {
+      count: data
+        ? data.mailboxes.reduce(
+            (total, mailbox) => total + mailbox.observation_count,
+            0,
+          )
+        : "—",
+      unit: "读取批次",
+    };
+  return { count: data ? tasksFor(stage, data).length : "—", unit: "tasks" };
 }

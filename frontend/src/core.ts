@@ -18,6 +18,13 @@ export type Preparation = {
   subject: string;
 };
 export type Workspace = {
+  mailboxes: MailboxSummary[];
+  mailbox_capabilities: {
+    adapter: string;
+    capabilities: {
+      read_history: { available: boolean; verified: boolean; basis: string };
+    };
+  };
   campaigns: Campaign[];
   preparations: Preparation[];
   confirmations: { task_id: string; preparation_id: string }[];
@@ -30,6 +37,7 @@ export type Workspace = {
   };
 };
 export type Detail = {
+  rewrite_sources: { id: string; name: string }[];
   preparations: {
     id: string;
     status: string;
@@ -38,6 +46,7 @@ export type Detail = {
     subject: string;
     body: string;
     ready: boolean;
+    source: { id: string; name: string };
     readiness_findings: { code: string; detail: string; blocking: number }[];
     attachment_slots: { label: string; attachment: null | { name: string } }[];
   }[];
@@ -48,6 +57,42 @@ export type Detail = {
     finding: string;
     detail: string;
     evidence_coverage: { limitations?: string[] };
+  }[];
+};
+export type MailboxSummary = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  address: string;
+  observation_count: number;
+  message_count: number;
+  latest: null | {
+    id: string;
+    status: string;
+    observed_at: string;
+    detail: string;
+    evidence_coverage: { complete: boolean };
+  };
+};
+export type MailboxHistory = {
+  observations: {
+    id: string;
+    status: string;
+    observed_at: string;
+    detail: string;
+    evidence_coverage: { complete: boolean };
+    messages: {
+      id: string;
+      subject: string;
+      counterpart: string;
+      folder: string;
+      status: string;
+    }[];
+  }[];
+  reconciliations: {
+    id: string;
+    observation_id: string;
+    findings: { id: string; finding: string; detail: string }[];
   }[];
 };
 export async function core<T>(

@@ -1,7 +1,7 @@
 """Local UI stdio bridge. Domain decisions stay in SmartMail operations.
 
 One process owns one Core for its lifetime; requests never restart recovery.
-No mailbox transport, execution, or arbitrary method dispatch is exposed.
+Only explicit read-only extension observations and local preparation commands are exposed.
 """
 import argparse
 import json
@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .core import SmartMail
 from .errors import SmartMailError
+from .mailbox import NetEase163ExtensionMailbox
 
 
 def dispatch(core, request):
@@ -24,9 +25,12 @@ def dispatch(core, request):
             "report": core.operations_report(campaign_id) if campaign_id else None,
             "preparations": core.list_preparations(campaign_id) if campaign_id else [],
             "confirmations": core.list_confirmations(campaign_id) if campaign_id else [],
+            "mailbox_capabilities": core.mailbox_capabilities(),
+            "mailboxes": mailbox_summaries(core),
         }
     if command == "task":
-        return core.report_task(request["task_id"])
+        return {**core.report_task(request["task_id"]),
+                "rewrite_sources": rewrite_sources(core, request["task_id"])}
     if command == "create_campaign":
         name = request.get("name")
         if not isinstance(name, str) or len(name) > 200:
@@ -34,7 +38,42 @@ def dispatch(core, request):
         return core.create_campaign(name)
     if command == "check_duplicate":
         return core.check_duplicate(request["preparation_id"])
+    if command == "mailbox_history":
+        return {"observations": core.list_mailbox_observations(request["student_id"]),
+                "reconciliations": core.list_reconciliations(request["student_id"])}
+    if command == "refresh_mailbox":
+        if not core.mailbox_capabilities()["capabilities"]["read_history"]["available"]:
+            raise SmartMailError("Connect the dedicated extension to the selected Student's 163 mailbox first")
+        return core.refresh_mailbox(request["student_id"])
+    if command == "update_preparation":
+        return core.update_preparation_fields(request["preparation_id"], request["subject"], request["recipient"])
+    if command == "rewrite":
+        preparation = core.get_preparation(request["preparation_id"])
+        if request["source_id"] not in {source["id"] for source in rewrite_sources(core, preparation["task_id"])}:
+            raise SmartMailError("Choose an imported document belonging to this Student and Campaign")
+        return core.rewrite_local_preparation(request["preparation_id"], request["source_id"])
     raise SmartMailError("Unsupported UI command")
+
+
+def rewrite_sources(core, task_id):
+    task = core.get_task(task_id)
+    return [source for imported in core.list_imports(task["campaign_id"])
+            if imported["student_id"] == task["student_id"]
+            for source in core.get_import(imported["id"])["sources"]
+            if source["name"].lower().endswith(".docx")]
+
+
+def mailbox_summaries(core):
+    summaries = []
+    for mailbox in core.list_mailboxes():
+        observations = core.list_mailbox_observations(mailbox["student_id"])
+        latest = observations[-1] if observations else None
+        summaries.append({**mailbox, "observation_count": len(observations),
+                          "message_count": sum(len(run["messages"]) for run in observations),
+                          "latest": {key: latest[key] for key in (
+                              "id", "status", "observed_at", "detail", "evidence_coverage")}
+                          if latest else None})
+    return summaries
 
 
 def main():
@@ -42,7 +81,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", type=Path, default=Path(".smartmail"))
     args = parser.parse_args()
-    with SmartMail(args.home) as core:
+    with SmartMail(args.home, mailbox=NetEase163ExtensionMailbox(args.home, timeout=20)) as core:
         for line in sys.stdin:
             request = {}
             try:

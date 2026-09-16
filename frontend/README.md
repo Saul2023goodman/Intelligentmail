@@ -15,7 +15,10 @@ Vite if needed. `SMARTMAIL_PYTHON` is optional when `python` already has the
 repository requirements installed.
 
 The page supports campaign selection/creation, workflow exploration, task search,
-message and source inspection, duplicate checks, zoom and fit. Existing imported
+message and source inspection, read-only mailbox intake, persisted evidence,
+duplicate checks, subject/recipient correction, source-based Rewrite, zoom and fit.
+Connect the dedicated extension in the explicitly selected Student mailbox to
+enable reading. Sending remains disabled in the UI bridge. Existing imported
 records appear immediately; a fresh store shows an empty workflow. Import through
 the Core CLI using the same store, then refresh the page.
 
@@ -31,3 +34,5 @@ not standalone static hosting or `vite preview`. See
 The UI targets desktop browsers only. Future changes do not need mobile
 adaptation: mobile viewports, responsive layouts and touch interaction are
 out of scope and require no testing or fixes.
+
+Restart Vite after editing Python Core code so its long-lived stdio worker reloads.

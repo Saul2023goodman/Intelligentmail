@@ -1,4 +1,6 @@
 const paths: Record<string, string> = {
+  database:
+    "M3 6c0-5 18-5 18 0s-18 5-18 0 M3 6v12c0 5 18 5 18 0V6 M3 12c0 5 18 5 18 0",
   grid: "M3 3h6v6H3z M15 3h6v6h-6z M3 15h6v6H3z M15 15h6v6h-6z",
   source: "M4 4h16v16H4z M4 9h16 M9 9v11 M14 9v11 M4 14h16",
   mail: "M3 5h18v14H3z M3 6l9 7 9-7",

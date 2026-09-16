@@ -57,6 +57,12 @@ class RecordsOperations:
     def list_students(self) -> list[dict]:
         return [dict(r) for r in self._db.execute("SELECT * FROM students ORDER BY rowid")]
 
+    def list_mailboxes(self) -> list[dict]:
+        """Registered Student mailboxes, available before any Campaign intake."""
+        return [dict(row) for row in self._db.execute(
+            "SELECT m.id, m.student_id, m.address, s.name AS student_name "
+            "FROM mailboxes m JOIN students s ON s.id = m.student_id ORDER BY m.rowid")]
+
     def get_student(self, student_id: str) -> dict:
         row = self._db.execute("SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
         if row is None:

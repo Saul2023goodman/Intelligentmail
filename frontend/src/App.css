@@ -329,7 +329,7 @@ h1 span {
 }
 .graph {
   width: 1300px;
-  height: 760px;
+  height: 870px;
   position: relative;
   transform-origin: top left;
 }
@@ -348,7 +348,7 @@ h1 span {
 }
 .green-lane {
   left: 530px;
-  top: 83px;
+  top: 193px;
   width: 480px;
   height: 167px;
   background: #effbf580;
@@ -357,7 +357,7 @@ h1 span {
 }
 .rose-lane {
   left: 530px;
-  top: 332px;
+  top: 442px;
   width: 480px;
   height: 166px;
   background: #fff1f480;
@@ -366,7 +366,7 @@ h1 span {
 }
 .purple-lane {
   left: 530px;
-  top: 551px;
+  top: 661px;
   width: 480px;
   height: 153px;
   background: #f6f0ff80;
@@ -379,13 +379,15 @@ h1 span {
   height: 100%;
   overflow: visible;
 }
-.connections > path {
+.connections > path,
+.connections > g > path {
   stroke: #99a9bf;
   stroke-width: 1.6;
   fill: none;
   stroke-linejoin: round;
 }
-.connections > path.dashed {
+.connections > path.dashed,
+.connections > g > path.dashed {
   stroke-dasharray: 5 4;
 }
 .workflow-node {
@@ -497,15 +499,15 @@ h1 span {
 }
 .ready-label {
   left: 515px;
-  top: 221px;
+  top: 331px;
 }
 .blocked-label {
   left: 470px;
-  top: 348px;
+  top: 458px;
 }
 .external-label {
   left: 1013px;
-  top: 95px;
+  top: 205px;
 }
 .graph-note {
   position: absolute;
@@ -1244,4 +1246,42 @@ td small {
   .modal h2 {
     font-size: 20px;
   }
+}
+
+.intake-lane {
+  left: 35px;
+  top: 25px;
+  width: 740px;
+  height: 160px;
+  background: #f1f6ff80;
+  border-color: #bbd1f6;
+  color: #7d9cce;
+}
+.mailbox-panel .field,
+.draft-editor .field {
+  margin: 14px 0;
+}
+.field select {
+  border: 1px solid #dce4ef;
+  border-radius: 7px;
+  padding: 10px;
+  color: #586f8d;
+  background: white;
+  width: 100%;
+}
+.mailbox-panel .muted,
+.draft-editor .muted {
+  margin-top: 10px;
+}
+.draft-editor {
+  margin-top: 16px;
+  padding: 12px;
+  border: 1px solid #dfebfa;
+  border-radius: 7px;
+  background: #fbfdff;
+}
+.draft-editor summary {
+  cursor: pointer;
+  color: #557fae;
+  font-size: 11px;
 }

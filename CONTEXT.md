@@ -101,6 +101,10 @@ _Avoid_: Unconditionally executable action
 The message held by the external mailbox for a scheduled send, distinct from SmartMail's local preparation.
 _Avoid_: Local draft, local timer
 
+**Mailbox Observation**:
+A retained, read-only account of messages and coverage obtained from a Mailbox at a particular observation time. It is evidence for Reconciliation and duplicate detection; it does not replace a local Preparation or authorize an external action.
+_Avoid_: Mailbox mirror, external draft, proof of delivery
+
 **Scheduled Replacement**:
 An operator-confirmed operation that removes an existing external scheduled draft before submitting its replacement, with removal verified before the new submission.
 _Avoid_: Atomic swap, editing a sent message
@@ -142,6 +146,10 @@ _Avoid_: Failed send, safe to retry
 **Reconciliation**:
 Comparison of SmartMail's records with available mailbox evidence and imported records to establish observed outcomes and discrepancies.
 _Avoid_: Restoring the old plan, granting confirmation to external edits
+
+**Draft Adjustment**:
+An operator correction to the active local Preparation, such as its recipient or subject, followed by renewed validation. A change to message content invalidates the applicable Confirmation; replacing the body creates a fresh Preparation through Rewrite and retains the prior version.
+_Avoid_: Editing a Sent Record, editing an external draft, silent overwrite
 
 **Execution Ledger**:
 The retained history of confirmations, attempts, observed outcomes, and reconciliation findings for external operations.

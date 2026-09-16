@@ -230,6 +230,53 @@ class PreparationOperations:
             self._correct_field(preparation_id, "subject", subject)
         return self.get_preparation(preparation_id)
 
+    def update_preparation_fields(self, preparation_id: str, subject: str, recipient: str) -> dict:
+        """Atomically correct a local draft using existing correction/readiness rules.
+
+        Sent, superseded and externally committed content must follow the existing
+        linked-action, Rewrite or scheduled replacement flows instead.
+        """
+        if not isinstance(subject, str) or not subject.strip():
+            raise SmartMailError("A non-blank subject is required")
+        normalized = email_address(recipient) if isinstance(recipient, str) else None
+        if not normalized:
+            raise SmartMailError("A usable email address is required")
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            preparation = self._require_local_preparation(preparation_id)
+            changed = preparation["subject"] != subject.strip() or preparation["recipient"] != normalized
+            self._correct_field(preparation_id, "subject", subject.strip())
+            self._correct_field(preparation_id, "recipient", normalized)
+            if changed:
+                self._db.execute(
+                    "UPDATE confirmations SET status = 'invalidated', invalidated_reason = 'content_changed' "
+                    "WHERE preparation_id = ? AND status = 'active'", (preparation_id,))
+        return self.get_preparation(preparation_id)
+
+    def _require_local_preparation(self, preparation_id: str) -> dict:
+        """Keep ordinary local editing separate from external commitment replacement."""
+        preparation = self.get_preparation(preparation_id)
+        if preparation["status"] != "active":
+            raise SmartMailError("Superseded Preparation is retained as history")
+        if self._db.execute(
+                "SELECT 1 FROM sent_records WHERE preparation_id = ?", (preparation_id,)).fetchone():
+            raise SmartMailError("Sent content is frozen; create a linked Communication Action")
+        if self._db.execute(
+                "SELECT 1 FROM execution_attempts WHERE preparation_id = ? "
+                "AND state IN ('in_progress', 'unknown', 'externally_scheduled', 'sent', 'cancel_unknown')",
+                (preparation_id,)).fetchone() or self._db.execute(
+                "SELECT 1 FROM external_schedules WHERE preparation_id = ? "
+                "AND state != 'cancelled'", (preparation_id,)).fetchone():
+            raise SmartMailError("Resolve the external commitment before adjusting this Preparation")
+        return preparation
+
+    def rewrite_local_preparation(self, preparation_id: str, source_id: str) -> dict:
+        """Reuse Rewrite after enforcing the ordinary local-draft editing boundary."""
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            self._require_local_preparation(preparation_id)
+            return self.rewrite(preparation_id, source_id)
+
     def set_recipient(self, preparation_id: str, address: str) -> dict:
         """Record an explicit operator recipient; the value is normalized, never guessed."""
         normalized = email_address(address)
