@@ -15,6 +15,10 @@ rules when adding or changing behavior.
 
 ## Run
 
+The first visual frontend is available in [`frontend/`](frontend/README.md): a
+workflow canvas connected to Core campaign reports, task evidence, and duplicate
+checks. See the [workflow mapping](docs/frontend-workflow.md) for scope.
+
 From the repository root, with Python 3.11 or newer:
 
 ```powershell

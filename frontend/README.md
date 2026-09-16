@@ -1,32 +1,33 @@
-# React + TypeScript + Vite
+# SmartMail workflow frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Install the repository's Python requirements and frontend dependencies, then:
 
-Currently, two official plugins are available:
-
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```powershell
+cd frontend
+npm install
+$env:SMARTMAIL_PYTHON = (Resolve-Path ../.venv/Scripts/python.exe).Path
+npm run dev
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+Open the loopback URL printed by Vite. The Core bridge defaults to the repository's
+`.smartmail` store. Set `SMARTMAIL_HOME` to another store directory before starting
+Vite if needed. `SMARTMAIL_PYTHON` is optional when `python` already has the
+repository requirements installed.
+
+The page supports campaign selection/creation, workflow exploration, task search,
+message and source inspection, duplicate checks, zoom and fit. Existing imported
+records appear immediately; a fresh store shows an empty workflow. Import through
+the Core CLI using the same store, then refresh the page.
+
+```powershell
+npm run build
+npm run lint
+```
+
+The build is a static UI bundle; the stdio Core bridge runs with `npm run dev`,
+not standalone static hosting or `vite preview`. See
+[workflow mapping and boundaries](../docs/frontend-workflow.md).
+
+The UI targets desktop browsers only. Future changes do not need mobile
+adaptation: mobile viewports, responsive layouts and touch interaction are
+out of scope and require no testing or fixes.
