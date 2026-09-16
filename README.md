@@ -1,6 +1,8 @@
 # SmartMail
 
-Tickets 01 to 10 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, recover interrupted execution with explicit operator takeover, execute operator-confirmed immediate sends in the real 163.com compose interface with Sent-folder evidence, and propose, adjust and confirm deterministic Sending Plans under configured windows, timezone, spacing and daily limits. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, Sending Plans, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks and SQLite persistence. The current 163.com connection uses the dedicated browser extension documented below.
+**Version 1.0** — Tickets 01–12 complete (tagged `v1.0`).
+
+Tickets 01 to 12 provide a local terminal application to import and inspect Outreach Tasks, prepare local messages from existing draft documents, resolve readiness Exceptions and attach supporting files, rewrite preparation with inspectable history, confirm and execute through a mailbox adapter, reconcile persisted read-only observations from the real 163.com mailbox, detect historical duplicates before execution, recover interrupted execution with explicit operator takeover, execute operator-confirmed immediate sends in the real 163.com compose interface with Sent-folder evidence, propose, adjust and confirm deterministic Sending Plans under configured windows, timezone, spacing and daily limits, associate inbound replies on deterministic evidence and prepare linked, rule-driven Follow-up Actions with operational reporting, and place, track, cancel and replace native 163.com scheduled drafts through the dedicated extension, with conditional platform Recall and reconciliation of direct mailbox changes. The headless `SmartMail` command/query boundary owns Campaigns, Students, Mailboxes, Supervisor identity, source evidence, Preparations, corrections, Confirmations, Sending Plans, the Execution Ledger, immutable Sent Records, mailbox observations, Evidence Coverage, Duplicate Checks, reply associations, Follow-up Actions, native schedule records and SQLite persistence. The current 163.com connection uses the dedicated browser extension documented below.
 
 ## Code organization
 
@@ -202,19 +204,99 @@ Every command accepts the global `--now ISO-8601` option, which fixes the store'
 
 `plan show` is the batch review: sender, recipient, subject, confirmed attachments with SHA-256 and size, readiness findings, the scheduled time with its timezone, any bound Confirmation, and the full message text. `plan adjust` sets one action's exact time and refuses a past time, a nonexistent local time, a time outside every allowed window, a spacing breach or a daily-limit breach, naming the constraint and leaving the plan unchanged. Adjusting an action that already carried a Confirmation invalidates it (`adjusted`) and returns the plan to `proposed`.
 
-`plan confirm` authorizes every scheduled action in one operator action; each gets its own Confirmation bound to its exact Preparation, content digest and `{"kind": "scheduled", "scheduled_at", "timezone"}`. The whole batch is validated before anything is authorized, unchanged re-confirmation is idempotent, and changed content renews. Confirmation is local and writes nothing externally. A confirmed schedule is **not** an immediate send: `execution run` refuses scheduled work (the native mailbox scheduling capability is not enabled), and an elapsed confirmed time pauses the Execution Flow with `confirmation_expired`, requiring an explicitly confirmed replacement time — SmartMail never substitutes an immediate send. Placing, cancelling and replacing real 163.com schedules are tickets 11 to 13.
+`plan confirm` authorizes every scheduled action in one operator action; each gets its own Confirmation bound to its exact Preparation, content digest and `{"kind": "scheduled", "scheduled_at", "timezone"}`. The whole batch is validated before anything is authorized, unchanged re-confirmation is idempotent, and changed content renews. Confirmation is local and writes nothing externally. A confirmed schedule is **not** an immediate send: `execution run` refuses scheduled work unless the native scheduling capability is explicitly enabled, and an elapsed confirmed time pauses the Execution Flow with `confirmation_expired`, requiring an explicitly confirmed replacement time — SmartMail never substitutes an immediate send. Placing, cancelling and replacing a real native 163.com schedule use the `schedule` commands described below.
+
+## Associate replies and prepare linked Follow-up Actions
+
+After a mailbox refresh, inbound messages link to outreach only on deterministic anchored evidence: a known Supervisor address plus a normalized reply-thread subject, or timing after a known Sent Record when exactly one Task can match. Unknown senders, messages predating any outreach, and threads with multiple candidate Tasks stay unassociated for explicit operator resolution:
+
+```powershell
+.\.venv\Scripts\python -m smartmail reply list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail reply list --campaign $campaign.id --status ambiguous
+.\.venv\Scripts\python -m smartmail reply show ASSOCIATION_ID
+.\.venv\Scripts\python -m smartmail reply resolve ASSOCIATION_ID --task TASK_ID
+.\.venv\Scripts\python -m smartmail reply resolve ASSOCIATION_ID --dismiss
+```
+
+Recognized Automatic Replies (the `auto_submitted` header or explicit EN/CN subject markers) are recorded separately and never stop follow-up eligibility by themselves; a reliably associated Ordinary Reply does. Replies are never classified as interest, rejection or document requests, and message-body HTML is never read — those exclusions are recorded as Evidence Coverage limitations.
+
+Configure a Campaign Follow-up Rule, compute deterministic Follow-up Due, and create linked Follow-up Actions:
+
+```powershell
+.\.venv\Scripts\python -m smartmail followup configure --campaign $campaign.id --delay-days 3 --max 2 --subject-template 'Re: ...' --body-template '...'
+.\.venv\Scripts\python -m smartmail followup status --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail followup prepare --campaign $campaign.id [--task TASK_ID]
+.\.venv\Scripts\python -m smartmail followup list --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail followup show ACTION_ID
+.\.venv\Scripts\python -m smartmail followup prepare-action ACTION_ID --source SOURCE_ID
+```
+
+Eligibility waits the configured delay after the Sent Record, enforces the maximum across prepared and sent actions (including chains), and is stopped only by a reliably associated Ordinary Reply; out-of-office return dates are ignored. A template renders only when every value exists; otherwise the action stays `due_for_preparation` and its content comes from an operator-supplied Source Material, never invented. A Follow-up Action is a separate linked Communication Action with its own Confirmation, duplicate re-check, reconciliation and pause-on-blocker safeguards; the duplicate check reports `linked_follow_up`, never repeat outreach. A reply arriving after Confirmation pauses the flow with `new_associated_reply` before any external request, and the Confirmation stays active until the reply is resolved or the Preparation is rewritten.
+
+Operational reports summarize a Campaign with filters and drill down to every evidence record:
+
+```powershell
+.\.venv\Scripts\python -m smartmail report show --campaign $campaign.id
+.\.venv\Scripts\python -m smartmail report show --campaign $campaign.id --student STUDENT_ID --message-status sent --follow-up due
+.\.venv\Scripts\python -m smartmail report task TASK_ID
+```
+
+Message states distinguish `locally_planned`, `externally_scheduled`, `sent`, `observed_failure`, `unknown_outcome` and intake-only. Filters cover Student, Supervisor, Institution, Mailbox, message and duplicate status, Exceptions and follow-up state; `report task` returns the Task's Preparation versions, source evidence, attempts, Sent Records, duplicate checks with coverage, reply associations and Follow-up Actions. Reports are readable while the Execution Flow is paused and reproduce identically after restart.
+
+## Place, cancel and replace native 163 schedules; conditional Recall
+
+An exact confirmed Preparation and time can be placed as a **native** mailbox schedule through the connected extension — SmartMail never substitutes a local timer. Bind the schedule time at Confirmation (a naive time uses `--timezone`, default `Asia/Shanghai`), then place it behind the explicit capability gate:
+
+```powershell
+.\.venv\Scripts\python -m smartmail --home .smartmail confirmation confirm PREPARATION_ID --schedule-at '2026-09-20 15:30'
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension --enable-extension-schedule schedule place CONFIRMATION_ID
+.\.venv\Scripts\python -m smartmail schedule list --campaign $campaign.id --state externally_scheduled
+.\.venv\Scripts\python -m smartmail schedule show SCHEDULE_ID
+```
+
+The extension submits the native compose action with the Beijing wall-clock `scheduleDate`, uploads confirmed attachments through the native upload endpoint, and reports `scheduled` only when the mailbox returns the external scheduled identity (`<msid>:<mid>`), which SmartMail preserves. The tracked state becomes **Externally Scheduled** — distinct from local plans, Unknown Outcome and Sent — and the mailbox executes the schedule even while SmartMail is offline. Uncertain placement pauses as `placement_unknown` and is reconciled rather than resubmitted; a failed placement creates nothing externally; elapsed time alone never establishes Sent.
+
+Cancellation is an operator-controlled removal of the external scheduled draft; pausing SmartMail never cancels anything:
+
+```powershell
+.\.venv\Scripts\python -m smartmail schedule cancel-review SCHEDULE_ID
+.\.venv\Scripts\python -m smartmail schedule cancel-confirm SCHEDULE_ID
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension --enable-extension-schedule schedule cancel-run CONFIRMATION_ID
+```
+
+`cancelled` is recorded only after the draft's absence from the scheduled/drafts view **and** its presence in the Deleted folder are both observed; uncertain removal pauses as `cancel_unknown` without claiming success. If the message has already Sent, its immutable Sent Record is frozen and the result reports that the pending cancellation did not prevent sending; other external schedules remain active.
+
+Scheduled Replacement binds a fresh Preparation with its own scheduled Confirmation — the prior Confirmation never transfers:
+
+```powershell
+.\.venv\Scripts\python -m smartmail schedule replace-confirm SCHEDULE_ID REPLACEMENT_CONFIRMATION_ID
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension --enable-extension-schedule schedule replace-run CONFIRMATION_ID
+.\.venv\Scripts\python -m smartmail schedule reconcile --student STUDENT_ID
+```
+
+Removal of the original is verified before the replacement is submitted; unknown removal blocks submission. If removal succeeds but replacement submission fails, the flow pauses with the original removed and never automatically restores it; if the original sends during the race, its Sent Record freezes and further communication requires a new linked action and Confirmation. `schedule reconcile` observes later outcomes — externally edited times, externally owned schedules, disappearing evidence and Sent evidence — as discrepancies: direct external edits never inherit a prior Confirmation and never trigger automatic restoration of old content or timing.
+
+Recall stays disabled unless platform support and per-message eligibility are established, requires its own explicit Confirmation, and its observed outcome is recorded separately — it is never a completion blocker:
+
+```powershell
+.\.venv\Scripts\python -m smartmail recall review SENT_RECORD_ID
+.\.venv\Scripts\python -m smartmail recall confirm SENT_RECORD_ID
+.\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension --enable-extension-recall recall run CONFIRMATION_ID
+```
+
+Observation-only periodicity, which never mutates the mailbox, is configured with `observation set-interval --student STUDENT_ID --seconds 300` (`0` disables) and inspected with `observation show`. Native scheduling, cancellation and Recall are independently gated capabilities, each `verified: false` until controlled real-mailbox sign-off; see [ticket 12 validation](docs/ticket-12-validation.md) for the accepted live protocol evidence, the 2026-09-16 controlled acceptance and the remaining transport/Recall sign-offs.
 
 ## Local state
 
 The default store is `.smartmail` under the current working directory. Use `--home C:\path\store` **before** the command to consistently select another store. Keep using the same store after restarting. SQLite stores records and original bytes together in one import transaction. Materialized copies live under that store's `opened` folder. The local store and virtual environment are ignored by Git.
 
-Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md); crash recovery and Manual Takeover are documented under [Supported Execution Recovery Pattern 08](docs/recovery-pattern-08.md); confirmed immediate sending in the real 163.com compose interface is documented under [Supported Immediate Send Pattern 09](docs/immediate-send-pattern-09.md); windows, timezone, spacing, daily limits and batch Confirmation of exact sending times are documented under [Supported Sending Plan Pattern 10](docs/sending-plan-pattern-10.md). The current dedicated-extension architecture, installation, migration and validation status are documented in [the extension pivot guide](docs/browser-extension-pivot.md) and [extension validation](docs/extension-validation.md).
+Supported inputs and identity rules are documented in [the first Supported Intake Pattern](docs/intake-pattern-01.md). Draft documents are associated and prepared under [Supported Document Pattern 02](docs/preparation-pattern-02.md); readiness corrections and advisory attachments are documented under [Supported Readiness and Attachment Pattern 03](docs/readiness-pattern-03.md); fresh identities and inspectable history are documented under [Supported Rewrite Pattern 04](docs/rewrite-pattern-04.md); confirmation, the controlled adapter and immutable Sent Records are documented under [Supported Confirmation and Controlled Execution Pattern 05](docs/confirmation-pattern-05.md); read-only 163.com observation and manual Reconciliation are documented under [Supported Mailbox Observation Pattern 06](docs/reconciliation-pattern-06.md); duplicate detection with Evidence Coverage is documented under [Supported Duplicate Detection Pattern 07](docs/duplicate-pattern-07.md); crash recovery and Manual Takeover are documented under [Supported Execution Recovery Pattern 08](docs/recovery-pattern-08.md); confirmed immediate sending in the real 163.com compose interface is documented under [Supported Immediate Send Pattern 09](docs/immediate-send-pattern-09.md); windows, timezone, spacing, daily limits and batch Confirmation of exact sending times are documented under [Supported Sending Plan Pattern 10](docs/sending-plan-pattern-10.md). Reply association, linked Follow-up Actions and operational reporting (Tickets 11) are documented in [ticket 11 validation](docs/ticket-11-validation.md); native schedules, Cancellation, Replacement, conditional Recall and direct-change reconciliation (Ticket 12) are documented in [ticket 12 validation](docs/ticket-12-validation.md). The current dedicated-extension architecture, installation, migration and validation status are documented in [the extension pivot guide](docs/browser-extension-pivot.md) and [extension validation](docs/extension-validation.md).
 
 ## Verify
 
 ```powershell
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
-node --test extensions/netease163/tests/commands.test.mjs
+node --test extensions/netease163/tests/commands.test.mjs extensions/netease163/tests/schedule-commands.test.mjs
 ```
 
 The ordinary suite uses anonymized fixtures derived from the observed layout. An additional pilot test reads the supplied representative archive when explicitly configured:
@@ -224,4 +306,4 @@ $env:SMARTMAIL_SAMPLE_ZIP = 'C:\Users\Zeng\Downloads\sample.zip'
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
 ```
 
-Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md), [ticket 05 validation](docs/ticket-05-validation.md), [ticket 06 historical validation](docs/ticket-06-validation.md), [ticket 07 validation](docs/ticket-07-validation.md), [ticket 08 validation](docs/ticket-08-validation.md), [ticket 09 historical validation](docs/ticket-09-validation.md), [ticket 10 validation](docs/ticket-10-validation.md), and [current extension validation](docs/extension-validation.md) for measured outcomes and retained terminal pilots.
+Without this variable the representative test is explicitly skipped. The archive is not bundled in the repository. See [ticket 01 validation](docs/ticket-01-validation.md), [ticket 02 validation](docs/ticket-02-validation.md), [ticket 03 validation](docs/ticket-03-validation.md), [ticket 04 validation](docs/ticket-04-validation.md), [ticket 05 validation](docs/ticket-05-validation.md), [ticket 06 historical validation](docs/ticket-06-validation.md), [ticket 07 validation](docs/ticket-07-validation.md), [ticket 08 validation](docs/ticket-08-validation.md), [ticket 09 historical validation](docs/ticket-09-validation.md), [ticket 10 validation](docs/ticket-10-validation.md), [ticket 11 validation](docs/ticket-11-validation.md), [ticket 12 validation](docs/ticket-12-validation.md), and [current extension validation](docs/extension-validation.md) for measured outcomes and retained terminal pilots.
