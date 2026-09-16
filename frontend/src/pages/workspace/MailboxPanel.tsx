@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { core, human } from "./core";
-import type { MailboxHistory, Workspace } from "./core";
-import Icon from "./Icon";
+import { core, human } from "../../core";
+import type { MailboxHistory, Workspace } from "../../core";
+import Icon from "../../shared/Icon";
 
 export default function MailboxPanel({
   data,
@@ -26,7 +26,7 @@ export default function MailboxPanel({
   useEffect(() => {
     let active = true;
     if (studentId)
-      core<MailboxHistory>("mailbox_history", { student_id: studentId }).then(
+      core("mailbox_history", { student_id: studentId }).then(
         (value) => {
           if (active) setHistory(value);
         },
@@ -43,9 +43,7 @@ export default function MailboxPanel({
     setError("");
     setResult("");
     try {
-      const value = await core<{
-        observation: { status: string; messages: unknown[]; detail: string };
-      }>("refresh_mailbox", { student_id: studentId });
+      const value = await core("refresh_mailbox", { student_id: studentId });
       setResult(
         `读取结果：${human(value.observation.status)} · ${value.observation.messages.length} 条观察记录。${value.observation.detail}`,
       );

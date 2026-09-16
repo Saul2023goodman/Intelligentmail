@@ -95,20 +95,3 @@ export type MailboxHistory = {
     findings: { id: string; finding: string; detail: string }[];
   }[];
 };
-export async function core<T>(
-  command: string,
-  args: Record<string, string> = {},
-): Promise<T> {
-  const response = await fetch("/api/core", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ command, ...args }),
-  });
-  const value = await response.json().catch(() => {
-    throw new Error("Core is offline. Start the frontend with npm run dev.");
-  });
-  if (value.error) throw new Error(value.error);
-  if (!response.ok) throw new Error("Unable to reach SmartMail Core");
-  return value.result;
-}
-export const human = (text: string) => text.replaceAll("_", " ");

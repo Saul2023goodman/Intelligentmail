@@ -1,23 +1,6 @@
 @import url("https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;450;500;550;600;650;700&display=swap");
-:root {
-  font-family:
-    "DM Sans",
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    sans-serif;
-  color: #27344a;
-  background: #fff;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  font-size: 13px;
-  --blue: #397af0;
-  --green: #12a478;
-  --rose: #e66b82;
-  --purple: #9261df;
-  --amber: #e6a225;
-}
+@import "./shared/tokens.css";
+
 * {
   box-sizing: border-box;
 }
@@ -47,12 +30,12 @@ button:disabled {
 }
 button:focus-visible,
 a:focus-visible {
-  outline: 3px solid #94baff;
+  outline: 3px solid var(--focus-ring);
   outline-offset: 3px;
 }
 input:focus,
 select:focus {
-  outline: 2px solid #a7c5ff;
+  outline: 2px solid var(--field-focus-ring);
   outline-offset: 2px;
 }
 button {

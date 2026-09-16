@@ -1,0 +1,25 @@
+:root {
+  font-family:
+    "DM Sans",
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+  --text: #27344a;
+  --surface: #fff;
+  --rail: #202d40;
+  --border: #edf0f5;
+  --focus-ring: #94baff;
+  --field-focus-ring: #a7c5ff;
+  color: var(--text);
+  background: var(--surface);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  font-size: 13px;
+  --blue: #397af0;
+  --green: #12a478;
+  --rose: #e66b82;
+  --purple: #9261df;
+  --amber: #e6a225;
+}

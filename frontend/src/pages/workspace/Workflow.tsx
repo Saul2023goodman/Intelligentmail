@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
-import type { Workspace } from "./core";
+import type { Workspace } from "../../core";
 import { stages, stageMetric } from "./workflow-model";
-import Icon from "./Icon";
+import Icon from "../../shared/Icon";
 
 export default function Workflow({
   data,

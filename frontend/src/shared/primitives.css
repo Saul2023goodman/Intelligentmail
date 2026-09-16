@@ -1,0 +1,136 @@
+.icon-button {
+  border: 0;
+  background: transparent;
+  color: #78899f;
+  padding: 6px;
+}
+.eyebrow {
+  font-size: 9px;
+  letter-spacing: 1.65px;
+  font-weight: 650;
+  color: #8a99ad;
+  margin-bottom: 9px;
+}
+h1 {
+  font-size: 27px;
+  letter-spacing: -0.9px;
+  font-weight: 650;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+h1 span {
+  font-size: 10px;
+  letter-spacing: 0;
+  color: #91a0b3;
+  background: #f3f5f9;
+  border: 1px solid #e9edf3;
+  border-radius: 5px;
+  padding: 3px 6px;
+  font-weight: 500;
+}
+.primary {
+  background: var(--blue);
+  color: white;
+  border: 1px solid var(--blue);
+  box-shadow: 0 3px 5px #397af020;
+  border-radius: 7px;
+  padding: 10px 15px;
+  font-size: 11px;
+  font-weight: 550;
+}
+footer {
+  min-height: 32px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 22px;
+  font-size: 9px;
+  color: #9daabc;
+}
+footer > span {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+footer .dot {
+  width: 4px;
+  height: 4px;
+}
+.footer-separator {
+  margin: 0 7px;
+  color: #cad3df;
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-size: 11px;
+  color: #6c7c92;
+  margin: 24px 0;
+}
+.field input {
+  border: 1px solid #dce4ef;
+  border-radius: 7px;
+  padding: 12px;
+  color: #32465f;
+}
+.full {
+  width: 100%;
+}
+.muted {
+  font-size: 10px;
+  color: #9aa7b9;
+  line-height: 1.8;
+}
+.secondary {
+  background: #f7faff;
+  border: 1px solid #dde8f7;
+  color: #5f83b3;
+  border-radius: 6px;
+  padding: 10px;
+  font-size: 10px;
+  margin-top: 15px;
+}
+@media (max-width: 850px) {
+  footer {
+    font-size: 8px;
+  }
+}
+@media (max-width: 550px) {
+  .eyebrow {
+    font-size: 7px;
+  }
+  footer > span:last-child {
+    display: none;
+  }
+}
+.field select {
+  border: 1px solid #dce4ef;
+  border-radius: 7px;
+  padding: 10px;
+  color: #586f8d;
+  background: white;
+  width: 100%;
+}
+.blue {
+  background: #eaf2ff;
+  color: var(--blue);
+}
+.green {
+  background: #e8f9f2;
+  color: var(--green);
+}
+.rose {
+  background: #fff0f3;
+  color: var(--rose);
+}
+.purple {
+  background: #f1eaff;
+  color: var(--purple);
+}
+.amber {
+  background: #fff7e6;
+  color: var(--amber);
+}

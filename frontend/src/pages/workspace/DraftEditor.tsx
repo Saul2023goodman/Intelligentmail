@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { Detail } from "./core";
-import { core } from "./core";
+import type { Detail } from "../../core";
+import { core } from "../../core";
 
 export default function DraftEditor({
   preparation,
@@ -22,12 +22,18 @@ export default function DraftEditor({
     setError("");
     setResult("");
     try {
-      await core(
-        rewrite ? "rewrite" : "update_preparation",
-        rewrite
-          ? { preparation_id: preparation.id, source_id: sourceId.trim() }
-          : { preparation_id: preparation.id, subject, recipient },
-      );
+      if (rewrite) {
+        await core("rewrite", {
+          preparation_id: preparation.id,
+          source_id: sourceId.trim(),
+        });
+      } else {
+        await core("update_preparation", {
+          preparation_id: preparation.id,
+          subject,
+          recipient,
+        });
+      }
       setResult("已保存并重新校验。内容变更需要重新确认；发送前请重新查重。");
       await onSaved();
     } catch (failure) {

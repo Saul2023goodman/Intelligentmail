@@ -25,6 +25,7 @@ the Core CLI using the same store, then refresh the page.
 ```powershell
 npm run build
 npm run lint
+npm test
 ```
 
 The build is a static UI bundle; the stdio Core bridge runs with `npm run dev`,
@@ -36,3 +37,28 @@ adaptation: mobile viewports, responsive layouts and touch interaction are
 out of scope and require no testing or fixes.
 
 Restart Vite after editing Python Core code so its long-lived stdio worker reloads.
+
+## Page ownership and shared foundation
+
+Workspace code lives in `src/pages/workspace/`; Intake (Source mapping) lives in
+`src/pages/intake/`. Shared shell, navigation and hash routing live in `src/app/`,
+tokens/icons/primitives in `src/shared/`, and the typed Core bridge in `src/core/`.
+Keep page development within its directory. See
+[foundation interfaces and state lifetime](../docs/frontend-foundation.md) and
+[frontend agent guidance](AGENTS.md) before starting page worktrees.
+
+## Source-mapping prototype
+
+Open `/#source-mapping`, or select **Source mapping** in the workflow toolbar or
+sidebar. This second page uses labeled sample data to demonstrate spreadsheets,
+documents, attachments, student mailbox identities, and imported mailbox records
+being associated with structured outreach tasks. Select a source to trace its
+tasks; inspect rules and tasks for field mappings and source evidence. Search,
+source-type and task-status filters, collapsible groups, and diagram zoom work locally.
+
+The sample contains nine ready preparations, two attachment blockers, and one
+duplicate suspicion. **Validate mapping** displays the sample validation summary.
+**Add sources** stages file metadata locally without reading or parsing file contents.
+Sample changes reset on navigation or reload; this page does not persist to Core,
+import mailbox history, or authorize sending. The existing workflow remains connected
+to Core.

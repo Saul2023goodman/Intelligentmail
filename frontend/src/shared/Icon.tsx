@@ -1,4 +1,12 @@
-const paths: Record<string, string> = {
+const paths = {
+  file: "M5 3h9l5 5v13H5z M14 3v6h5 M8 13h8 M8 17h6",
+  clip: "M8 13l7-7a3 3 0 014 4L9 20a5 5 0 01-7-7L12 3 M5 15l9-9",
+  link: "M10 14l4-4 M8 16l-1 1a4 4 0 01-6-6l5-5a4 4 0 016 0 M16 8l1-1a4 4 0 016 6l-5 5a4 4 0 01-6 0",
+  chevron: "M7 10l5 5 5-5",
+  user: "M16 7a4 4 0 11-8 0 4 4 0 018 0 M4 21v-3a8 8 0 0116 0v3z",
+  warning: "M12 3L2 21h20z M12 9v5 M12 18h.01",
+  copy: "M9 9h12v12H9z M5 16H2V2h14v3",
+  folder: "M2 6V3h7l3 3h10v15H2z",
   database:
     "M3 6c0-5 18-5 18 0s-18 5-18 0 M3 6v12c0 5 18 5 18 0V6 M3 12c0 5 18 5 18 0",
   grid: "M3 3h6v6H3z M15 3h6v6h-6z M3 15h6v6H3z M15 15h6v6h-6z",
@@ -21,11 +29,13 @@ const paths: Record<string, string> = {
   fit: "M3 9V3h6 M15 3h6v6 M21 15v6h-6 M9 21H3v-6",
   close: "M6 6l12 12 M18 6L6 18",
 };
+export type IconName = keyof typeof paths;
+
 export default function Icon({
   name,
   size = 20,
 }: {
-  name: string;
+  name: IconName;
   size?: number;
 }) {
   return (

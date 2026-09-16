@@ -1,4 +1,4 @@
-import type { Task, Workspace } from "./core";
+import type { Task, Workspace } from "../../core";
 
 export const stages = [
   {
