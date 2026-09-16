@@ -3,6 +3,29 @@
 import os
 import subprocess
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+
+def scheduled_execution(args):
+    """Bind a Confirmation to an exact native schedule time when --schedule-at is given."""
+    if not args.schedule_at:
+        execution = {"kind": "immediate"}
+        if args.expires_at:
+            execution["expires_at"] = args.expires_at
+        return execution
+    text = args.schedule_at.strip().replace("Z", "+00:00")
+    naive = datetime.fromisoformat(text)
+    if naive.tzinfo is None:
+        zone = ZoneInfo(args.timezone)
+        resolved = naive.replace(tzinfo=zone)
+        scheduled_at = resolved.isoformat()
+    else:
+        resolved = naive
+        scheduled_at = naive.isoformat()
+    return {"kind": "scheduled", "scheduled_at": scheduled_at,
+            "scheduled_utc": resolved.astimezone(ZoneInfo("UTC")).isoformat(),
+            "timezone": args.timezone}
 
 
 def dispatch(core, args):
@@ -72,9 +95,7 @@ def dispatch(core, args):
         if args.action == "review":
             result = core.review_confirmation(args.id)
         elif args.action == "confirm":
-            execution = {"kind": "immediate"}
-            if args.expires_at:
-                execution["expires_at"] = args.expires_at
+            execution = scheduled_execution(args)
             result = core.confirm_preparations(
                 args.ids, execution=execution, confirmed_at=args.confirmed_at)
         elif args.action == "list":
@@ -156,6 +177,39 @@ def dispatch(core, args):
                 institution_id=args.institution, mailbox=args.mailbox,
                 message_status=args.message_status, duplicate_status=args.duplicate_status,
                 exceptions=args.exceptions, follow_up=args.follow_up)
+    elif args.command == "schedule":
+        if args.action == "place":
+            result = core.place_schedule(args.confirmation_id)
+        elif args.action == "list":
+            result = core.list_external_schedules(
+                campaign_id=args.campaign, task_id=args.task, state=args.state)
+        elif args.action == "show":
+            result = core.get_external_schedule(args.id)
+        elif args.action == "cancel-review":
+            result = core.review_schedule_cancellation(args.id)
+        elif args.action == "cancel-confirm":
+            result = core.confirm_schedule_cancellation(args.id)
+        elif args.action == "cancel-run":
+            result = core.run_schedule_cancellation(args.confirmation_id)
+        elif args.action == "replace-confirm":
+            result = core.confirm_schedule_replacement(
+                args.schedule_id, args.replacement_confirmation_id)
+        elif args.action == "replace-run":
+            result = core.run_schedule_replacement(args.confirmation_id)
+        else:
+            result = core.reconcile_external_schedules(args.student)
+    elif args.command == "recall":
+        if args.action == "review":
+            result = core.review_recall(args.sent_record_id)
+        elif args.action == "confirm":
+            result = core.confirm_recall(args.sent_record_id)
+        else:
+            result = core.run_recall(args.confirmation_id)
+    elif args.command == "observation":
+        if args.action == "set-interval":
+            result = core.configure_observation(args.student, args.seconds)
+        else:
+            result = core.get_observation_settings(args.student)
     elif args.command == "plan":
         if args.action == "configure":
             result = core.configure_plan(

@@ -448,7 +448,8 @@ class FollowUpTerminalTests(unittest.TestCase):
         confirmed = json.loads(self.run_cli("confirmation", "confirm", preparation_id).stdout)
         outcomes = self.directory / "outcomes.json"
         outcomes.write_text(json.dumps({"outcomes": ["sent"]}), encoding="utf-8")
-        self.run_cli("execution", "run", confirmed[0]["id"], adapter=outcomes)
+        self.run_cli("execution", "run", confirmed[0]["id"], adapter=outcomes,
+                     now="2026-09-15T09:00:00+00:00")
         return campaign, student, outcomes
 
     def test_configure_prepare_confirm_and_send_a_follow_up_through_the_shell(self):

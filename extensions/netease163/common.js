@@ -74,4 +74,133 @@
     });
     return matches.length === 1 ? matches[0] : null;
   };
+
+  /* ------------------------------------------------------------------ */
+  /* Native scheduling, cancellation and Recall: bounded wmsvr calls.   */
+  /* ------------------------------------------------------------------ */
+
+  // Only these fixed funcs can be issued; there is no arbitrary JS/URL surface.
+  const WMSVR_FUNCS = new Set([
+    "mbox:listMessages", "mbox:readMessage", "mbox:compose",
+    "mbox:updateMessageInfos", "mbox:recallMessage",
+  ]);
+  api.toXml = (value, name = null) => {
+    let tag = "string";
+    let text = "";
+    if (value === null || value === undefined) return "";
+    if (typeof value === "boolean") { tag = "boolean"; text = value ? "true" : "false"; }
+    else if (typeof value === "number") {
+      text = String(value);
+      tag = Number.isInteger(value) && -2147483648 <= value && value < 2147483648 ? "int"
+        : Number.isInteger(value) ? "long" : "number";
+    } else if (value instanceof Date) {
+      tag = "date";
+      text = api.beijingStamp(value);
+    } else if (Array.isArray(value)) {
+      tag = "array";
+      text = value.map(child => api.toXml(child)).join("");
+    } else if (typeof value === "object") {
+      tag = "object";
+      text = Object.entries(value)
+        .filter(([, child]) => child !== undefined && child !== null)
+        .map(([key, child]) => api.toXml(child, key)).join("");
+    } else {
+      text = String(value);
+    }
+    // Container text is already serialized markup: only leaf values are escaped.
+    if (tag === "object" || tag === "array") {
+      if (!text) return name === null ? `<${tag}/>` : `<${tag} name="${api.escapeXML(name)}"/>`;
+      return name === null ? `<${tag}>${text}</${tag}>`
+        : `<${tag} name="${api.escapeXML(name)}">${text}</${tag}>`;
+    }
+    const escaped = api.escapeXML(text);
+    return name === null ? `<${tag}>${escaped}</${tag}>`
+      : `<${tag} name="${api.escapeXML(name)}">${escaped}</${tag}>`;
+  };
+  // 163 stores scheduleDate as the Beijing wall clock; render it from the
+  // instant directly so the result is independent of the operator's OS timezone.
+  api.beijingStamp = instant => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Shanghai", hour12: false,
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    }).formatToParts(instant).reduce((acc, part) => { acc[part.type] = part.value; return acc; }, {});
+    const hour = parts.hour === "24" ? "00" : parts.hour;
+    return `${parts.year}-${parts.month}-${parts.day} ${hour}:${parts.minute}:${parts.second}`;
+  };
+  api.wmsvr = async (func, obj) => {
+    if (!WMSVR_FUNCS.has(func)) throw new Error("Unsupported wmsvr operation");
+    const sid = new URL(location.href).searchParams.get("sid");
+    if (!sid) throw new Error("Mailbox session is unavailable; log in again");
+    const xml = '<?xml version="1.0"?>' + api.toXml(obj);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20000);
+    try {
+      const response = await fetch(`/js6/s?sid=${encodeURIComponent(sid)}&func=${encodeURIComponent(func)}`, {
+        method: "POST", credentials: "same-origin", signal: controller.signal,
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ var: xml })
+      });
+      const text = await response.text();
+      const document = await api.xmlDocument({ arrayBuffer: async () => new TextEncoder().encode(text) });
+      const code = api.codeOf(document);
+      if (!response.ok && code !== "S_OK") throw new Error(`${func} returned HTTP ${response.status}`);
+      const nodes = {};
+      Array.from(document.querySelector("result")?.children || []).forEach(node => {
+        const key = node.getAttribute("name") || node.tagName;
+        nodes[key] = api.valueOf(node);
+      });
+      return { code, nodes, raw: text };
+    } finally { clearTimeout(timer); }
+  };
+  api.listFolder = async (fid, limit = 50, start = 0) => {
+    const result = await api.wmsvr("mbox:listMessages", {
+      fid, order: "date", desc: true, limit, start,
+      skipLockedFolders: false, returnTag: true, returnTotal: true
+    });
+    return Array.isArray(result.nodes.var) ? result.nodes.var : [];
+  };
+  // A scheduled draft: drafts folder row explicitly flagged scheduleDelivery.
+  api.scheduledRows = async (limit = 50) =>
+    (await api.listFolder(2, limit)).filter(row => row.flags?.scheduleDelivery === true);
+  api.findScheduledRow = async (externalId, request) => {
+    const rows = await api.scheduledRows(50);
+    if (externalId) {
+      const exact = rows.find(row => row.id === externalId);
+      if (exact) return exact;
+    }
+    return rows.filter(row => row.subject === request.subject
+      && api.addresses(row.to).includes(request.recipient.toLowerCase())).pop() || null;
+  };
+  api.uploadAttachment = async (composeId, bytes, descriptor) => {
+    const sid = new URL(location.href).searchParams.get("sid");
+    if (!sid) throw new Error("Mailbox session is unavailable; log in again");
+    if (bytes.length !== descriptor.size) throw new Error("Confirmed attachment size mismatch");
+    const digest = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)))
+      .map(value => value.toString(16).padStart(2, "0")).join("");
+    if (digest !== descriptor.sha256) throw new Error("Confirmed attachment digest mismatch");
+    const file = new File([bytes], descriptor.name, { type: "application/octet-stream" });
+    const form = new FormData();
+    form.append("Filedata", file, descriptor.name);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 45000);
+    try {
+      const response = await fetch(
+        `/js6/compose/upload.jsp?sid=${encodeURIComponent(sid)}`
+        + `&composeId=${encodeURIComponent(composeId)}&type=native`,
+        { method: "POST", credentials: "same-origin", signal: controller.signal, body: form });
+      const text = await response.text();
+      if (!response.ok) throw new Error(`Attachment upload returned HTTP ${response.status}`);
+      // upload.jsp answers with single-quoted pseudo-JSON; normalize before parsing.
+      const parsed = JSON.parse(text.replace(/([{,])\s*'([^']+)'\s*:/g, '$1"$2":')
+        .replace(/:\s*'([^']*)'/g, ': "$1"').replace(/'\s*}/g, '"}').replace(/'\s*,/g, '",'));
+      if (parsed.code !== "S_OK") throw new Error(`Attachment upload rejected: ${parsed.code || text.slice(0, 120)}`);
+      const info = parsed.attachInfo || parsed;
+      const id = info.attachmentId ?? parsed.attachId ?? parsed.attachId;
+      if (id === undefined || id === null) throw new Error("Attachment upload returned no identity");
+      if (Number(info.size ?? info.actualSize) !== descriptor.size)
+        throw new Error("Uploaded attachment size differs from Confirmation");
+      return { id, name: info.fileName || descriptor.name };
+    } finally { clearTimeout(timer); }
+  };
 })();

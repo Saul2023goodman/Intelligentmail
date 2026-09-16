@@ -19,7 +19,8 @@ class BridgeTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.now = 1000.0
-        self.queue = CommandQueue(self.temp.name, clock=lambda: self.now, validator=lambda payload: None)
+        self.queue = CommandQueue(self.temp.name, clock=lambda: self.now,
+                                  validator=lambda operation, payload: None)
         self.queue.connect("session", "student@163.com")
 
     def enqueue(self, operation="submit", files=()):
@@ -29,7 +30,8 @@ class BridgeTests(unittest.TestCase):
         command_id = self.enqueue()
         self.assertEqual(self.queue.poll("session")["id"], command_id)
         self.assertIsNone(self.queue.poll("session"))
-        restarted = CommandQueue(self.temp.name, clock=lambda: self.now, validator=lambda payload: None)
+        restarted = CommandQueue(self.temp.name, clock=lambda: self.now,
+                                 validator=lambda operation, payload: None)
         self.assertIsNone(restarted.poll("session"))
         self.assertTrue(restarted.authorize("session", command_id)["permitted"])
         with self.assertRaises(BridgeError):

@@ -14,6 +14,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Outcome script for the controlled adapter (development and testing)")
     parser.add_argument("--enable-extension-send", action="store_true",
                         help="Opt into confirmed extension sending for live acceptance; disabled by default")
+    parser.add_argument("--enable-extension-schedule", action="store_true",
+                        help="Opt into native schedule placement/cancellation for live acceptance")
+    parser.add_argument("--enable-extension-recall", action="store_true",
+                        help="Separately opt into confirmed Recall; disabled by default")
     parser.add_argument("--now",
                         help="Controlled ISO-8601 time for reproducible planning and expiry acceptance")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -94,6 +98,10 @@ def build_parser() -> argparse.ArgumentParser:
     confirm.add_argument("ids", nargs="+")
     confirm.add_argument("--expires-at", help="Optional ISO-8601 Confirmation expiry")
     confirm.add_argument("--confirmed-at", help="Optional ISO-8601 operator confirmation time")
+    confirm.add_argument("--schedule-at",
+                         help="Bind a native schedule: exact ISO-8601 time (naive implies --timezone)")
+    confirm.add_argument("--timezone", default="Asia/Shanghai",
+                         help="IANA timezone for a naive --schedule-at (default Asia/Shanghai)")
     confirmation.add_parser("list").add_argument("--campaign", required=True)
     confirmation.add_parser("show").add_argument("id")
 
@@ -249,6 +257,57 @@ def build_parser() -> argparse.ArgumentParser:
     plan_adjust.add_argument("--time", required=True, help="Exact ISO-8601 time in the plan timezone")
     plan.add_parser(
         "confirm", help="Authorize every scheduled action of a Sending Plan").add_argument("id")
+
+    schedule = commands.add_parser(
+        "schedule", help="Place, track, cancel and replace native external schedules"
+    ).add_subparsers(dest="action", required=True)
+    schedule.add_parser("place", help="Place a confirmed native schedule"
+                        ).add_argument("confirmation_id")
+    schedule_list = schedule.add_parser("list", help="List tracked external schedules")
+    schedule_list.add_argument("--campaign")
+    schedule_list.add_argument("--task")
+    schedule_list.add_argument("--state", choices=sorted([
+        "placement_unknown", "externally_scheduled", "sent",
+        "cancelled", "cancel_unknown", "replaced"]))
+    schedule.add_parser("show").add_argument("id")
+    schedule.add_parser("cancel-review",
+                        help="Inspect the external schedule before explicit Cancellation"
+                        ).add_argument("id")
+    schedule.add_parser("cancel-confirm",
+                        help="Authorize removal of one external scheduled draft"
+                        ).add_argument("id")
+    schedule_run_cancel = schedule.add_parser(
+        "cancel-run", help="Observe removal after a confirmed Cancellation")
+    schedule_run_cancel.add_argument("confirmation_id")
+    replace_confirm = schedule.add_parser(
+        "replace-confirm",
+        help="Confirm removal of an old schedule plus its exact replacement schedule")
+    replace_confirm.add_argument("schedule_id")
+    replace_confirm.add_argument("replacement_confirmation_id")
+    replace_run = schedule.add_parser(
+        "replace-run",
+        help="Verify removal, then submit the replacement (never auto-restores)")
+    replace_run.add_argument("confirmation_id")
+    schedule_reconcile = schedule.add_parser(
+        "reconcile", help="Observe mailbox evidence and reconcile tracked schedules")
+    schedule_reconcile.add_argument("--student", required=True)
+
+    recall = commands.add_parser(
+        "recall", help="Conditional platform Recall; reported separately, never blocking"
+    ).add_subparsers(dest="action", required=True)
+    recall.add_parser("review").add_argument("sent_record_id")
+    recall.add_parser("confirm").add_argument("sent_record_id")
+    recall.add_parser("run").add_argument("confirmation_id")
+
+    observe = commands.add_parser(
+        "observation", help="Configure observation-only periodicity"
+    ).add_subparsers(dest="action", required=True)
+    observe_set = observe.add_parser("set-interval")
+    observe_set.add_argument("--student", required=True)
+    observe_set.add_argument("--seconds", type=int, required=True,
+                            help="0 disables periodic observation; observation never mutates the mailbox")
+    observe_get = observe.add_parser("show")
+    observe_get.add_argument("--student", required=True)
 
     source = commands.add_parser("source", help="Open a fresh copy of preserved original bytes").add_subparsers(dest="action", required=True)
     opening = source.add_parser("open")

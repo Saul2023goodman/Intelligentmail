@@ -71,6 +71,9 @@ class ReconciliationOperations:
             for message in messages:
                 self._store_message_observation(run_id, message)
             reconciliation_id = self._reconcile_observation(mailbox, run_id, observed_at)
+            # Tracked native schedules are reconciled from the same evidence; direct
+            # external edits are recorded as discrepancies, never restored or re-confirmed.
+            self._reconcile_external_schedules(mailbox, reconciliation_id, observed_at)
         return {
             "observation": self.get_mailbox_observation(run_id),
             "reconciliation": self.get_reconciliation(reconciliation_id),
@@ -157,6 +160,14 @@ class ReconciliationOperations:
                     reconciliation_id, message["id"], "ambiguous_observation",
                     detail=message["ambiguity"] or "Observed status is ambiguous")
                 summary["ambiguous"] += 1
+                continue
+            if message["status"] == "scheduled":
+                self._insert_reconciliation_finding(
+                    reconciliation_id, message["id"], "observed_external_schedule",
+                    detail=(
+                        "Observed as an external scheduled draft; this is distinct from a local "
+                        "plan and is not evidence of Sent"))
+                summary["unassociated"] += 1
                 continue
             if message["status"] in ("draft", "deleted", "spam"):
                 self._insert_reconciliation_finding(

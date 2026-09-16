@@ -49,6 +49,7 @@ class ReportingTestCase(ExecutionTestCase):
         return student, self.core.get_preparation(preparation_id)
 
     def send(self, preparation, outcome="sent"):
+        self.at(SEND_AT)
         confirmation = self.core.confirm(preparation["id"], confirmed_at=SEND_AT)
         self.core.mailbox = ControlledMailbox([outcome])
         return self.core.run_execution([confirmation["id"]])

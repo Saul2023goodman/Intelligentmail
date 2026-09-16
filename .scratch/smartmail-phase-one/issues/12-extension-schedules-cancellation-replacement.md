@@ -1,7 +1,9 @@
-# 12: Extension native schedules, cancellation, replacement, and direct-change reconciliation
+# 12: Extension native schedules, cancellation, replacement, and direct-mail reconciliation
 
-Status: ready-for-agent
-Labels: ready-for-agent
+Status: resolved
+Labels: implemented, live-acceptance-partial
+Validation: docs/ticket-12-validation.md (controlled real-mailbox acceptance 2026-09-16;
+transport-level worker sign-off and live Recall remain explicitly documented follow-ups)
 Blocked by: None (prerequisites 07, 08, 10 are resolved); can start immediately
 
 **What to build:** Implement and accept against real 163.com the remaining dedicated-extension capabilities, keeping all business rules in the Python core: place and track confirmed native schedules that the mailbox owns while SmartMail is offline; cancel external scheduled drafts only under explicit operator control, with conditional Recall kept separate; perform confirmed Scheduled Replacement with verified removal-before-submission; reconcile direct mailbox edits without restoring stale plans or transferring Confirmation; and complete the live extension acceptance still pending since the 2026-09-14 pivot. Core-side replies, follow-ups, and reporting are ticket 11, the primary ticket, and are not part of this slice.

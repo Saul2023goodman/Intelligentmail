@@ -31,7 +31,10 @@ def main() -> int:
             mailbox = (ControlledMailbox.from_script(args.adapter_script) if args.adapter_script
                        else ControlledMailbox())
         elif args.adapter == "163-extension":
-            mailbox = NetEase163ExtensionMailbox(args.home, enable_send=args.enable_extension_send)
+            mailbox = NetEase163ExtensionMailbox(
+                args.home, enable_send=args.enable_extension_send,
+                enable_schedule=args.enable_extension_schedule,
+                enable_recall=args.enable_extension_recall)
         with SmartMail(args.home, mailbox=mailbox, clock=controlled_clock(args.now)) as core:
             result = dispatch(core, args)
         if args.command == "preparation" and args.action == "preview":

@@ -236,17 +236,49 @@ CREATE TABLE IF NOT EXISTS sending_plans (
     horizon_days INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS sending_plan_proposals (
-    id TEXT PRIMARY KEY,
-    plan_id TEXT NOT NULL REFERENCES sending_plans(id),
-    preparation_id TEXT NOT NULL REFERENCES preparations(id),
-    task_id TEXT NOT NULL REFERENCES tasks(id),
-    sequence INTEGER NOT NULL,
-    status TEXT NOT NULL DEFAULT 'scheduled',
-    reason TEXT NOT NULL DEFAULT '',
-    constraint_name TEXT NOT NULL DEFAULT '',
-    detail TEXT NOT NULL DEFAULT '',
-    scheduled_at TEXT NOT NULL DEFAULT '',
-    scheduled_utc TEXT NOT NULL DEFAULT '',
-    confirmation_id TEXT REFERENCES confirmations(id),
-    UNIQUE(plan_id, preparation_id)
+  id TEXT PRIMARY KEY,
+  plan_id TEXT NOT NULL REFERENCES sending_plans(id),
+  preparation_id TEXT NOT NULL REFERENCES preparations(id),
+  task_id TEXT NOT NULL REFERENCES tasks(id),
+  sequence INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  reason TEXT NOT NULL DEFAULT '',
+  constraint_name TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  scheduled_at TEXT NOT NULL DEFAULT '',
+  scheduled_utc TEXT NOT NULL DEFAULT '',
+  confirmation_id TEXT REFERENCES confirmations(id),
+  UNIQUE(plan_id, preparation_id)
+);
+CREATE TABLE IF NOT EXISTS external_schedules (
+  id TEXT PRIMARY KEY,
+  confirmation_id TEXT NOT NULL REFERENCES confirmations(id),
+  attempt_id TEXT NOT NULL REFERENCES execution_attempts(id),
+  preparation_id TEXT NOT NULL REFERENCES preparations(id),
+  task_id TEXT NOT NULL REFERENCES tasks(id),
+  mailbox_address TEXT NOT NULL,
+  external_id TEXT NOT NULL DEFAULT '',
+  scheduled_utc TEXT NOT NULL,
+  state TEXT NOT NULL,
+  evidence TEXT NOT NULL DEFAULT '',
+  replaces_schedule_id TEXT REFERENCES external_schedules(id),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS external_operations (
+  id TEXT PRIMARY KEY,
+  confirmation_id TEXT NOT NULL REFERENCES confirmations(id),
+  schedule_id TEXT REFERENCES external_schedules(id),
+  task_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  state TEXT NOT NULL,
+  request TEXT NOT NULL,
+  evidence TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS mailbox_settings (
+  mailbox_id TEXT PRIMARY KEY REFERENCES mailboxes(id),
+  observation_interval_seconds INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT ''
 );

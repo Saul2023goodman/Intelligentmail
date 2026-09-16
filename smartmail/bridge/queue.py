@@ -19,14 +19,25 @@ CHUNK_BYTES = 192 * 1024
 MAX_COMMAND_BYTES = 512 * 1024
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
 
+#: External operations that change sending commitment require a consumed permit.
+PERMITTED_OPERATIONS = {"submit", "schedule", "cancel_schedule", "recall"}
+#: Adapter outcomes that prove an external mutation happened; they require a permit.
+PERMITTED_OUTCOMES = {
+    "submit": {"sent"},
+    "schedule": {"scheduled"},
+    "cancel_schedule": {"removed", "already_cancelled", "already_sent"},
+    "recall": {"recalled", "recall_pending"},
+}
+
 
 class CommandQueue:
     def __init__(self, home, clock=time.time, validator=None):
         self.path = Path(home).resolve() / "extension-bridge.sqlite3"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.clock = clock
-        from .authorization import validate_submission
-        self.validate = validator or (lambda payload: validate_submission(self.path.parent, payload))
+        from .authorization import validate_command
+        self.validate = validator or (
+            lambda operation, payload: validate_command(self.path.parent, operation, payload))
         with self._connection() as db:
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS connection (
@@ -79,7 +90,7 @@ class CommandQueue:
                     "protocol": PROTOCOL_VERSION}
 
     def enqueue(self, operation, mailbox, payload, files=(), timeout=120):
-        if operation not in {"observe", "submit"}:
+        if operation not in {"observe", "submit", "schedule", "cancel_schedule", "recall"}:
             raise BridgeError("Unsupported extension operation")
         encoded = json.dumps(payload, ensure_ascii=False)
         if len(encoded.encode("utf-8")) > MAX_COMMAND_BYTES:
@@ -157,9 +168,9 @@ class CommandQueue:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = self._active(db, session, command_id)
-            if row["operation"] != "submit" or row["state"] != "claimed":
-                raise BridgeError("Submission permit is unavailable or already consumed")
-            self.validate(json.loads(row["payload"]))
+            if row["operation"] not in PERMITTED_OPERATIONS or row["state"] != "claimed":
+                raise BridgeError("Operation permit is unavailable or already consumed")
+            self.validate(row["operation"], json.loads(row["payload"]))
             db.execute("UPDATE commands SET state = 'authorized' WHERE id = ?", (command_id,))
             return {"permitted": True, "deadline": row["deadline"] * 1000}
 
@@ -171,8 +182,11 @@ class CommandQueue:
                              (command_id, session)).fetchone()
             if not row or row["state"] not in {"claimed", "authorized", "expired"}:
                 raise BridgeError("Unexpected or duplicate command result")
-            if row["operation"] == "submit" and result.get("outcome") == "sent" and row["state"] != "authorized":
-                raise BridgeError("Sent result without a consumed submission permit")
+            outcome = result.get("outcome")
+            if (row["operation"] in PERMITTED_OPERATIONS
+                    and outcome in PERMITTED_OUTCOMES[row["operation"]]
+                    and row["state"] != "authorized"):
+                raise BridgeError(f"{outcome} result without a consumed operation permit")
             db.execute("UPDATE commands SET state = 'done', result = ?, payload = '{}' WHERE id = ?",
                        (json.dumps(result, ensure_ascii=False), command_id))
             db.execute("DELETE FROM files WHERE command_id = ?", (command_id,))

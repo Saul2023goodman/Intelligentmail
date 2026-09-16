@@ -79,13 +79,14 @@ SmartMail 核心 → 163-extension adapter → 本地命令队列
                               隔离脚本：只读采集 / 确认后撰写
 ```
 
-- 协议版本为 1，仅支持连接、心跳/领取、按命令索引读取附件块、单次提交许可和结果回传。没有任意 JavaScript、shell、URL 或文件路径执行接口。
+- 协议版本为 1，支持的固定操作为 `observe`、`submit`（即时发送）、`schedule`（原生定时放置，含附件块）、`cancel_schedule`、`recall`，以及连接、心跳/领取、按命令索引读取附件块、单次操作许可和结果回传。没有任意 JavaScript、shell、URL 或文件路径执行接口；页面侧 wmsvr 调用限定在固定的 `mbox:*` 函数白名单内。
 - `extension-bridge.sqlite3` 是独立的传输数据库；`smartmail.sqlite3` 仍是业务事实和执行台账的来源。本机主机只读检查业务库，不调用启动恢复逻辑，不创建 Confirmation。
 - 心跳租期为 15 秒；命令默认有效期 120 秒。领取是持久化的单次状态转换，重连不会重放。忙碌心跳不领取新命令。
-- 发放提交许可时检查 attempt 身份、冻结请求、有效 Confirmation、正文与附件摘要、readiness Blocker、执行暂停和已发送记录。页面在点击前再次检查账号、正文、收件人、附件选择和命令期限。
+- 每次发放许可前按 Confirmation 种类分别校验：`immediate`/`scheduled`/`cancellation`/`replacement`/`recall`，并检查 attempt 身份、冻结请求、有效 Confirmation、正文与附件摘要、readiness Blocker、执行暂停和已发送记录（定时另查未来精确时间和重复外部定时）。页面在点击前再次检查账号、正文、收件人、附件选择和命令期限。
 - 附件总量上限为 20 MiB，使用 192 KiB 块传输；正文等命令数据上限为 512 KiB。主机发往浏览器的每帧小于 1 MiB；接收帧上限为 32 MiB。完成或本地等待结束会清理队列内的正文和附件副本，业务历史不受影响。
-- 只读采集每个受支持文件夹最多 5,000 条，保留分页与详情读取覆盖信息。正文 HTML 端点、未识别的自定义文件夹均排除，不宣称整箱完整覆盖。
-- native scheduling、schedule cancellation 和 Recall 仍是独立且禁用的能力。后续工作应在专用扩展内实现与验收，不恢复旧 Playwright 运行路径。
+- 只读采集每个受支持文件夹最多 5,000 条，保留分页与详情读取覆盖信息。正文 HTML 端点、未识别的自定义文件夹均排除，不宣称整箱完整覆盖。草稿箱中 `flags.scheduleDelivery=true` 的行单独标记为 `scheduled`，与本地计划、Unknown Outcome、Sent 严格区分。
+- 原生定时经 `mbox:compose`（`action=schedule`，`attrs.scheduleDate` 为北京时间 `<date>YYYY-MM-DD HH:mm:ss</date>`）放置，成功后以草稿箱复合 ID `msid:mid` 和 `scheduleDelivery` 证据标记 Externally Scheduled；取消=观察到该定时草稿移入已删除；撤回=`mbox:recallMessage`，结果单独记录且永不阻塞完成。
+- native scheduling、schedule cancellation 和 Recall 仍是独立门控能力（分别由 `--enable-extension-schedule`、`--enable-extension-recall` 显式开启，默认禁用、`verified:false`）。协议与受控实站验收见 [ticket-12-validation.md](ticket-12-validation.md)；不恢复旧 Playwright 运行路径。
 
 Native Messaging 的注册方式、stdio 帧格式和大小约束依据 [Chrome Native Messaging 文档](https://developer.chrome.com/docs/extensions/develop/concepts/native-messaging)。脚本使用 [scripting API 的隔离执行环境](https://developer.chrome.com/docs/extensions/reference/api/scripting)，连接期间的 worker 生命周期依据 [Chrome service worker 文档](https://developer.chrome.com/docs/extensions/develop/concepts/service-workers/lifecycle)。
 

@@ -1,9 +1,16 @@
 """Deterministic mailbox evidence for development and workflow tests."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from .base import MailboxCapability, MailboxCapabilityError, MailboxCrash
+
+_BEIJING = timezone(timedelta(hours=8))
+
+
+def beijing_stamp(epoch_ms) -> str:
+    return datetime.fromtimestamp(epoch_ms / 1000, tz=_BEIJING).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class ControlledMailbox(MailboxCapability):
@@ -15,13 +22,31 @@ class ControlledMailbox(MailboxCapability):
 
     name = "controlled"
     enabled = True
+    # Like the real adapter, new capabilities stay unavailable until explicitly opted in.
+    schedule_enabled = False
+    recall_enabled = False
     OUTCOMES = ("sent", "failed", "unknown", "authentication_required")
+    SCHEDULE_OUTCOMES = ("scheduled", "failed", "unknown", "authentication_required")
+    CANCEL_OUTCOMES = ("removed", "already_cancelled", "already_sent", "unknown",
+                       "failed", "authentication_required")
+    RECALL_OUTCOMES = ("recalled", "recall_pending", "recall_failed", "unsupported",
+                       "ineligible", "unknown", "failed", "authentication_required")
 
-    def __init__(self, outcomes=None, default: str = "sent", observations=None):
+    def __init__(self, outcomes=None, default: str = "sent", observations=None,
+                 schedule_outcomes=None, cancel_outcomes=None, recall_outcomes=None,
+                 allow_schedule=False, allow_recall=False):
         self._outcomes = list(outcomes or [])
         self._default = default
         self._observations = list(observations or [])
+        self._schedule_outcomes = list(schedule_outcomes or [])
+        self._cancel_outcomes = list(cancel_outcomes or [])
+        self._recall_outcomes = list(recall_outcomes or [])
+        self.schedule_enabled = bool(allow_schedule)
+        self.recall_enabled = bool(allow_recall)
         self.requests: list[dict] = []
+        self.schedule_requests: list[dict] = []
+        self.cancel_requests: list[dict] = []
+        self.recall_requests: list[dict] = []
         self.observation_requests: list[str] = []
 
     def capabilities(self) -> dict:
@@ -35,6 +60,24 @@ class ControlledMailbox(MailboxCapability):
             "available": True,
             "verified": False,
             "basis": "controlled outcome fixture; no external send",
+        }
+        capabilities["native_scheduling"] = {
+            "available": self.schedule_enabled, "verified": False,
+            "basis": "controlled schedule fixture; the mailbox does not execute here"
+                     if self.schedule_enabled else
+                     "Disabled for the controlled adapter; pass allow_schedule for schedule tests",
+        }
+        capabilities["schedule_cancellation"] = {
+            "available": self.schedule_enabled, "verified": False,
+            "basis": "controlled cancellation fixture; removal is scripted evidence"
+                     if self.schedule_enabled else
+                     "Disabled for the controlled adapter; pass allow_schedule for cancellation tests",
+        }
+        capabilities["recall"] = {
+            "available": self.recall_enabled, "verified": False,
+            "basis": "controlled Recall fixture; reported separately"
+                     if self.recall_enabled else
+                     "Disabled for the controlled adapter; pass allow_recall for Recall tests",
         }
         return capabilities
 
@@ -62,6 +105,58 @@ class ControlledMailbox(MailboxCapability):
             raise MailboxCrash("after_success")
         return self.evidence(scripted)
 
+    @staticmethod
+    def _scripted(queue, default, request, allowed, evidence_builder):
+        scripted = queue.pop(0) if queue else default
+        if isinstance(scripted, str):
+            scripted = {"outcome": scripted}
+        outcome = scripted.get("outcome", default)
+        if outcome not in allowed:
+            raise MailboxCapabilityError(f"Unsupported controlled outcome: {outcome}")
+        return evidence_builder(outcome, scripted, request)
+
+    def schedule_confirmed(self, request, attachments=None, *, confirmation_id, attempt_id):
+        self.schedule_requests.append(request)
+        return self._scripted(
+            self._schedule_outcomes, "scheduled", request, self.SCHEDULE_OUTCOMES,
+            lambda outcome, scripted, request: {
+                "outcome": outcome, "reference": scripted.get("external_id", "controlled-schedule-1"),
+                "external_id": scripted.get("external_id", "761:controlled-schedule-1"),
+                "mailbox_address": request["sender"],
+                "detail": scripted.get("detail", ""),
+                "evidence": {"folder": "drafts", "schedule_delivery": outcome == "scheduled",
+                             "recipient": request["recipient"], "subject": request["subject"],
+                             "scheduled_epoch_ms": request["scheduled_epoch_ms"],
+                             "scheduled_beijing": scripted.get(
+                                 "scheduled_beijing",
+                                 beijing_stamp(request["scheduled_epoch_ms"]))}}
+            if outcome == "scheduled" else
+            {"outcome": outcome, "reference": "", "detail": scripted.get("detail", ""),
+             "mailbox_address": request["sender"]})
+
+    def cancel_schedule_confirmed(self, request, *, confirmation_id, attempt_id):
+        self.cancel_requests.append(request)
+        return self._scripted(
+            self._cancel_outcomes, "removed", request, self.CANCEL_OUTCOMES,
+            lambda outcome, scripted, request: {
+                "outcome": outcome,
+                "reference": request.get("external_id", ""),
+                "external_id": request.get("external_id", ""),
+                "mailbox_address": request["sender"],
+                "detail": scripted.get("detail", ""),
+                "evidence": scripted.get("evidence", {"external_id": request.get("external_id")})})
+
+    def recall_confirmed(self, request, *, confirmation_id, attempt_id):
+        self.recall_requests.append(request)
+        return self._scripted(
+            self._recall_outcomes, "recalled", request, self.RECALL_OUTCOMES,
+            lambda outcome, scripted, request: {
+                "outcome": outcome, "reference": request.get("external_id", ""),
+                "external_id": request.get("external_id", ""),
+                "mailbox_address": request["sender"],
+                "detail": scripted.get("detail", ""),
+                "evidence": scripted.get("evidence", {"response_code": "S_OK"})})
+
     @classmethod
     def evidence(cls, scripted) -> dict:
         if isinstance(scripted, str):
@@ -79,7 +174,12 @@ class ControlledMailbox(MailboxCapability):
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         if isinstance(data, dict):
             return cls(data.get("outcomes", []), default=data.get("default", default),
-                       observations=data.get("observations", []))
+                       observations=data.get("observations", []),
+                       schedule_outcomes=data.get("schedule_outcomes", []),
+                       cancel_outcomes=data.get("cancel_outcomes", []),
+                       recall_outcomes=data.get("recall_outcomes", []),
+                       allow_schedule=bool(data.get("allow_schedule", False)),
+                       allow_recall=bool(data.get("allow_recall", False)))
         return cls(data, default=default)
 
 

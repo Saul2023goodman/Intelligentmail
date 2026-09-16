@@ -18,6 +18,7 @@ from ._operations.confirmations import ConfirmationOperations
 from ._operations.execution import ExecutionOperations
 from ._operations.recovery import RecoveryOperations
 from ._operations.planning import PlanningOperations
+from ._operations.schedules import SchedulesOperations
 
 
 class SmartMail(
@@ -33,6 +34,7 @@ class SmartMail(
     ExecutionOperations,
     RecoveryOperations,
     PlanningOperations,
+    SchedulesOperations,
 ):
     """Persistent command/query interface for local outreach operations.
 

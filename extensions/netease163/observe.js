@@ -37,6 +37,7 @@
     };
     const statusOf = (definition, row) => {
       if (definition.folder === "inbox") return "received";
+      if (definition.folder === "drafts" && row.flags?.scheduleDelivery === true) return "scheduled";
       if (definition.folder === "drafts") return "draft";
       if (definition.folder === "deleted") return "deleted";
       if (definition.folder === "spam") return "spam";

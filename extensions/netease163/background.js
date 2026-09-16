@@ -43,7 +43,9 @@ async function invoke(method, ...args) {
   const results = await chrome.scripting.executeScript({
     target: { tabId: selected.tabId, documentIds: [selected.documentId] }, world: "ISOLATED",
     func: async (method, args) => {
-      if (!["account", "observe", "prepare", "send"].includes(method)) throw new Error("Unsupported mailbox command");
+      if (!["account", "observe", "prepare", "send",
+            "placeSchedule", "cancelSchedule", "recallMessage"].includes(method))
+        throw new Error("Unsupported mailbox command");
       return await globalThis.SmartMail163[method](...args);
     }, args: [method, args]
   });
@@ -62,7 +64,7 @@ async function connect(tabId) {
   if (url.origin !== "https://mail.163.com" || url.pathname !== "/js6/main.jsp")
     throw new Error("请在已登录的 163 邮箱主页打开扩展");
   await chrome.scripting.executeScript({
-    target: { tabId }, world: "ISOLATED", files: ["common.js", "observe.js", "compose.js"]
+    target: { tabId }, world: "ISOLATED", files: ["common.js", "observe.js", "compose.js", "schedule.js"]
   });
   const [identity] = await chrome.scripting.executeScript({
     target: { tabId }, world: "ISOLATED", func: () => globalThis.SmartMail163.account()
