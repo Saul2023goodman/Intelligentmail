@@ -86,23 +86,25 @@ export default function WorkspacePage({ route }: { route: Route }) {
     };
   }, [newCampaign, help]);
   const fit = useCallback(() => {
-    if (canvas.current)
-      setZoom(
-        Math.max(
-          0.45,
-          Math.min(
-            1.1,
-            (canvas.current.clientWidth - 40) / 1300,
-            (window.innerHeight - 420) / 870,
-          ),
-        ),
-      );
+    if (canvas.current) {
+      const styles = getComputedStyle(canvas.current);
+      const width =
+        canvas.current.clientWidth -
+        parseFloat(styles.paddingLeft) -
+        parseFloat(styles.paddingRight);
+      const height =
+        canvas.current.clientHeight -
+        parseFloat(styles.paddingTop) -
+        parseFloat(styles.paddingBottom);
+      setZoom(Math.max(0.15, Math.min(1.1, width / 1300, height / 870)));
+    }
   }, []);
   useEffect(() => {
-    fit();
-    window.addEventListener("resize", fit);
-    return () => window.removeEventListener("resize", fit);
-  }, [fit]);
+    if (!canvas.current) return;
+    const observer = new ResizeObserver(fit);
+    observer.observe(canvas.current);
+    return () => observer.disconnect();
+  }, [fit, route]);
   const stage = stages.find((s) => s.id === selected)!;
   const tasks = data
     ? tasksFor(selected, data).filter((t) =>
@@ -413,7 +415,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
                 <div className="zoom-controls">
                   <button
                     aria-label="Zoom out"
-                    onClick={() => setZoom((z) => Math.max(0.4, z - 0.1))}
+                    onClick={() => setZoom((z) => Math.max(0.15, z - 0.1))}
                   >
                     −
                   </button>

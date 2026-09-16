@@ -50,7 +50,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 25px 29px 23px;
+  padding: var(--heading-block) var(--page-inset);
   gap: 20px;
 }
 .sm-heading .eyebrow {
@@ -100,7 +100,7 @@
 }
 .sm-toolbar {
   padding: 0 29px;
-  height: 49px;
+  height: var(--toolbar-height);
   border-block: 1px solid #edf0f6;
   display: flex;
   gap: 22px;
@@ -156,9 +156,9 @@
 .sm-summary {
   display: flex;
   align-items: center;
-  padding: 14px 26px;
+  padding: 10px var(--page-inset);
   gap: 25px;
-  min-height: 67px;
+  min-height: 0;
   border-bottom: 1px solid #e7edf6;
   background: linear-gradient(90deg, #fff, #fbfcff);
 }
@@ -260,12 +260,13 @@
 }
 .sm-board {
   display: grid;
-  grid-template-columns: minmax(270px, 0.95fr) minmax(480px, 1.8fr) minmax(
-      320px,
-      1.16fr
-    );
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.8fr) minmax(0, 1.16fr);
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
+
 .sm-column-heading {
   height: 45px;
   display: flex;
@@ -434,15 +435,14 @@
 }
 .sm-map-viewport {
   position: relative;
-  min-height: 710px;
+  min-height: 0;
   overflow: hidden;
-  height: calc(100% - 45px);
+  flex: 1;
 }
 .sm-map {
   position: relative;
   height: 650px;
-  transform-origin: center center;
-  transition: transform 0.2s;
+  transform-origin: top left;
 }
 .sm-map-labels {
   display: flex;
@@ -949,16 +949,13 @@
 }
 @media (max-width: 1250px) {
   .sm-board {
-    grid-template-columns: 265px minmax(400px, 1fr) 310px;
-  }
-  .sm-app .workspace {
-    overflow-x: auto;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1.15fr);
   }
   .sm-summary,
   .sm-heading,
   .sm-toolbar,
   .sm-topbar {
-    min-width: 990px;
+    min-width: 0;
   }
   .sm-rule {
     padding-inline: 7px;
@@ -981,5 +978,169 @@
   }
   .sm-topbar .breadcrumb {
     display: none;
+  }
+}
+
+.sm-board > section {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.sm-column-heading {
+  flex-shrink: 0;
+}
+.sm-source-list,
+.sm-task-groups {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.sm-output-note {
+  flex-shrink: 0;
+}
+.sm-map-scroll {
+  position: absolute;
+  inset: 0 0 50px;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+.sm-map-size {
+  margin: auto;
+  position: relative;
+}
+.sm-map-size .sm-map {
+  width: 640px;
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+.sm-heading {
+  flex-wrap: wrap;
+}
+.sm-heading h1 {
+  flex-wrap: wrap;
+}
+.sm-toolbar {
+  padding-inline: var(--page-inset);
+  gap: 14px;
+  overflow-x: auto;
+}
+.sm-toolbar > * {
+  flex-shrink: 0;
+}
+.sm-summary {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+.sm-notice {
+  max-height: 15dvh;
+  overflow: auto;
+}
+@media (max-height: 750px) {
+  .sm-source-card {
+    height: 57px;
+    margin-bottom: 7px;
+    padding: 7px;
+  }
+  .sm-source-list,
+  .sm-task-groups {
+    padding: 10px;
+  }
+  .sm-column-heading {
+    height: 35px;
+    padding-inline: 10px;
+  }
+  .sm-summary {
+    padding-block: 6px;
+  }
+  .sm-output-note {
+    padding: 6px 10px;
+  }
+}
+@media (max-width: 1100px) {
+  .sm-coverage,
+  .sm-toolbar-note,
+  .sm-source-filters > span {
+    display: none;
+  }
+  .sm-column-heading {
+    padding-inline: 10px;
+    gap: 5px;
+  }
+  .sm-source-list,
+  .sm-task-groups {
+    padding-inline: 10px;
+  }
+}
+@media (max-width: 850px) {
+  .sm-board {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  .sm-sources {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .sm-output {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .sm-mapping {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .sm-sample,
+  .sm-user {
+    display: none;
+  }
+  .sm-stats {
+    margin-left: 0;
+    padding: 6px;
+  }
+  .sm-output-note {
+    display: none;
+  }
+}
+@media (max-width: 600px) {
+  .sm-board {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: repeat(3, minmax(0, 1fr));
+  }
+  .sm-sources {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .sm-output {
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .sm-mapping {
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .sm-heading {
+    gap: 8px;
+  }
+  .sm-heading h1 {
+    font-size: 20px;
+  }
+  .sm-heading-actions .primary,
+  .sm-heading-actions .sm-button {
+    padding: 7px 10px;
+  }
+  .sm-stats {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .sm-map-bottom {
+    left: 10px;
+    right: 10px;
+    bottom: 8px;
+  }
+  .sm-map-bottom > span {
+    flex-wrap: wrap;
   }
 }

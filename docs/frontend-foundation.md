@@ -29,8 +29,35 @@ secondary buttons, icon buttons, fields, headings, status colors and footer styl
 Tokens retain the original typography, palette, focus rings and shell colors.
 Workspace CSS is scoped with `:where(.workspace-page)` to preserve selector
 specificity. Intake keeps its existing `sm-` classes. Page styles must not supply
-implicit dependencies to other pages. Existing breakpoint rules are retained;
-desktop remains the supported target.
+implicit dependencies to other pages.
+
+## Global viewport contract
+
+Every main page fits the available viewport responsively, with no page-level
+horizontal or vertical scrolling. This supersedes the previous desktop-only,
+non-responsive layout guidance.
+
+- `html`, `body`, and `#root` are bounded. `AppShell` occupies `100dvh` and its
+  `.workspace` is a constrained flex column. Page-level overflow is prohibited.
+- Page chrome and footer keep their own space; the direct `main` child fills the
+  remainder with `min-height: 0`. Nested flex/grid regions must also have zero
+  minimum dimensions. Avoid fixed content minimum heights that enlarge the page.
+- `src/app/viewport.css` owns shared responsive density variables (page inset,
+  heading spacing, bar heights and region spacing), loaded after page styles.
+  Pages consume these variables and own their internal width/height breakpoints.
+- Overflow belongs to bounded lists, tables, diagrams, inspectors or dialogs.
+  Do not merely hide excess content: all controls and content must remain reachable
+  through internal scrolling, reflow or zoom. Toolbars may scroll internally when
+  their actions cannot fit. Keep header and footer inside the window.
+- Workspace's inspector and canvas share the remaining height, stacking in narrow
+  windows. Fit uses the canvas's measured content box through `ResizeObserver`,
+  including changes caused by banners and navigation. Manual zoom remains available.
+- Intake's source and task lists scroll independently. Columns reflow into rows in
+  narrow windows. Its diagram fits the available region, with internal scrolling
+  at the minimum readable scale or when zoomed. Reset returns to the fitted scale.
+- Verify all routes at wide, standard, short and narrow window sizes, including
+  long content, notifications, zoom and dialogs. Checking body overflow alone is
+  insufficient: internal panels must have usable space and reachable controls.
 
 ## Routes and state lifetime
 
@@ -65,4 +92,15 @@ using Node's built-in test runner (Node 24 or newer). `npm run build` checks all
 imports and TypeScript contracts. `npm run lint` checks the frontend source.
 `python -m unittest tests.test_ui` exercises the actual persisted bridge contract.
 Browser checks cover navigation history, page state lifetime, campaign dialogs,
-Intake filtering/validation/inspection and the unchanged desktop layout.
+Intake filtering/validation/inspection and responsive viewport containment.
+For the repeatable browser check, open the dev server in a Playwright CLI session
+against an isolated Core store, then run from the repository root:
+
+```powershell
+npx --yes --package @playwright/cli playwright-cli -s=layout open http://127.0.0.1:5179
+npx --yes --package @playwright/cli playwright-cli -s=layout run-code --filename frontend/tests/viewport.browser.js
+```
+
+The check covers Workflow, Tasks and Intake across seven sizes from 390×844 to
+1920×1080, including 900×450. It checks bounded page dimensions and visible internal
+regions; screenshots and interaction checks complement the geometry assertions.

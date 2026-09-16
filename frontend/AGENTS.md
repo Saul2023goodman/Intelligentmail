@@ -10,5 +10,6 @@ Read `README.md` and `../docs/frontend-foundation.md` before changing the fronte
 - Call Core through `src/core/`. Keep the command contract aligned with `smartmail/ui.py`; do not implement domain decisions or direct mailbox access in pages.
 - Shared interface changes require coordination across page worktrees. Register new top-level routes in `src/app/routes.ts` and compose them in `src/App.tsx` as an integration change.
 - Preserve the desktop layouts and existing behavior unless the task explicitly requests a change.
+- Every main page must fit the available viewport in both dimensions with no page-level scrolling. Use the shared shell's bounded `main` region, adapt density and spacing to window width and height, and place overflow only in named internal regions. Never rely on clipping to hide inaccessible controls or content. Test resizing, short windows, narrow windows, long content, and dialogs. See the viewport contract in `../docs/frontend-foundation.md`.
 
 Checks: `npm run build`, `npm run lint`, `npm test`; for Core changes also run `python -m unittest tests.test_ui` from the repository root. Check affected page flows in a desktop browser.

@@ -359,6 +359,24 @@ export default function IntakePage() {
   const [notice, setNotice] = useState("");
   const [validated, setValidated] = useState(false);
   const [zoom, setZoom] = useState(100);
+  const mapViewport = useRef<HTMLDivElement>(null);
+  const [mapSize, setMapSize] = useState({ width: 640, height: 650 });
+  useEffect(() => {
+    if (!mapViewport.current) return;
+    const observer = new ResizeObserver(([entry]) => {
+      setMapSize({
+        width: entry.contentRect.width,
+        height: entry.contentRect.height,
+      });
+    });
+    observer.observe(mapViewport.current);
+    return () => observer.disconnect();
+  }, []);
+  // Keep a readable minimum; zoomed diagrams scroll within their own region.
+  const mapScale =
+    (Math.max(0.5, Math.min(1, mapSize.width / 640, mapSize.height / 650)) *
+      zoom) /
+    100;
   const fileInput = useRef<HTMLInputElement>(null);
   const drawer = useRef<HTMLDialogElement>(null);
   const inspect = (value: Inspection) => {
@@ -666,125 +684,140 @@ export default function IntakePage() {
             </div>
             <div className="sm-map-viewport">
               <div
-                className="sm-map"
-                style={{ transform: `scale(${zoom / 100})` }}
+                className="sm-map-scroll"
+                ref={mapViewport}
+                tabIndex={0}
+                role="region"
+                aria-label="Mapping diagram"
               >
-                <div className="sm-map-labels">
-                  <span>ASSOCIATE</span>
-                  <span>TRANSFORM</span>
-                  <span>VALIDATE</span>
-                </div>
-                <div className="sm-map-guide one" />
-                <div className="sm-map-guide two" />
-                <svg
-                  className="sm-wires"
-                  viewBox="0 0 640 650"
-                  preserveAspectRatio="none"
-                  aria-hidden="true"
+                <div
+                  className="sm-map-size"
+                  style={{ width: 640 * mapScale, height: 650 * mapScale }}
                 >
-                  {visibleSources
-                    .filter((s) => s.rule >= 0)
-                    .map((s, i) => {
-                      const y = 48 + i * 77;
-                      const target = 85 + s.rule * 94;
-                      return (
-                        <path
-                          key={`in-${i}`}
+                  <div
+                    className="sm-map"
+                    style={{ transform: `scale(${mapScale})` }}
+                  >
+                    <div className="sm-map-labels">
+                      <span>ASSOCIATE</span>
+                      <span>TRANSFORM</span>
+                      <span>VALIDATE</span>
+                    </div>
+                    <div className="sm-map-guide one" />
+                    <div className="sm-map-guide two" />
+                    <svg
+                      className="sm-wires"
+                      viewBox="0 0 640 650"
+                      preserveAspectRatio="none"
+                      aria-hidden="true"
+                    >
+                      {visibleSources
+                        .filter((s) => s.rule >= 0)
+                        .map((s, i) => {
+                          const y = 48 + i * 77;
+                          const target = 85 + s.rule * 94;
+                          return (
+                            <path
+                              key={`in-${i}`}
+                              className={
+                                selected !== null && selected !== s.index
+                                  ? "dimmed"
+                                  : ""
+                              }
+                              stroke={colors[s.color]}
+                              d={`M 0 ${y} C 115 ${y}, 75 ${target}, 200 ${target}`}
+                            />
+                          );
+                        })}
+                      {rules.map((r, i) => (
+                        <g
+                          key={r.title}
                           className={
-                            selected !== null && selected !== s.index
+                            activeRule !== null && activeRule !== i
                               ? "dimmed"
                               : ""
                           }
-                          stroke={colors[s.color]}
-                          d={`M 0 ${y} C 115 ${y}, 75 ${target}, 200 ${target}`}
+                        >
+                          <path
+                            stroke={colors[r.color]}
+                            strokeDasharray={i > 3 ? "4 5" : undefined}
+                            d={`M 410 ${85 + i * 94} C 490 ${85 + i * 94}, 455 319, 505 319`}
+                          />
+                          <circle
+                            cx="505"
+                            cy="319"
+                            r="4"
+                            fill="white"
+                            stroke={colors[r.color]}
+                          />
+                        </g>
+                      ))}
+                      {visibleGroups.map((g, i) => (
+                        <path
+                          key={`out-${i}`}
+                          stroke={colors[g.color]}
+                          d={`M 505 319 C 564 319, 568 ${76 + i * 164}, 640 ${76 + i * 164}`}
                         />
-                      );
-                    })}
-                  {rules.map((r, i) => (
-                    <g
-                      key={r.title}
-                      className={
-                        activeRule !== null && activeRule !== i ? "dimmed" : ""
-                      }
-                    >
-                      <path
-                        stroke={colors[r.color]}
-                        strokeDasharray={i > 3 ? "4 5" : undefined}
-                        d={`M 410 ${85 + i * 94} C 490 ${85 + i * 94}, 455 319, 505 319`}
-                      />
+                      ))}
                       <circle
                         cx="505"
                         cy="319"
-                        r="4"
-                        fill="white"
-                        stroke={colors[r.color]}
+                        r="16"
+                        fill="#fff"
+                        stroke="#d9e3f1"
                       />
-                    </g>
-                  ))}
-                  {visibleGroups.map((g, i) => (
-                    <path
-                      key={`out-${i}`}
-                      stroke={colors[g.color]}
-                      d={`M 505 319 C 564 319, 568 ${76 + i * 164}, 640 ${76 + i * 164}`}
-                    />
-                  ))}
-                  <circle
-                    cx="505"
-                    cy="319"
-                    r="16"
-                    fill="#fff"
-                    stroke="#d9e3f1"
-                  />
-                  <path
-                    d="M498 313h11m-4-4 4 4-4 4m6 8h-11m4-4-4 4 4 4"
-                    stroke="#8094b0"
-                  />
-                </svg>
-                {rules.map((r, i) => (
-                  <button
-                    key={r.title}
-                    className={`sm-rule ${activeRule === i ? "is-selected" : ""} ${activeRule !== null && activeRule !== i ? "is-muted" : ""}`}
-                    style={
-                      {
-                        top: 52 + i * 94,
-                        "--source-color": colors[r.color],
-                      } as CSSProperties
-                    }
-                    onClick={() =>
-                      inspect({
-                        kind: `MAPPING RULE 0${i + 1}`,
-                        title: r.title,
-                        description: r.detail,
-                        fields: r.mapping,
-                      })
-                    }
-                  >
-                    <i className="sm-rule-port in" />
-                    <span className={`sm-rule-icon ${r.color}`}>
-                      <Icon name={r.icon} size={25} />
-                    </span>
-                    <span>
-                      <strong>{r.title}</strong>
-                      <small>{r.caption}</small>
-                      <em>
-                        <i
-                          className={`sm-dot ${i === 4 ? "duplicate" : i === 2 ? "review" : "ready"}`}
-                        />
-                        {i === 4
-                          ? "1 potential match"
-                          : i === 2
-                            ? "2 tasks need review"
-                            : "Rule configured"}
-                      </em>
-                    </span>
-                    <i className="sm-rule-port out" />
-                  </button>
-                ))}
-                <div className="sm-map-tag top">
-                  <i className="sm-dot ready" /> Explicit associations
-                </div>
-                <div className="sm-map-tag bottom">
-                  <Icon name="shield" size={12} /> Traceable transformations
+                      <path
+                        d="M498 313h11m-4-4 4 4-4 4m6 8h-11m4-4-4 4 4 4"
+                        stroke="#8094b0"
+                      />
+                    </svg>
+                    {rules.map((r, i) => (
+                      <button
+                        key={r.title}
+                        className={`sm-rule ${activeRule === i ? "is-selected" : ""} ${activeRule !== null && activeRule !== i ? "is-muted" : ""}`}
+                        style={
+                          {
+                            top: 52 + i * 94,
+                            "--source-color": colors[r.color],
+                          } as CSSProperties
+                        }
+                        onClick={() =>
+                          inspect({
+                            kind: `MAPPING RULE 0${i + 1}`,
+                            title: r.title,
+                            description: r.detail,
+                            fields: r.mapping,
+                          })
+                        }
+                      >
+                        <i className="sm-rule-port in" />
+                        <span className={`sm-rule-icon ${r.color}`}>
+                          <Icon name={r.icon} size={25} />
+                        </span>
+                        <span>
+                          <strong>{r.title}</strong>
+                          <small>{r.caption}</small>
+                          <em>
+                            <i
+                              className={`sm-dot ${i === 4 ? "duplicate" : i === 2 ? "review" : "ready"}`}
+                            />
+                            {i === 4
+                              ? "1 potential match"
+                              : i === 2
+                                ? "2 tasks need review"
+                                : "Rule configured"}
+                          </em>
+                        </span>
+                        <i className="sm-rule-port out" />
+                      </button>
+                    ))}
+                    <div className="sm-map-tag top">
+                      <i className="sm-dot ready" /> Explicit associations
+                    </div>
+                    <div className="sm-map-tag bottom">
+                      <Icon name="shield" size={12} /> Traceable transformations
+                    </div>
+                  </div>
                 </div>
               </div>
               <div className="sm-map-bottom">

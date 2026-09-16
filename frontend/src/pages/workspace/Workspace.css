@@ -2,7 +2,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 28px 31px 26px;
+  padding: var(--heading-block) var(--page-inset);
 }
 :where(.workspace-page) .page-heading p {
   font-size: 12px;
@@ -10,7 +10,7 @@
   margin-top: 7px;
 }
 :where(.workspace-page) .toolbar {
-  height: 56px;
+  height: var(--toolbar-height);
   border-block: 1px solid #edf0f5;
   display: flex;
   align-items: center;
@@ -81,7 +81,7 @@
 :where(.workspace-page) .main-area {
   display: flex;
   flex: 1;
-  min-height: 620px;
+  min-height: 0;
 }
 :where(.workspace-page) .canvas-wrap {
   position: relative;
@@ -116,9 +116,9 @@
 }
 :where(.workspace-page) .canvas-scroll {
   height: 100%;
-  min-height: 620px;
+  min-height: 0;
   overflow: auto;
-  padding: 50px 20px 90px;
+  padding: 45px 16px 65px;
   display: flex;
   align-items: center;
 }
@@ -364,9 +364,9 @@
   width: 294px;
   flex-shrink: 0;
   border-left: 1px solid #e9eef5;
-  padding: 23px 22px;
-  max-height: calc(100vh - 296px);
-  min-height: 620px;
+  padding: var(--region-inset);
+  max-height: 100%;
+  min-height: 0;
   overflow: auto;
   background: #fff;
 }
@@ -585,7 +585,7 @@
   position: relative;
   width: 530px;
   max-width: 100%;
-  max-height: 90vh;
+  max-height: calc(100dvh - 40px);
   overflow: auto;
   background: white;
   padding: 34px;
@@ -707,11 +707,12 @@
   margin-top: 8px;
 }
 :where(.workspace-page) .task-table {
-  margin: 73px 25px 30px;
+  margin: 50px var(--region-inset) 25px;
   background: white;
   border: 1px solid #e5ecf4;
   border-radius: 9px;
-  min-height: 400px;
+  min-height: 0;
+  height: calc(100% - 75px);
   overflow: auto;
 }
 :where(.workspace-page) .table-head {
@@ -830,10 +831,10 @@
     border-top: 1px solid #e9eef5;
   }
   :where(.workspace-page) .canvas-scroll {
-    min-height: 500px;
+    min-height: 0;
   }
   :where(.workspace-page) .canvas-wrap {
-    min-height: 500px;
+    min-height: 0;
   }
   :where(.workspace-page) .inspector .stage-list {
     display: grid;
@@ -946,4 +947,78 @@
   cursor: pointer;
   color: #557fae;
   font-size: 11px;
+}
+
+/* Content owns overflow; the page and its chrome never grow with task count. */
+:where(.workspace-page) .page-heading {
+  gap: 12px;
+  padding: var(--heading-block) var(--page-inset);
+}
+:where(.workspace-page) .toolbar {
+  padding-inline: var(--page-inset);
+  overflow-x: auto;
+}
+:where(.workspace-page) .toolbar > * {
+  flex-shrink: 0;
+}
+:where(.workspace-page) .banner {
+  max-height: 15dvh;
+  overflow: auto;
+}
+:where(.workspace-page) .canvas-wrap {
+  min-height: 0;
+}
+:where(.workspace-page) .inspector {
+  min-width: 0;
+  overscroll-behavior: contain;
+}
+:where(.workspace-page) .canvas-scroll,
+:where(.workspace-page) .task-table {
+  overscroll-behavior: contain;
+}
+@media (max-width: 850px) {
+  :where(.workspace-page) .main-area {
+    display: grid;
+    grid-template-rows: minmax(0, 1.2fr) minmax(0, 1fr);
+  }
+  :where(.workspace-page) .inspector {
+    height: 100%;
+  }
+  :where(.workspace-page) .graph-size {
+    margin: auto;
+  }
+}
+@media (max-height: 750px) {
+  :where(.workspace-page) .inspector-header {
+    margin-bottom: 12px;
+  }
+  :where(.workspace-page) .stage-stat {
+    margin-block: 12px;
+    padding-block: 8px;
+  }
+  :where(.workspace-page) .canvas-heading {
+    top: 12px;
+  }
+  :where(.workspace-page) .canvas-scroll {
+    padding-block: 32px 48px;
+  }
+  :where(.workspace-page) .canvas-legend,
+  :where(.workspace-page) .zoom-controls {
+    bottom: 10px;
+  }
+}
+@media (max-width: 600px) {
+  :where(.workspace-page) .page-heading {
+    flex-wrap: wrap;
+  }
+  :where(.workspace-page) .page-heading p {
+    max-width: none;
+  }
+  :where(.workspace-page) .canvas-legend {
+    display: none;
+  }
+  :where(.workspace-page) .canvas-heading {
+    left: 12px;
+    right: 12px;
+  }
 }

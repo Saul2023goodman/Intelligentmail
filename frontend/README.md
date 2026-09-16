@@ -32,9 +32,10 @@ The build is a static UI bundle; the stdio Core bridge runs with `npm run dev`,
 not standalone static hosting or `vite preview`. See
 [workflow mapping and boundaries](../docs/frontend-workflow.md).
 
-The UI targets desktop browsers only. Future changes do not need mobile
-adaptation: mobile viewports, responsive layouts and touch interaction are
-out of scope and require no testing or fixes.
+Every main page must fit the available viewport responsively, without page-level
+scrolling. Density, spacing and internal regions adapt to both window width and
+height. Lists, diagrams, inspectors and dialogs own their bounded scrolling;
+controls and content must remain reachable in narrow or short windows.
 
 Restart Vite after editing Python Core code so its long-lived stdio worker reloads.
 
