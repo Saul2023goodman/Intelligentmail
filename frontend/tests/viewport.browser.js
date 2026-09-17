@@ -30,23 +30,60 @@ async (page) => {
     }
   }
   await page.setViewportSize({ width: 1024, height: 600 });
-  await page.getByRole("button", { name: "Validate mapping", exact: true }).click();
+  // Student switching lives in the top bar.
+  await page.getByRole("group", { name: "Switch student" }).getByRole("button", { name: /Mei Zhang/ }).click();
+  // Classify an unresolved raw source into the Attachments category.
+  const countSources = () => page.evaluate(() => ({
+    unresolved: document.querySelectorAll(".sm-source-list .sm-source-card").length,
+    attached: document.querySelectorAll('.sm-category-card[data-category="attachments"] .sm-file-chip:not(.is-empty)').length,
+  }));
+  const before = await countSources();
+  await page.locator(".sm-source-card").filter({ hasText: /transcript/i }).first().click();
+  await page.locator('.sm-category-card[data-category="attachments"] .sm-classify-btn').click();
   await page.getByRole("status").waitFor();
-  const listScrolls = await page.evaluate(() => {
-    return [".sm-source-list", ".sm-task-groups"].map(selector => {
-      const region = document.querySelector(selector);
-      region.scrollTop = region.scrollHeight;
-      return region.scrollTop > 0;
-    });
-  });
-  if (listScrolls.some(value => !value)) throw new Error("Long lists must scroll internally");
+  const after = await countSources();
+  if (after.unresolved !== before.unresolved - 1 || after.attached !== before.attached + 1) {
+    throw new Error(`Classification must move the raw source into its category: ${JSON.stringify({ before, after })}`);
+  }
+  // Missing-email supervisors remain visible as grey incomplete rows.
+  const incomplete = await page.locator(".sm-task-row.is-incomplete", { hasText: "Sophie Lee" }).count();
+  if (incomplete !== 1) throw new Error("A supervisor without an email must remain visible as an incomplete task");
+  // Per-task attachment overrides live in the on-demand task inspector.
+  await page.locator(".sm-task-row:not(.is-incomplete)").first().click();
+  const taskDialog = page.getByRole("dialog", { name: "Resolved task inspector" });
+  await taskDialog.waitFor();
+  await taskDialog.getByRole("checkbox").first().uncheck();
+  await taskDialog.getByText(/per-task override/).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole("button", { name: "Zoom mapping in" }).click();
-  await page.getByRole("region", { name: "Mapping diagram" }).getByRole("button", { name: /Validate preparation/ }).click();
-  await page.getByRole("dialog", { name: "Source mapping inspector" }).waitFor();
-  await page.getByRole("button", { name: "Done", exact: true }).click();
+  await taskDialog.getByRole("button", { name: "Done", exact: true }).click();
   const scrolledPage = await page.evaluate(() => [document.documentElement, document.body, document.querySelector(".workspace")].some(el => el.scrollTop !== 0 || el.scrollLeft !== 0));
   if (scrolledPage) throw new Error("Reaching internal content scrolled the page");
+  // In a short window the source/task lists scroll internally and the fixed
+  // category column never scrolls; all six categories stay reachable.
+  await page.setViewportSize({ width: 900, height: 450 });
+  const listCheck = await page.evaluate(() => {
+    const read = selector => {
+      const region = document.querySelector(selector);
+      region.scrollTop = region.scrollHeight;
+      return { canScroll: region.scrollTop > 0, overflows: region.scrollHeight > region.clientHeight + 1 };
+    };
+    const sources = read(".sm-source-list");
+    const tasks = read(".sm-task-list");
+    const categories = read(".sm-category-list");
+    const region = document.querySelector(".sm-category-list").getBoundingClientRect();
+    const cards = [...document.querySelectorAll(".sm-category-card")].map(el => {
+      const rect = el.getBoundingClientRect();
+      return { top: rect.top, bottom: rect.bottom };
+    });
+    const cardsReachable = cards.every(rect => rect.top >= region.top - 1 && rect.bottom <= region.bottom + 1);
+    return { sources, tasks, categories, cardsReachable };
+  });
+  if (!listCheck.sources.canScroll || !listCheck.tasks.canScroll) {
+    throw new Error(`Source and task lists must scroll internally: ${JSON.stringify(listCheck)}`);
+  }
+  if (listCheck.categories.overflows || !listCheck.cardsReachable) {
+    throw new Error(`Center category column must fit without scrolling: ${JSON.stringify(listCheck)}`);
+  }
   await page.goto(`${origin}/#workflow`);
   await page.setViewportSize({ width: 900, height: 450 });
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Workflow guide" }).click();
@@ -58,5 +95,5 @@ async (page) => {
   });
   if (!dialogFits) throw new Error("Short-window dialog must fit and scroll internally");
   await page.keyboard.press("Escape");
-  return { viewportChecks: results.length, internalScrollAndDialogChecks: "passed" };
+  return { viewportChecks: results.length, interactionChecks: "passed" };
 }

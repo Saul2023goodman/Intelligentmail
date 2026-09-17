@@ -83,6 +83,155 @@
   flex: 1;
   min-height: 0;
 }
+:where(.workspace-page) .workspace > .canvas-full {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+:where(.workspace-page) .topbar .connection {
+  margin-left: auto;
+}
+:where(.workspace-page) .student-switch {
+  position: absolute;
+  top: 22px;
+  left: 24px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 220px;
+  padding: 10px 12px;
+  background: #ffffffee;
+  border: 1px solid #e3eaf4;
+  border-radius: 9px;
+  box-shadow: 0 3px 10px #273a5710;
+}
+:where(.workspace-page) .student-switch-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+:where(.workspace-page) .student-switch-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  background: #edf3ff;
+  color: #5681c0;
+  flex-shrink: 0;
+}
+:where(.workspace-page) .student-switch select {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 600;
+  color: #39495f;
+  padding: 0;
+}
+:where(.workspace-page) .student-switch-empty {
+  flex: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8d9bb0;
+}
+:where(.workspace-page) .student-switch-add {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: #f1f5fb;
+  color: #5f7196;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+:where(.workspace-page) .student-switch-add:hover {
+  background: #397af0;
+  color: #fff;
+}
+:where(.workspace-page) .student-switch-meta {
+  font-size: 9px;
+  letter-spacing: 0.3px;
+  color: #97a4b8;
+  white-space: nowrap;
+}
+:where(.workspace-page) .banner-floating {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  width: min(560px, calc(100% - 48px));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px #1c30501f;
+}
+:where(.workspace-page) .canvas-empty {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 12px;
+  text-align: center;
+  padding: 24px;
+}
+:where(.workspace-page) .canvas-empty-icon {
+  display: grid;
+  place-items: center;
+  width: 62px;
+  height: 62px;
+  border-radius: 16px;
+  background: #edf3ff;
+  color: #5681c0;
+  margin-bottom: 6px;
+}
+:where(.workspace-page) .canvas-empty h2 {
+  font-size: 18px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+}
+:where(.workspace-page) .canvas-empty p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #8d9bb0;
+  max-width: 380px;
+}
+:where(.workspace-page) .scope-strip {
+  flex-shrink: 0;
+  height: 58px;
+  border-bottom: 1px solid #edf0f5;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 24px;
+}
+:where(.workspace-page) .scope-strip-space {
+  flex: 1;
+}
+:where(.workspace-page) .scope-strip .student-switch {
+  position: static;
+  flex-direction: row;
+  align-items: center;
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+:where(.workspace-page) .scope-strip .student-switch-meta {
+  display: none;
+}
+:where(.workspace-page) .task-table-full {
+  flex: 1;
+  margin: 16px 20px;
+  height: auto;
+}
 :where(.workspace-page) .canvas-wrap {
   position: relative;
   flex: 1;
@@ -115,23 +264,32 @@
   letter-spacing: 0;
 }
 :where(.workspace-page) .canvas-scroll {
+  position: relative;
   height: 100%;
   min-height: 0;
-  overflow: auto;
-  padding: 45px 16px 65px;
-  display: flex;
-  align-items: center;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+:where(.workspace-page) .canvas-scroll.panning {
+  cursor: grabbing;
+}
+:where(.workspace-page) .canvas-scroll.panning .workflow-node,
+:where(.workspace-page) .canvas-scroll.panning .connections {
+  pointer-events: none;
 }
 :where(.workspace-page) .graph-size {
-  position: relative;
-  flex-shrink: 0;
-  margin: auto;
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 :where(.workspace-page) .graph {
   width: 1300px;
   height: 870px;
   position: relative;
-  transform-origin: top left;
 }
 :where(.workspace-page) .lane {
   position: absolute;
@@ -147,28 +305,28 @@
   font-weight: 550;
 }
 :where(.workspace-page) .green-lane {
-  left: 530px;
-  top: 193px;
-  width: 480px;
-  height: 167px;
+  left: 35px;
+  top: 180px;
+  width: 960px;
+  height: 150px;
   background: #effbf580;
   border-color: #a9e3ca;
   color: #69aa8f;
 }
 :where(.workspace-page) .rose-lane {
-  left: 530px;
-  top: 442px;
-  width: 480px;
-  height: 166px;
+  left: 510px;
+  top: 467px;
+  width: 490px;
+  height: 160px;
   background: #fff1f480;
   border-color: #f0b6c3;
   color: #c78595;
 }
 :where(.workspace-page) .purple-lane {
-  left: 530px;
-  top: 661px;
-  width: 480px;
-  height: 153px;
+  left: 510px;
+  top: 650px;
+  width: 490px;
+  height: 160px;
   background: #f6f0ff80;
   border-color: #d2b9f3;
   color: #a58bbb;
@@ -179,15 +337,13 @@
   height: 100%;
   overflow: visible;
 }
-:where(.workspace-page) .connections > path,
-:where(.workspace-page) .connections > g > path {
+:where(.workspace-page) .connections > path {
   stroke: #99a9bf;
   stroke-width: 1.6;
   fill: none;
   stroke-linejoin: round;
 }
-:where(.workspace-page) .connections > path.dashed,
-:where(.workspace-page) .connections > g > path.dashed {
+:where(.workspace-page) .connections > path.dashed {
   stroke-dasharray: 5 4;
 }
 :where(.workspace-page) .workflow-node {
@@ -279,16 +435,16 @@
   padding: 4px;
 }
 :where(.workspace-page) .ready-label {
-  left: 515px;
-  top: 331px;
+  left: 497px;
+  top: 222px;
 }
 :where(.workspace-page) .blocked-label {
-  left: 470px;
-  top: 458px;
+  left: 418px;
+  top: 468px;
 }
 :where(.workspace-page) .external-label {
-  left: 1013px;
-  top: 205px;
+  left: 978px;
+  top: 192px;
 }
 :where(.workspace-page) .graph-note {
   position: absolute;
@@ -312,6 +468,7 @@
   border-radius: 6px;
   font-size: 9px;
   color: #8d9bb0;
+  pointer-events: none;
 }
 :where(.workspace-page) .canvas-legend span {
   display: flex;
@@ -351,11 +508,25 @@
   width: 32px;
   height: 33px;
   font-size: 18px;
+  color: #6b7f9c;
+  cursor: pointer;
+  transition:
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+:where(.workspace-page) .zoom-controls button:hover:not(:disabled) {
+  background: #f3f7fd;
+  color: #397af0;
+}
+:where(.workspace-page) .zoom-controls button:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 :where(.workspace-page) .zoom-controls span {
   font-size: 10px;
-  width: 38px;
+  width: 42px;
   text-align: center;
+  user-select: none;
 }
 :where(.workspace-page) .zoom-controls button:last-child {
   border-left: 1px solid #e9eef6;
@@ -830,9 +1001,6 @@
     border-left: 0;
     border-top: 1px solid #e9eef5;
   }
-  :where(.workspace-page) .canvas-scroll {
-    min-height: 0;
-  }
   :where(.workspace-page) .canvas-wrap {
     min-height: 0;
   }
@@ -852,12 +1020,6 @@
   }
   :where(.workspace-page) .stage-stat {
     margin: 15px 0;
-  }
-  :where(.workspace-page) .canvas-scroll {
-    align-items: flex-start;
-  }
-  :where(.workspace-page) .graph-size {
-    margin: 15px auto;
   }
   :where(.workspace-page) .page-heading h1 {
     font-size: 23px;
@@ -921,12 +1083,15 @@
 }
 :where(.workspace-page) .intake-lane {
   left: 35px;
-  top: 25px;
-  width: 740px;
-  height: 160px;
+  top: 22px;
+  width: 720px;
+  height: 150px;
   background: #f1f6ff80;
   border-color: #bbd1f6;
   color: #7d9cce;
+}
+:where(.workspace-page) .intake-lane > span {
+  left: 200px;
 }
 :where(.workspace-page) .mailbox-panel .field,
 :where(.workspace-page) .draft-editor .field {
@@ -984,9 +1149,6 @@
   :where(.workspace-page) .inspector {
     height: 100%;
   }
-  :where(.workspace-page) .graph-size {
-    margin: auto;
-  }
 }
 @media (max-height: 750px) {
   :where(.workspace-page) .inspector-header {
@@ -998,9 +1160,6 @@
   }
   :where(.workspace-page) .canvas-heading {
     top: 12px;
-  }
-  :where(.workspace-page) .canvas-scroll {
-    padding-block: 32px 48px;
   }
   :where(.workspace-page) .canvas-legend,
   :where(.workspace-page) .zoom-controls {

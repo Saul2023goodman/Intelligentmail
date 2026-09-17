@@ -6,6 +6,10 @@ type Commands = {
   workspace: { args: { campaign_id?: string }; result: Workspace };
   task: { args: { task_id: string }; result: Detail };
   create_campaign: { args: { name: string }; result: Campaign };
+  create_student: {
+    args: { name: string; mailbox: string };
+    result: import("./types").StudentWorkspace;
+  };
   check_duplicate: {
     args: { preparation_id: string };
     result: { finding: string };

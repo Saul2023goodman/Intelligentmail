@@ -147,6 +147,25 @@ class UiBridgeTests(ExecutionTestCase):
             with self.assertRaises(SmartMailError):
                 dispatch(self.core, {"command": command})
 
+    def test_create_student_pairs_same_named_campaign_workspace(self):
+        result = dispatch(self.core, {"command": "create_student",
+                                      "name": "新学生", "mailbox": "newstudent@163.COM"})
+        self.assertEqual(result["mailbox"], "newstudent@163.com")
+        self.assertTrue(result["campaign_id"])
+        workspace = dispatch(self.core, {"command": "workspace",
+                                         "campaign_id": result["campaign_id"]})
+        self.assertEqual(workspace["report"]["campaign"]["name"], "新学生")
+        again = dispatch(self.core, {"command": "create_student",
+                                     "name": "新学生", "mailbox": "newstudent@163.com"})
+        self.assertEqual(again["id"], result["id"])
+        self.assertEqual(again["campaign_id"], result["campaign_id"])
+        with self.assertRaises(SmartMailError):
+            dispatch(self.core, {"command": "create_student",
+                                 "name": "坏地址", "mailbox": "not-an-address"})
+        with self.assertRaises(SmartMailError):
+            dispatch(self.core, {"command": "create_student",
+                                 "name": "  ", "mailbox": "x@163.com"})
+
 
 class UiProtocolTests(unittest.TestCase):
     def test_stdio_handles_bad_input_and_keeps_store_across_requests(self):

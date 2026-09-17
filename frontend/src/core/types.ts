@@ -1,4 +1,10 @@
 export type Campaign = { id: string; name: string };
+export type StudentWorkspace = {
+  id: string;
+  name: string;
+  mailbox: string;
+  campaign_id: string;
+};
 export type Task = {
   task_id: string;
   student_name: string;

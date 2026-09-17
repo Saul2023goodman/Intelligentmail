@@ -36,6 +36,22 @@ def dispatch(core, request):
         if not isinstance(name, str) or len(name) > 200:
             raise SmartMailError("Use a campaign name of 1–200 characters")
         return core.create_campaign(name)
+    if command == "create_student":
+        name = request.get("name")
+        mailbox = request.get("mailbox")
+        if not isinstance(name, str) or not 1 <= len(name.strip()) <= 200:
+            raise SmartMailError("Use a student name of 1–200 characters")
+        if not isinstance(mailbox, str):
+            raise SmartMailError("A valid Student mailbox address is required")
+        # On the workflow canvas a Student is the switchable workspace scope.
+        student = core.create_student(name, mailbox)
+        campaign = next((c for c in core.list_campaigns()
+                         if c["name"] == student["name"]), None)
+        if campaign is None:
+            campaign = core.create_campaign(student["name"])
+        address = next(m["address"] for m in core.list_mailboxes()
+                       if m["student_id"] == student["id"])
+        return {**student, "mailbox": address, "campaign_id": campaign["id"]}
     if command == "check_duplicate":
         return core.check_duplicate(request["preparation_id"])
     if command == "mailbox_history":
