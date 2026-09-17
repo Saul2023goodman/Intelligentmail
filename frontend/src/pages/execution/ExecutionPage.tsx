@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { AppShell, NavigationItem, Topbar } from "../../app/shell";
 import {
   core,
@@ -36,7 +42,7 @@ const phases = [
   "Confirmation",
   "Execution",
   "Batch",
-  "Inspector",
+  "Timeline",
 ];
 const date = (value?: string) =>
   value
@@ -54,6 +60,89 @@ const capabilityFor = (kind: string) =>
     cancellation: "schedule_cancellation",
     replacement: "schedule_cancellation",
   })[kind];
+
+type TimelineEvent = {
+  key: string;
+  at: string;
+  preparationIds: string[];
+  icon: IconName;
+  tone: "blue" | "green" | "amber" | "red";
+  title: string;
+  detail: string;
+};
+const time = (value: string) =>
+  new Date(value).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+const dayKey = (value: string) => new Date(value).toDateString();
+const dayLabel = (value: string) => {
+  const day = new Date(value);
+  return day.toDateString() === new Date().toDateString()
+    ? "Today"
+    : day.toLocaleDateString(undefined, {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+      });
+};
+function buildEvents(
+  data: ExecutionWorkspace | null,
+  taskName: (id: string) => string,
+): TimelineEvent[] {
+  if (!data) return [];
+  const events: TimelineEvent[] = [];
+  for (const plan of data.plans)
+    events.push({
+      key: `plan-${plan.id}`,
+      at: plan.created_at,
+      preparationIds: plan.proposals.map((p) => p.preparation_id),
+      icon: "source",
+      tone: "blue",
+      title: `Sending plan ${human(plan.status)}`,
+      detail: `${plan.proposals.length} proposed slots · ${
+        plan.impossible.length + plan.unavailable.length
+      } excluded`,
+    });
+  for (const c of data.confirmations)
+    events.push({
+      key: `confirmation-${c.id}`,
+      at: c.confirmed_at,
+      preparationIds: [c.preparation_id],
+      icon: "shield",
+      tone: "green",
+      title: `Confirmed ${human(c.execution.kind)}`,
+      detail: `${taskName(c.task_id)} · ${date(
+        c.execution.scheduled_at || c.execution.scheduled_utc,
+      )}`,
+    });
+  for (const s of data.schedules)
+    events.push({
+      key: `schedule-${s.id}`,
+      at: s.scheduled_utc,
+      preparationIds: [s.preparation_id],
+      icon: "clock",
+      tone: s.state.includes("unknown") ? "amber" : "blue",
+      title: human(s.state),
+      detail: `${taskName(s.task_id)} · ${s.mailbox_address}`,
+    });
+  for (const a of data.attempts)
+    events.push({
+      key: `attempt-${a.id}`,
+      at: a.updated_at,
+      preparationIds: [a.preparation_id],
+      icon: a.state === "sent" ? "check" : "send",
+      tone:
+        a.state === "sent"
+          ? "green"
+          : ["failed", "cancel_failed"].includes(a.state)
+            ? "red"
+            : "amber",
+      title: human(a.state),
+      detail: `${taskName(a.task_id)} · ${a.request.recipient}`,
+    });
+  return events.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+}
 
 function Empty({
   icon = "mail",
@@ -252,6 +341,17 @@ export default function ExecutionPage() {
   );
   const picked = ready.filter((r) => selected.includes(r.preparation_id));
   const item = data?.reviews.find((r) => r.preparation_id === inspected);
+  const events = buildEvents(data, taskName);
+  const focus = item
+    ? events.filter((e) => e.preparationIds.includes(item.preparation_id))
+    : events;
+  const days: [string, TimelineEvent[]][] = [];
+  for (const event of focus) {
+    const key = dayKey(event.at);
+    const last = days.at(-1);
+    if (last && last[0] === key) last[1].push(event);
+    else days.push([key, [event]]);
+  }
   const confirmations = data?.confirmations ?? [];
   const paused = workspace?.report?.flow.state === "paused";
   const available = (kind: string) => {
@@ -877,86 +977,60 @@ export default function ExecutionPage() {
             )}
             {panel(
               5,
-              "file",
-              item ? "Preparation" : "Overview",
-              <div className="ex-scroll ex-inspector">
-                {item ? (
-                  <>
-                    <div className="ex-inspector-head">
-                      <h3>{item.subject}</h3>
-                      <span
-                        className={`ex-pill ${item.ready ? "" : "ex-warning"}`}
-                      >
-                        {item.already_sent
-                          ? "Sent"
-                          : item.ready
-                            ? "Ready"
-                            : "Blocked"}
-                      </span>
-                    </div>
-                    <dl>
-                      <dt>From</dt>
-                      <dd>{item.sender}</dd>
-                      <dt>To</dt>
-                      <dd>{item.recipient}</dd>
-                    </dl>
-                    <details open>
-                      <summary>Message & attachments</summary>
-                      <pre>{item.body}</pre>
-                      {item.attachments.map((a) => (
-                        <p key={a.id}>
-                          <Icon name="clip" size={13} /> {a.name}
-                        </p>
-                      ))}
-                    </details>
-                    {item.readiness_findings.map((f, i) => (
-                      <p key={i}>
-                        {human(f.code)} · {f.detail}
-                      </p>
-                    ))}
-                  </>
-                ) : (
-                  <>
-                    <div className="ex-flow">
-                      <span>Ready</span>
-                      <i />
-                      <span>Proposed</span>
-                      <i />
-                      <span>Confirmed</span>
-                      <i />
-                      <span>Observed</span>
-                    </div>
-                    <p className="ex-hint">
-                      Select a task to inspect the exact preparation.
-                      Confirmation binds its content and execution details;
-                      changes require a new confirmation.
-                    </p>
-                    <div className="ex-capabilities">
-                      {[
-                        "immediate_send",
-                        "native_scheduling",
-                        "schedule_cancellation",
-                      ].map((key) => (
-                        <span key={key}>
-                          <i
-                            className={
-                              workspace?.mailbox_capabilities.capabilities[key]
-                                ?.available
-                                ? "ex-dot"
-                                : "ex-dot ex-off"
-                            }
-                          />
-                          {human(key)} ·{" "}
-                          {workspace?.mailbox_capabilities.capabilities[key]
-                            ?.available
-                            ? "Available"
-                            : "Disabled"}
-                        </span>
-                      ))}
-                    </div>
-                  </>
-                )}
-              </div>,
+              "clock",
+              focus.length,
+              <>
+                <div className="ex-panel-sub">
+                  <span className="ex-sub-label">
+                    {item
+                      ? `Focused · ${item.subject || "Untitled preparation"}`
+                      : "Campaign execution ledger"}
+                  </span>
+                  {item && (
+                    <button
+                      disabled={disabled}
+                      onClick={() => setInspected("")}
+                    >
+                      Show all <Icon name="close" size={12} />
+                    </button>
+                  )}
+                </div>
+                <div className="ex-scroll ex-timeline">
+                  {days.length ? (
+                    days.map(([day, items]) => (
+                      <Fragment key={day}>
+                        <div className="ex-timeline-day">{dayLabel(day)}</div>
+                        {items.map((event) => (
+                          <div className="ex-timeline-row" key={event.key}>
+                            <span
+                              className={`ex-timeline-node ex-tone-${event.tone}`}
+                            >
+                              <Icon name={event.icon} size={13} />
+                            </span>
+                            <span className="ex-timeline-body">
+                              <strong>{event.title}</strong>
+                              <small>{event.detail}</small>
+                            </span>
+                            <time className="ex-timeline-time">
+                              {time(event.at)}
+                            </time>
+                          </div>
+                        ))}
+                      </Fragment>
+                    ))
+                  ) : (
+                    <Empty icon="clock">
+                      {loading
+                        ? "Loading the execution ledger…"
+                        : "Proposed plans, confirmations, external schedules, and observed outcomes appear here in order."}
+                    </Empty>
+                  )}
+                </div>
+                <div className="ex-panel-foot">
+                  <Icon name="shield" size={14} />
+                  <span>Observed evidence only · newest first</span>
+                </div>
+              </>,
             )}
           </div>
         </main>
