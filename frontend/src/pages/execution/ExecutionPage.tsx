@@ -317,6 +317,7 @@ export default function ExecutionPage() {
           <NavigationItem route="sources" />
           <NavigationItem route="review" />
           <NavigationItem route="execution" active />
+          <NavigationItem route="mailbox" />
           <div className="rail-spacer" />
         </>
       }

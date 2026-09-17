@@ -12,10 +12,13 @@ from .core import SmartMail
 from .errors import SmartMailError
 from .mailbox import NetEase163ExtensionMailbox
 from .execution_ui import dispatch_execution
+from .mailbox_ui import mailbox_workspace
 
 
 def dispatch(core, request):
     command = request.get("command")
+    if command == "mailbox_workspace":
+        return mailbox_workspace(core, request["campaign_id"], request["student_id"])
     if isinstance(command, str) and command.startswith("execution_"):
         return dispatch_execution(core, request)
     if command == "workspace":

@@ -8,9 +8,14 @@ import type {
 } from "./execution-types";
 export type * from "./types";
 export type * from "./execution-types";
+export type * from "./mailbox-types";
 
 /** The allowlist mirrors smartmail/ui.py. Core owns all domain decisions. */
 type Commands = {
+  mailbox_workspace: {
+    args: { campaign_id: string; student_id: string };
+    result: import("./mailbox-types").MailboxWorkspace;
+  };
   execution_workspace: {
     args: { campaign_id: string };
     result: ExecutionWorkspace;
