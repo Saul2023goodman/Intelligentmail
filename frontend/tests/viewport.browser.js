@@ -4,7 +4,7 @@
 async (page) => {
   const origin = await page.evaluate(() => location.origin);
   const results = [];
-  for (const route of ["workflow", "tasks", "source-mapping"]) {
+  for (const route of ["workflow", "source-mapping"]) {
     await page.goto(`${origin}/#${route}`);
     for (const [width, height] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 600], [800, 600], [390, 844], [900, 450]]) {
       await page.setViewportSize({ width, height });

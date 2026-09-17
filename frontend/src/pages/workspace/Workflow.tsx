@@ -5,7 +5,6 @@ import {
   stageMetric,
   GRAPH_WIDTH,
   GRAPH_HEIGHT,
-  type Viewport,
 } from "./workflow-model";
 import Icon from "../../shared/Icon";
 
@@ -38,21 +37,23 @@ export default function Workflow({
   data,
   selected,
   onSelect,
-  view,
+  scale,
 }: {
   data: Workspace | null;
   selected: string;
   onSelect: (id: string) => void;
-  view: Viewport;
+  scale: number;
 }) {
   return (
     <div
       className="graph-size"
-      style={{
-        width: GRAPH_WIDTH,
-        height: GRAPH_HEIGHT,
-        transform: `translate3d(${view.x}px, ${view.y}px, 0) scale(${view.zoom})`,
-      }}
+      style={
+        {
+          width: GRAPH_WIDTH,
+          height: GRAPH_HEIGHT,
+          transform: `scale(${scale})`,
+        } as CSSProperties
+      }
     >
       <div className="graph">
         <div className="lane intake-lane">

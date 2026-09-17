@@ -2,7 +2,6 @@ import { useSyncExternalStore } from "react";
 
 export const routes = {
   workflow: { hash: "#workflow", label: "Workflow", icon: "grid" },
-  tasks: { hash: "#tasks", label: "Outreach tasks", icon: "source" },
   sources: { hash: "#source-mapping", label: "Source mapping", icon: "branch" },
   review: { hash: "#review", label: "Readiness review", icon: "shield" },
   execution: { hash: "#execution", label: "Batch execution", icon: "send" },

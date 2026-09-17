@@ -2,70 +2,15 @@ import type { Task, Workspace } from "../../core";
 
 export const GRAPH_WIDTH = 1300;
 export const GRAPH_HEIGHT = 870;
-export const MIN_ZOOM = 0.2;
-export const MAX_ZOOM = 2.5;
+const MIN_SCALE = 0.2;
+const MAX_SCALE = 1;
 
-export type Viewport = { zoom: number; x: number; y: number };
-
-const clamp = (value: number, min: number, max: number) =>
-  Math.min(max, Math.max(min, value));
-
-export function fitViewport(width: number, height: number): Viewport {
-  const zoom = clamp(
-    Math.min(width / GRAPH_WIDTH, height / GRAPH_HEIGHT),
-    MIN_ZOOM,
-    MAX_ZOOM,
+export function fitScale(width: number, height: number, padding = 40): number {
+  const scale = Math.min(
+    Math.max(0, width - padding * 2) / GRAPH_WIDTH,
+    Math.max(0, height - padding * 2) / GRAPH_HEIGHT,
   );
-  return {
-    zoom,
-    x: (width - GRAPH_WIDTH * zoom) / 2,
-    y: (height - GRAPH_HEIGHT * zoom) / 2,
-  };
-}
-
-export function clampViewport(
-  view: Viewport,
-  width: number,
-  height: number,
-  padding = 48,
-): Viewport {
-  const scaledWidth = GRAPH_WIDTH * view.zoom;
-  const scaledHeight = GRAPH_HEIGHT * view.zoom;
-  const axis = (position: number, contentSize: number, viewportSize: number) => {
-    const max = padding;
-    const min =
-      contentSize >= viewportSize - padding * 2
-        ? viewportSize - contentSize - padding
-        : padding - contentSize;
-    return Math.min(max, Math.max(min, position));
-  };
-  return {
-    zoom: view.zoom,
-    x: axis(view.x, scaledWidth, width),
-    y: axis(view.y, scaledHeight, height),
-  };
-}
-
-export function zoomAt(
-  view: Viewport,
-  anchorX: number,
-  anchorY: number,
-  nextZoom: number,
-  width: number,
-  height: number,
-): Viewport {
-  const zoom = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM);
-  const worldX = (anchorX - view.x) / view.zoom;
-  const worldY = (anchorY - view.y) / view.zoom;
-  return clampViewport(
-    {
-      zoom,
-      x: anchorX - worldX * zoom,
-      y: anchorY - worldY * zoom,
-    },
-    width,
-    height,
-  );
+  return Math.min(MAX_SCALE, Math.max(MIN_SCALE, scale));
 }
 
 export const stages = [

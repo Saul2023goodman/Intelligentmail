@@ -6,7 +6,7 @@ import { core } from "../src/core/index.ts";
 test("existing links and unknown hashes resolve predictably", () => {
   assert.equal(resolveRoute("#source-mapping"), "sources");
   assert.equal(resolveRoute("#workflow"), "workflow");
-  assert.equal(resolveRoute("#tasks"), "tasks");
+  assert.equal(resolveRoute("#tasks"), "workflow");
   assert.equal(resolveRoute("#review"), "review");
   assert.equal(resolveRoute("#execution"), "execution");
   assert.equal(resolveRoute(""), "workflow");
@@ -22,8 +22,8 @@ test("navigation writes a history-compatible hash", (t) => {
   try {
     navigate("sources");
     assert.equal(window.location.hash, "#source-mapping");
-    navigate("tasks");
-    assert.equal(window.location.hash, "#tasks");
+    navigate("review");
+    assert.equal(window.location.hash, "#review");
   } finally {
     globalThis.window = previous;
   }

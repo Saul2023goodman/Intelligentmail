@@ -10,7 +10,7 @@ The original page content, controls, dialogs, and Core operations are retained.
 | Foundation | `frontend/src/app/` | Hash routes, navigation items, rail, topbar, shell CSS |
 | Foundation | `frontend/src/shared/` | Design tokens, typed icons, SearchField, primitive CSS |
 | Core integration | `frontend/src/core/` | Typed bridge commands and report models |
-| Workspace | `frontend/src/pages/workspace/` | Workflow, task inspector, campaign state, mailbox and draft controls |
+| Workspace | `frontend/src/pages/workspace/` | Workflow graph, student (campaign) switcher and student creation |
 | Intake | `frontend/src/pages/intake/` | Source mapping, sample data, file staging, local inspection and filtering |
 
 ## Page development
@@ -49,9 +49,9 @@ non-responsive layout guidance.
   Do not merely hide excess content: all controls and content must remain reachable
   through internal scrolling, reflow or zoom. Toolbars may scroll internally when
   their actions cannot fit. Keep header and footer inside the window.
-- Workspace's inspector and canvas share the remaining height, stacking in narrow
-  windows. Fit uses the canvas's measured content box through `ResizeObserver`,
-  including changes caused by banners and navigation. Manual zoom remains available.
+- Workspace shows a single workflow stage. The graph is centered in its frame and
+  auto-fits the measured content box through `ResizeObserver`, including changes
+  caused by banners and navigation; there is no pannable canvas or manual zoom.
 - Intake's source and task lists scroll independently. Columns reflow into rows in
   narrow windows. Its diagram fits the available region, with internal scrolling
   at the minimum readable scale or when zoomed. Reset returns to the fitted scale.
@@ -61,12 +61,12 @@ non-responsive layout guidance.
 
 ## Routes and state lifetime
 
-- Empty hash, `#workflow`, or an unrecognized hash opens Workspace workflow.
-- `#tasks` opens Workspace tasks, including on reload.
+- Empty hash, `#workflow`, or an unrecognized hash (including the legacy
+  `#tasks`) opens Workspace workflow.
 - `#source-mapping` retains the existing Intake deep link.
 - Hash changes drive browser back/forward and active rail state.
-- Workspace stays mounted while Intake is visible, preserving campaign, search,
-  inspector and zoom state, as before. It renders no DOM during Intake.
+- Workspace stays mounted while Intake is visible, preserving campaign state, as
+  before. It renders no DOM while another route is active.
 - Intake mounts when entered and unmounts when left. Its sample edits, filters and
   staged file metadata reset on navigation or reload, as before.
 
@@ -101,6 +101,6 @@ npx --yes --package @playwright/cli playwright-cli -s=layout open http://127.0.0
 npx --yes --package @playwright/cli playwright-cli -s=layout run-code --filename frontend/tests/viewport.browser.js
 ```
 
-The check covers Workflow, Tasks and Intake across seven sizes from 390×844 to
+The check covers Workflow and Intake across seven sizes from 390×844 to
 1920×1080, including 900×450. It checks bounded page dimensions and visible internal
 regions; screenshots and interaction checks complement the geometry assertions.
