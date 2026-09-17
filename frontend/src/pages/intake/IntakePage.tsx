@@ -305,6 +305,7 @@ export default function IntakePage() {
           <NavigationItem route="review" />
           <NavigationItem route="execution" />
           <NavigationItem route="mailbox" />
+          <NavigationItem route="records" />
           <div className="sm-rail-line" />
           <button
             aria-label="Normalization workspace guide"
