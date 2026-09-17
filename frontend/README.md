@@ -63,3 +63,16 @@ duplicate suspicion. **Validate mapping** displays the sample validation summary
 Sample changes reset on navigation or reload; this page does not persist to Core,
 import mailbox history, or authorize sending. The existing workflow remains connected
 to Core.
+
+## Review prototype
+
+Open `/#review`, or select **Readiness review** in the sidebar. The third page is
+an isolated sample-data readiness workbench with a searchable preparation queue,
+annotated full-message preview, source excerpts, recipient comparison, attachment
+review, and duplicate evidence coverage. A sample recipient conflict blocks review
+completion until explicitly corrected. Review markings and corrections live in
+memory and reset when leaving the page. Readiness and local review markings do not
+grant sending confirmation; this page performs no Core mutations or external actions.
+
+Desktop uses three independently bounded regions. At widths of 900px or less,
+Preparations, Message, and Readiness tabs expose the same content and controls.
