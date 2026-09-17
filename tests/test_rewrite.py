@@ -232,10 +232,12 @@ class RewriteValidationTests(RewriteTestCase):
         imported, first_id = self.first_preparation()
         other = self.import_bundle([("Example University_Dr Blair Blue.docx",
                                      draft_paragraphs("blair@example.edu", "Dear Dr Blue,", ["Other."]))])
-        sources = self.core.get_import(other["id"])["sources"]
+        other_sources = self.core.get_import(other["id"])["sources"]
+        master_source = next(s for s in self.core.get_import(imported["id"])["sources"]
+                             if s["name"].endswith(".xlsx"))
 
-        for source in [next(s for s in sources if s["name"].endswith("Blair Blue.docx")),
-                       next(s for s in sources if s["name"].endswith(".xlsx"))]:
+        for source in [next(s for s in other_sources if s["name"].endswith("Blair Blue.docx")),
+                       master_source]:
             with self.assertRaises(SmartMailError):
                 self.core.rewrite(first_id, source_id=source["id"])
         self.assertEqual(self.core.get_preparation(first_id)["status"], "active")
@@ -332,7 +334,10 @@ class RewritePersistenceTests(RewriteTestCase):
         slot = self.core.get_preparation(first_id)["attachment_slots"][0]
         attachment = self.core.confirm_attachment(first_id, slot["id"])["attachment_slots"][0]["attachment"]
         snapshot = self.core.read_attachment(attachment["id"])
-        second = self.core.rewrite(first_id, source_id=self.revised_source([DECLARATION])["id"])
+        second = self.core.rewrite(
+            first_id,
+            source_id=self.revised_source(
+                [DECLARATION, "Thank you for your consideration."])["id"])
 
         with SmartMail(self.home) as restarted:
             prior = next(v for v in restarted.get_preparation_history(second["id"])["versions"]

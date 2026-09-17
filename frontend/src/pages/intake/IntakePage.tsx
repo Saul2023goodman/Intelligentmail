@@ -1,5 +1,5 @@
 import SearchField from "../../shared/SearchField";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import type { CSSProperties } from "react";
 import Icon from "../../shared/Icon";
 import { AppShell, Topbar, NavigationItem } from "../../app/shell";
@@ -64,7 +64,9 @@ export default function IntakePage() {
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [query, setQuery] = useState("");
   const [notice, setNotice] = useState("");
+  const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const dragDepth = useRef(0);
   const drawer = useRef<HTMLDialogElement>(null);
   const taskDrawer = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -199,6 +201,55 @@ export default function IntakePage() {
       [studentId]: produce(previous[studentId]),
     }));
     setNotice(message);
+  };
+
+  const stageFiles = (files: File[]) => {
+    if (!files.length) return;
+    const staged: RawSource[] = files.map((file, index) => ({
+      id: `staged-${Date.now()}-${index}`,
+      name: file.name,
+      type: /\.(xlsx|csv)$/i.test(file.name) ? "Spreadsheet" : "Document",
+      icon: "file" as const,
+      color: "slate",
+      meta: `${Math.max(1, Math.round(file.size / 1024))} KB · local file`,
+      files: /\.(pdf|zip)$/i.test(file.name) ? [file.name] : undefined,
+      fields: [
+        ["File", file.name],
+        ["State", "Unresolved in this sample session only"],
+        ["Next step", "Classify into a stable category"],
+        ["Import", "Import through Core for supported extraction"],
+      ],
+    }));
+    patchSpace(
+      (draft) => ({ ...draft, unresolved: [...staged, ...draft.unresolved] }),
+      `${files.length} local file${files.length > 1 ? "s" : ""} staged as unresolved raw sources. File contents are not parsed in this sample.`,
+    );
+    setSelectedId(null);
+  };
+
+  const dragHasFiles = (event: DragEvent) =>
+    Array.from(event.dataTransfer?.types ?? []).includes("Files");
+  const onDragEnter = (event: DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    dragDepth.current += 1;
+    setDragging(true);
+  };
+  const onDragOver = (event: DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  };
+  const onDragLeave = (event: DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDragging(false);
+  };
+  const onDrop = (event: DragEvent) => {
+    if (!dragHasFiles(event)) return;
+    event.preventDefault();
+    dragDepth.current = 0;
+    setDragging(false);
+    stageFiles(Array.from(event.dataTransfer.files));
   };
   const classify = (categoryId: CategoryId) => {
     const source = selectedSource;
@@ -346,7 +397,13 @@ export default function IntakePage() {
         </>
       }
     >
-      <div className="workspace">
+      <div
+        className="workspace"
+        onDragEnter={onDragEnter}
+        onDragOver={onDragOver}
+        onDragLeave={onDragLeave}
+        onDrop={onDrop}
+      >
         <Topbar
           className="sm-topbar"
           breadcrumb="Source mapping"
@@ -461,8 +518,9 @@ export default function IntakePage() {
               <button
                 className="sm-add-source"
                 onClick={() => fileInput.current?.click()}
+                title="Drag & drop files anywhere on the board, or click to browse"
               >
-                <Icon name="plus" size={17} /> Add raw source materials
+                <Icon name="plus" size={17} /> Drag &amp; drop raw source materials
                 <span>Browse files</span>
               </button>
               {selectedSource && (
@@ -682,6 +740,21 @@ export default function IntakePage() {
             identified tasks
           </span>
         </footer>
+        {dragging && (
+          <div className="sm-drop-overlay" aria-hidden="true">
+            <div className="sm-drop-card">
+              <span className="sm-drop-icon">
+                <Icon name="file" size={26} />
+              </span>
+              <strong>Drop files to stage raw sources</strong>
+              <span>
+                Files are added to {student.name}’s unresolved list, ready to
+                classify into stable categories. .xlsx, .csv, .docx, .pdf,
+                .txt, .eml, .msg and .zip are accepted.
+              </span>
+            </div>
+          </div>
+        )}
       </div>
       <input
         ref={fileInput}
@@ -690,28 +763,7 @@ export default function IntakePage() {
         accept=".xlsx,.csv,.docx,.pdf,.txt,.eml,.msg,.zip"
         hidden
         onChange={(event) => {
-          const files = Array.from(event.target.files ?? []);
-          if (!files.length) return;
-          const staged: RawSource[] = files.map((file, index) => ({
-            id: `staged-${Date.now()}-${index}`,
-            name: file.name,
-            type: /\.(xlsx|csv)$/i.test(file.name) ? "Spreadsheet" : "Document",
-            icon: "file" as const,
-            color: "slate",
-            meta: `${Math.max(1, Math.round(file.size / 1024))} KB · local file`,
-            files: /\.(pdf|zip)$/i.test(file.name) ? [file.name] : undefined,
-            fields: [
-              ["File", file.name],
-              ["State", "Unresolved in this sample session only"],
-              ["Next step", "Classify into a stable category"],
-              ["Import", "Import through Core for supported extraction"],
-            ],
-          }));
-          patchSpace(
-            (draft) => ({ ...draft, unresolved: [...staged, ...draft.unresolved] }),
-            `${files.length} local file${files.length > 1 ? "s" : ""} staged as unresolved raw sources. File contents are not parsed in this sample.`,
-          );
-          setSelectedId(null);
+          stageFiles(Array.from(event.target.files ?? []));
           event.target.value = "";
         }}
       />

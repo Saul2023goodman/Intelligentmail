@@ -1,11 +1,15 @@
 import tempfile
 import unittest
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 from openpyxl import Workbook
 
 from smartmail import SmartMail, SmartMailError
+from smartmail.mailbox import ControlledMailbox
+from tests import test_execution
+from tests.test_duplicates import outbound_sent_observation
 
 
 def master(path, rows, headers=None, merges=()):
@@ -17,6 +21,18 @@ def master(path, rows, headers=None, merges=()):
         sheet.append(row)
     for cells in merges:
         sheet.merge_cells(cells)
+    workbook.save(path)
+    workbook.close()
+    return path
+
+
+def revised_master(path, rows, note, headers=None):
+    """Same supported rows in a workbook with different bytes (an extra column)."""
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.append(headers or ["大学", "导师", "邮箱📮", "URL", "备注"])
+    for row in rows:
+        sheet.append([*row, note])
     workbook.save(path)
     workbook.close()
     return path
@@ -108,9 +124,14 @@ class IntakeTests(unittest.TestCase):
         second = self.core.import_master(self.campaign["id"], student["id"], source)
         self.assertEqual(first["task_ids"], second["task_ids"])
         self.assertEqual(len(first["task_ids"]), 1)
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(second["id"], first["id"])
+        self.assertEqual({row["outcome"] for row in second["rows"]}, {"reused"})
+        self.assertEqual(second["summary"]["new_sources"], 0)
         task = self.core.get_task(first["task_ids"][0])
         self.assertEqual(task["supervisor"]["addresses"], ["a@example.edu", "alternate@example.edu"])
-        self.assertEqual(len(task["source_associations"]), 4)
+        self.assertEqual(len(task["source_associations"]), 2)
+        self.assertEqual(len(self.core.list_imports(self.campaign["id"])), 1)
         other_campaign = self.core.create_campaign("2028 outreach")
         other = self.core.import_master(other_campaign["id"], student["id"], source)
         self.assertNotEqual(first["task_ids"], other["task_ids"])
@@ -196,3 +217,249 @@ class IntakeTests(unittest.TestCase):
         self.assertEqual(summary["exception_count"], 1)
         empty = self.core.create_campaign("Separate campaign")
         self.assertEqual(self.core.list_tasks(empty["id"]), [])
+
+
+class DuplicateImportTests(IntakeTests):
+    def test_exact_duplicate_import_is_idempotent_and_reported_per_row(self):
+        student = self.core.create_student("Test Student", "student@163.com")
+        source = master(self.directory / "master.xlsx", [
+            ["Example University", "Dr Alex Green", "alex@example.edu", ""],
+        ])
+        first = self.core.import_master(self.campaign["id"], student["id"], source)
+        second = self.core.import_master(self.campaign["id"], student["id"], source)
+
+        self.assertTrue(second["duplicate"])
+        self.assertEqual(second["id"], first["id"])
+        self.assertEqual(second["summary"], {
+            "rows": 1, "new": 0, "reused": 1, "duplicate": 0,
+            "conflicts": 0, "new_sources": 0,
+        })
+        self.assertEqual(len(self.core.list_imports(self.campaign["id"])), 1)
+        self.assertEqual(len(self.core.get_import(first["id"])["sources"]), 1)
+        task = self.core.get_task(first["task_ids"][0])
+        self.assertEqual(len(task["source_associations"]), 1)
+
+    def test_a_revision_bundle_preserves_new_materials_but_reuses_master_rows(self):
+        student = self.core.create_student("Test Student", "student@163.com")
+        master_path = master(self.directory / "master.xlsx", [
+            ["Example University", "Dr Alex Green", "alex@example.edu", ""],
+        ])
+        first_bundle = self.directory / "bundle-1.zip"
+        with zipfile.ZipFile(first_bundle, "w") as archive:
+            archive.write(master_path, "master.xlsx")
+            archive.writestr("CV.docx", b"original document bytes")
+        first = self.core.import_master(self.campaign["id"], student["id"], first_bundle)
+
+        second_bundle = self.directory / "bundle-2.zip"
+        with zipfile.ZipFile(second_bundle, "w") as archive:
+            archive.write(master_path, "master.xlsx")
+            archive.writestr("Example University_Dr Alex Green.docx", b"revised letter bytes")
+        second = self.core.import_master(self.campaign["id"], student["id"], second_bundle)
+
+        self.assertFalse(second["duplicate"])
+        self.assertNotEqual(second["id"], first["id"])
+        self.assertEqual(second["summary"]["new_sources"], 2)
+        self.assertEqual([source["name"] for source in second["reused_sources"]], ["master.xlsx"])
+        self.assertEqual(
+            sorted(source["name"] for source in self.core.get_import(second["id"])["sources"]),
+            ["Example University_Dr Alex Green.docx", "bundle-2.zip"])
+        self.assertEqual(second["rows"][0]["outcome"], "reused")
+        self.assertEqual(len(self.core.list_imports(self.campaign["id"])), 2)
+        task = self.core.get_task(first["task_ids"][0])
+        self.assertEqual(len(task["source_associations"]), 1)
+        self.assertEqual(len(self.core.get_import(first["id"])["sources"]), 3)
+
+    def test_duplicate_rows_within_one_master_keep_one_task_and_a_nonblocking_exception(self):
+        student = self.core.create_student("Test Student", "student@163.com")
+        source = master(self.directory / "master.xlsx", [
+            ["Example University", "Dr Alex Green", "alex@example.edu", ""],
+            ["Example University", "Dr Alex Green", "alex@example.edu", ""],
+        ])
+        result = self.core.import_master(self.campaign["id"], student["id"], source)
+
+        self.assertEqual(len(result["task_ids"]), 1)
+        self.assertEqual([row["outcome"] for row in result["rows"]], ["new", "duplicate"])
+        self.assertEqual(result["summary"]["duplicate"], 1)
+        task = self.core.get_task(result["task_ids"][0])
+        self.assertEqual(len(task["source_associations"]), 2)
+        duplicate = next(exception for exception in task["exceptions"]
+                         if exception["code"] == "duplicate_import_row")
+        self.assertFalse(duplicate["blocking"])
+        self.assertIn("Sheet!3", duplicate["detail"])
+        self.assertIn("Sheet!2", duplicate["detail"])
+
+    def test_rows_adding_evidence_are_reused_not_duplicates(self):
+        student = self.core.create_student("Test Student", "student@163.com")
+        source = master(self.directory / "master.xlsx", [
+            ["University", "Dr Alex Green", "a@example.edu", ""],
+            ["University", "Dr Alex Green", "a@example.edu", "https://example.edu/alex"],
+            ["University", "Dr Alex Green", "b@example.edu", "https://example.edu/alex"],
+        ])
+        result = self.core.import_master(self.campaign["id"], student["id"], source)
+
+        self.assertEqual(len(result["task_ids"]), 1)
+        self.assertEqual([row["outcome"] for row in result["rows"]],
+                         ["new", "reused", "reused"])
+        changes = {change["code"] for row in result["rows"] for change in row["changes"]}
+        self.assertEqual(changes, {"profile_added", "address_added"})
+        task = self.core.get_task(result["task_ids"][0])
+        self.assertEqual(task["supervisor"]["addresses"],
+                         ["a@example.edu", "b@example.edu"])
+        self.assertNotIn("duplicate_import_row",
+                         [exception["code"] for exception in task["exceptions"]])
+
+    def test_reimport_with_changed_information_reports_changes_without_blocking(self):
+        student = self.core.create_student("Test Student", "student@163.com")
+        rows = [["University", "Dr Alex Green", "a@example.edu", ""]]
+        self.core.import_master(
+            self.campaign["id"], student["id"],
+            master(self.directory / "master-1.xlsx", rows))
+        with_profile = self.core.import_master(
+            self.campaign["id"], student["id"],
+            revised_master(self.directory / "master-2.xlsx",
+                           [["University", "Dr Alex Green", "a@example.edu",
+                             "https://example.edu/alex"]], "v2"))
+        self.assertEqual(with_profile["rows"][0]["outcome"], "reused")
+        self.assertIn("profile_added",
+                      [change["code"] for change in with_profile["rows"][0]["changes"]])
+
+        with_alternate = self.core.import_master(
+            self.campaign["id"], student["id"],
+            revised_master(self.directory / "master-3.xlsx",
+                           [["University", "Dr Alex Green", "b@example.edu",
+                             "https://example.edu/alex"]], "v3"))
+        self.assertIn("address_added",
+                      [change["code"] for change in with_alternate["rows"][0]["changes"]])
+
+        without_address = self.core.import_master(
+            self.campaign["id"], student["id"],
+            revised_master(self.directory / "master-4.xlsx",
+                           [["University", "Dr Alex Green", "",
+                             "https://example.edu/alex"]], "v4"))
+        self.assertEqual(without_address["rows"][0]["outcome"], "reused")
+        self.assertIn("address_absent_in_row",
+                      [change["code"] for change in without_address["rows"][0]["changes"]])
+
+        task = self.core.get_task(with_profile["task_ids"][0])
+        self.assertEqual(task["supervisor"]["addresses"],
+                         ["a@example.edu", "b@example.edu"])
+        self.assertEqual(task["exceptions"], [])
+
+
+class ImportPriorOutreachConflictTests(test_execution.ExecutionTestCase):
+    def observe(self, observation):
+        self.core.mailbox = ControlledMailbox(observations=[observation])
+        return self.core.refresh_mailbox(self.student["id"])
+
+    def import_letter(self):
+        (cv_name, cv_path), _ = self.cv()
+        return self.import_bundle(
+            [(test_execution.DRAFT_NAME,
+              test_execution.draft_paragraphs(
+                  "alex@example.edu", "Dear Dr Green,", [test_execution.DECLARATION]))],
+            extra=[(cv_name, cv_path)])
+
+    def test_observed_prior_send_blocks_imported_initial_outreach_until_resolved(self):
+        self.observe(outbound_sent_observation("alex@example.edu"))
+        imported = self.import_letter()
+
+        self.assertTrue(imported["rows"][0]["conflict"])
+        self.assertEqual(imported["summary"]["conflicts"], 1)
+        task = self.core.get_task(imported["task_ids"][0])
+        conflict = next(exception for exception in task["exceptions"]
+                        if exception["code"] == "prior_outreach_conflict")
+        self.assertTrue(conflict["blocking"])
+        self.assertIn("outbound sent message", conflict["detail"])
+
+        preparation_id = self.core.prepare_from_documents(imported["id"])["preparation_ids"][0]
+        self.core.set_subject(preparation_id, test_execution.SUBJECT)
+        slot = self.core.get_preparation(preparation_id)["attachment_slots"][0]
+        self.core.confirm_attachment(preparation_id, slot["id"])
+        preparation = self.core.get_preparation(preparation_id)
+        self.assertFalse(preparation["ready"])
+        self.assertIn("prior_outreach_conflict",
+                      [finding["code"] for finding in preparation["readiness_findings"]])
+        with self.assertRaises(SmartMailError):
+            self.core.confirm(preparation_id)
+
+        resolved = self.core.resolve_prior_outreach(task["id"])
+        self.assertNotIn("prior_outreach_conflict",
+                         [exception["code"] for exception in resolved["exceptions"]])
+        self.assertTrue(self.core.get_preparation(preparation_id)["ready"])
+        with self.assertRaises(SmartMailError):
+            self.core.resolve_prior_outreach(task["id"])
+
+    def test_ambiguous_and_unrelated_observations_do_not_conflict_import(self):
+        ambiguous = outbound_sent_observation("alex@example.edu")
+        ambiguous["messages"][0]["ambiguity"] = "Recipient success could not be established"
+        self.observe(ambiguous)
+        first = self.import_bundle([])
+        self.assertFalse(first["rows"][0]["conflict"])
+
+        self.observe(outbound_sent_observation("someone-else@example.edu", reference="other-1"))
+        second = self.core.import_master(
+            self.campaign["id"], self.student["id"],
+            revised_master(self.directory / "master-2.xlsx",
+                           test_execution.DEFAULT_ROWS, "v2"))
+        self.assertFalse(second["rows"][0]["conflict"])
+        self.assertEqual(second["rows"][0]["outcome"], "reused")
+        self.assertEqual(second["task_ids"], first["task_ids"])
+
+        self.observe(outbound_sent_observation("alex@example.edu", reference="prior-send-2"))
+        third = self.core.import_master(
+            self.campaign["id"], self.student["id"],
+            revised_master(self.directory / "master-3.xlsx",
+                           test_execution.DEFAULT_ROWS, "v3"))
+        self.assertTrue(third["rows"][0]["conflict"])
+
+    def test_same_campaign_sent_record_conflicts_reimport_but_follow_up_stays_ready(self):
+        self.at(datetime(2026, 9, 14, 9, 0, tzinfo=timezone.utc))
+        preparation, _ = self.ready_preparation()
+        confirmation = self.core.confirm(preparation["id"])
+        self.core.run_execution([confirmation["id"]])
+
+        reimported = self.core.import_master(
+            self.campaign["id"], self.student["id"],
+            revised_master(self.directory / "master-revised.xlsx",
+                           test_execution.DEFAULT_ROWS, "revised"))
+        self.assertEqual(reimported["rows"][0]["outcome"], "reused")
+        self.assertTrue(reimported["rows"][0]["conflict"])
+        task = self.core.get_task(preparation["task_id"])
+        self.assertIn("prior_outreach_conflict",
+                      [exception["code"] for exception in task["exceptions"]])
+
+        self.core.configure_follow_up_rule(
+            self.campaign["id"], delay_days=1, maximum_count=1,
+            subject_template="Re: {original_subject}",
+            body_template="Dear {supervisor_name},\n\nFollowing up.\n\n{student_name}")
+        self.at(datetime(2026, 9, 15, 10, 0, tzinfo=timezone.utc))
+        actions = self.core.prepare_follow_ups(self.campaign["id"])
+        self.assertEqual(len(actions), 1)
+        follow_up = self.core.get_preparation(actions[0]["preparation_id"])
+        self.assertEqual(follow_up["action_kind"], "follow_up")
+        self.assertTrue(follow_up["ready"])
+        self.assertEqual(
+            self.core.check_duplicate(follow_up["id"])["finding"], "linked_follow_up")
+
+    def test_prior_send_in_another_campaign_is_not_a_conflict_until_observed(self):
+        preparation, _ = self.ready_preparation()
+        confirmation = self.core.confirm(preparation["id"])
+        self.core.run_execution([confirmation["id"]])
+
+        second_campaign = self.core.create_campaign("2028 outreach")
+        imported = self.core.import_master(
+            second_campaign["id"], self.student["id"],
+            revised_master(self.directory / "master-2028.xlsx",
+                           test_execution.DEFAULT_ROWS, "2028"))
+        self.assertEqual(imported["rows"][0]["outcome"], "new")
+        self.assertFalse(imported["rows"][0]["conflict"])
+
+        self.observe(outbound_sent_observation("alex@example.edu"))
+        again = self.core.import_master(
+            second_campaign["id"], self.student["id"],
+            revised_master(self.directory / "master-2028-b.xlsx",
+                           test_execution.DEFAULT_ROWS, "2028b"))
+        self.assertTrue(again["rows"][0]["conflict"])
+        self.assertTrue(any(
+            exception["code"] == "prior_outreach_conflict" and exception["blocking"]
+            for exception in self.core.get_task(imported["task_ids"][0])["exceptions"]))
