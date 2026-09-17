@@ -14,7 +14,7 @@ from .mailbox import NetEase163ExtensionMailbox
 from .execution_ui import dispatch_execution
 from .mailbox_ui import mailbox_workspace
 from .records_ui import mailbox_summaries, records_workspace, records_task
-from .intake_ui import intake_workspace, import_uploaded_sources
+from .intake_ui import intake_workspace, import_uploaded_sources, recognize_uploaded_sources
 from .review_ui import review_workspace, resolve_review_exception
 
 
@@ -25,6 +25,8 @@ def dispatch(core, request):
     if command == "intake_import":
         return import_uploaded_sources(
             core, request["campaign_id"], request["student_id"], request["files"])
+    if command == "intake_recognize":
+        return recognize_uploaded_sources(core, request["files"])
     if command == "review_workspace":
         return review_workspace(core, request["campaign_id"])
     if command == "confirm_attachment":
@@ -70,15 +72,12 @@ def dispatch(core, request):
             raise SmartMailError("Use a student name of 1–200 characters")
         if not isinstance(mailbox, str):
             raise SmartMailError("A valid Student mailbox address is required")
-        # On the workflow canvas a Student is the switchable workspace scope.
+        # On the workflow canvas a Student is the switchable workspace scope, and the
+        # Student owns exactly one Campaign: Core establishes both and states the link.
         student = core.create_student(name, mailbox)
-        campaign = next((c for c in core.list_campaigns()
-                         if c["name"] == student["name"]), None)
-        if campaign is None:
-            campaign = core.create_campaign(student["name"])
         address = next(m["address"] for m in core.list_mailboxes()
                        if m["student_id"] == student["id"])
-        return {**student, "mailbox": address, "campaign_id": campaign["id"]}
+        return {**student, "mailbox": address}
     if command == "check_duplicate":
         return core.check_duplicate(request["preparation_id"])
     if command == "mailbox_history":

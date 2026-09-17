@@ -46,6 +46,9 @@ def dispatch(core, args):
             result = core.get_student(args.id)
     elif args.command == "import":
         result = core.import_master(args.campaign, args.student, args.path)
+    elif args.command == "recognize":
+        from ..recognition import recognize_file
+        result = recognize_file(args.path)
     elif args.command == "imports":
         if args.action == "list":
             result = core.list_imports(args.campaign)

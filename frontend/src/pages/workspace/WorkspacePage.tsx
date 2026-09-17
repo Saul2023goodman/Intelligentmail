@@ -32,16 +32,9 @@ export default function WorkspacePage({ route }: { route: Route }) {
     data?.mailboxes.find((mailbox) => mailbox.student_id === studentId) ??
     null;
   const campaignFor = useCallback(
-    (id: string, workspace: Workspace | null) => {
-      const mailbox = workspace?.mailboxes.find(
-        (item) => item.student_id === id,
-      );
-      return mailbox
-        ? (workspace?.campaigns.find((c) => c.name === mailbox.student_name)
-            ?.id ??
-          "")
-        : "";
-    },
+    (id: string, workspace: Workspace | null) =>
+      workspace?.mailboxes.find((item) => item.student_id === id)?.campaign_id ??
+      "",
     [],
   );
   const load = useCallback(async (campaignId = "") => {

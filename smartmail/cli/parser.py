@@ -39,6 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     intake.add_argument("--campaign", required=True, help="Explicit Campaign ID from campaign list/create")
     intake.add_argument("--student", required=True, help="Explicit Student ID from student list/create")
 
+    recognize = commands.add_parser(
+        "recognize",
+        help="Classify a .docx/.xlsx/.csv/.zip source from structural evidence, without importing")
+    recognize.add_argument("path", type=Path)
+
     imports = commands.add_parser("imports", help="Inspect an import and its preserved materials").add_subparsers(dest="action", required=True)
     imports.add_parser("list").add_argument("--campaign", required=True)
     imports.add_parser("show").add_argument("id")

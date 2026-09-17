@@ -37,23 +37,44 @@ function rpc(type, payload = {}) {
   });
 }
 
-async function invoke(method, ...args) {
+const ISOLATED_METHODS = new Set(
+  ["account", "observe", "prepare", "send", "placeSchedule", "cancelSchedule", "recallMessage"]);
+
+async function executeInWorld(world, namespace, method, args) {
   if (!connection) throw new Error("Mailbox tab was disconnected");
+  if (!ISOLATED_METHODS.has(method)) throw new Error("Unsupported mailbox command");
   const selected = connection;
   const results = await chrome.scripting.executeScript({
-    target: { tabId: selected.tabId, documentIds: [selected.documentId] }, world: "ISOLATED",
-    func: async (method, args) => {
-      if (!["account", "observe", "prepare", "send",
-            "placeSchedule", "cancelSchedule", "recallMessage"].includes(method))
-        throw new Error("Unsupported mailbox command");
-      return await globalThis.SmartMail163[method](...args);
-    }, args: [method, args]
+    target: { tabId: selected.tabId, documentIds: [selected.documentId] }, world,
+    func: async (namespace, method, args) => {
+      const scope = namespace.split(".").reduce((node, key) => node?.[key], globalThis);
+      if (!scope || typeof scope[method] !== "function")
+        throw new Error("Mailbox runtime is unavailable in the selected execution world");
+      return await scope[method](...args);
+    }, args: [namespace, method, args]
   });
   if (connection !== selected || results.length !== 1 || results[0].documentId !== selected.documentId)
     throw new Error("Mailbox document changed during execution");
-  if (results[0].error || results[0].result == null)
-    throw new Error(results[0].error?.message || "Mailbox script returned no result");
+  if (results[0].error) throw new Error(results[0].error.message || "Mailbox script failed");
   return results[0].result;
+}
+
+async function invoke(method, ...args) {
+  // Observation prefers the MAIN-world reader, which drives the official webmail
+  // runtime ($.DataAction) and returns full message content, draft Compose models
+  // and attachment metadata. Older pages without that runtime transparently fall
+  // back to the ISOLATED metadata-only observer.
+  if (method === "observe") {
+    try {
+      const result = await executeInWorld("MAIN", "SmartMail163Reader", "observe", args);
+      if (result && result.status !== "runtime_unavailable") return result;
+    } catch {
+      // Fall through to the ISOLATED observer.
+    }
+  }
+  const result = await executeInWorld("ISOLATED", "SmartMail163", method, args);
+  if (result == null) throw new Error("Mailbox script returned no result");
+  return result;
 }
 
 async function connect(tabId) {
@@ -64,13 +85,24 @@ async function connect(tabId) {
   if (url.origin !== "https://mail.163.com" || url.pathname !== "/js6/main.jsp")
     throw new Error("请在已登录的 163 邮箱主页打开扩展");
   await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN", files: ["reader.js"]
+  });
+  await chrome.scripting.executeScript({
     target: { tabId }, world: "ISOLATED", files: ["common.js", "observe.js", "compose.js", "schedule.js"]
   });
-  const [identity] = await chrome.scripting.executeScript({
-    target: { tabId }, world: "ISOLATED", func: () => globalThis.SmartMail163.account()
+  // Prefer the official runtime account ($S('uid')); fall back to the ISOLATED
+  // DOM-based probe for pages whose runtime is not ready yet.
+  let identity = await chrome.scripting.executeScript({
+    target: { tabId }, world: "MAIN",
+    func: () => globalThis.SmartMail163Reader?.runtimeAvailable() ? globalThis.SmartMail163Reader.account() : ""
   });
-  if (!identity.result) throw new Error("无法唯一识别当前邮箱；请完成登录后重试");
-  connection = { tabId, documentId: identity.documentId, mailbox_address: identity.result };
+  if (!identity[0]?.result) {
+    identity = await chrome.scripting.executeScript({
+      target: { tabId }, world: "ISOLATED", func: () => globalThis.SmartMail163.account()
+    });
+  }
+  if (!identity[0]?.result) throw new Error("无法唯一识别当前邮箱；请完成登录后重试");
+  connection = { tabId, documentId: identity[0].documentId, mailbox_address: identity[0].result };
   const selected = connection;
   port = chrome.runtime.connectNative(HOST);
   const selectedPort = port;

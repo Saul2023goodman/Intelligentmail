@@ -78,6 +78,16 @@ CREATE TABLE IF NOT EXISTS document_findings (
     id TEXT PRIMARY KEY, source_id TEXT NOT NULL REFERENCES sources(id),
     code TEXT NOT NULL, detail TEXT NOT NULL, blocking INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS source_recognition (
+    source_id TEXT PRIMARY KEY REFERENCES sources(id),
+    recognized_type TEXT NOT NULL,
+    effective_type TEXT NOT NULL,
+    confidence TEXT NOT NULL,
+    revised INTEGER NOT NULL DEFAULT 0,
+    reasons TEXT NOT NULL DEFAULT '[]',
+    cautions TEXT NOT NULL DEFAULT '[]',
+    detail TEXT NOT NULL DEFAULT '{}'
+);
 CREATE TABLE IF NOT EXISTS confirmations (
     id TEXT PRIMARY KEY,
     preparation_id TEXT NOT NULL REFERENCES preparations(id),

@@ -2,11 +2,33 @@ import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } fro
 import SearchField from "../../shared/SearchField";
 import Icon from "../../shared/Icon";
 import { AppShell, Topbar, NavigationItem } from "../../app/shell";
-import { core, human, importSources, type IntakeSource, type IntakeTask, type IntakeWorkspace } from "../../core";
+import {
+  core,
+  human,
+  importSources,
+  recognizeSources,
+  type IntakeSource,
+  type IntakeTask,
+  type IntakeWorkspace,
+  type RecognitionRelation,
+  type RecognitionResult,
+  type RecognitionTypeId,
+  type SourceRecognitionAnnotation,
+} from "../../core";
+import {
+  confidenceTone,
+  identitySummary,
+  isActionableType,
+  recognitionTypeOptions,
+  reviewImportability,
+  typeOption,
+  type ReviewEntry,
+} from "./recognition-model";
 import "./SourceMapping.css";
 
 type TaskFilter = "all" | "active" | "incomplete";
-type SourceView = IntakeSource & { category: string; importId: string; finding?: string };
+type SourceView = IntakeSource & { category: string; importId: string; finding?: string; recognition?: SourceRecognitionAnnotation };
+type ReviewRow = ReviewEntry & { file: File; result: RecognitionResult; manuallyToggled: boolean };
 const categories = [
   { id: "master", title: "Supervisor records", detail: "Authoritative task identity rows", icon: "source" as const, color: "green" },
   { id: "drafts", title: "Draft messages", detail: "Documents associated to Preparations", icon: "file" as const, color: "blue" },
@@ -31,21 +53,22 @@ export default function IntakePage() {
   const [inspection, setInspection] = useState<{ title: string; detail: string; evidence: unknown } | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [recognizing, setRecognizing] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [review, setReview] = useState<{ rows: ReviewRow[]; relations: RecognitionRelation[] } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const inspector = useRef<HTMLDialogElement>(null);
   const taskDialog = useRef<HTMLDialogElement>(null);
+  const reviewDialog = useRef<HTMLDialogElement>(null);
   const dragDepth = useRef(0);
 
-  const load = useCallback(async (campaignId?: string, studentId?: string) => {
+  const load = useCallback(async (studentId?: string) => {
     setLoading(true); setError("");
     try {
-      const next = await core("intake_workspace", {
-        ...(campaignId ? { campaign_id: campaignId } : {}),
-        ...(studentId ? { student_id: studentId } : {}),
-      });
+      // A Student owns exactly one Campaign, so the Student chooses the intake scope.
+      const next = await core("intake_workspace", studentId ? { student_id: studentId } : {});
       setData(next);
       setCampaign(next.campaign?.id ?? "");
       setStudent(next.student?.id ?? "");
@@ -60,6 +83,10 @@ export default function IntakePage() {
   }, [load]);
   useEffect(() => { if (inspection) inspector.current?.showModal(); }, [inspection]);
   useEffect(() => { if (selectedTask) taskDialog.current?.showModal(); }, [selectedTask]);
+  useEffect(() => {
+    if (review) reviewDialog.current?.showModal();
+    else reviewDialog.current?.close();
+  }, [review]);
 
   const sources = useMemo<SourceView[]>(() => (data?.imports ?? []).flatMap((imported) =>
     imported.sources.map((source) => ({
@@ -67,6 +94,7 @@ export default function IntakePage() {
       importId: imported.id,
       category: data?.source_categories[source.id] ?? "unresolved",
       finding: imported.findings.find((finding) => finding.source.id === source.id)?.detail,
+      recognition: data?.source_recognition[source.id],
     }))), [data]);
   const unresolved = sources.filter((source) => source.category === "unresolved"
     && `${source.name} ${source.finding ?? ""}`.toLowerCase().includes(query.toLowerCase()));
@@ -78,15 +106,66 @@ export default function IntakePage() {
   const currentStudent = data?.students.find((item) => item.id === student) ?? null;
   const activeCount = data?.tasks.filter((item) => item.task.supervisor.addresses.length).length ?? 0;
 
+  const importability = useMemo(
+    () => review ? reviewImportability(review.rows) : { ok: false, issues: [] as string[] },
+    [review],
+  );
+  const includedCount = review?.rows.filter((row) => row.included).length ?? 0;
+
   async function ingest(files: File[]) {
     if (!files.length || !campaign || !student) return;
+    setRecognizing(true); setError(""); setNotice("");
+    try {
+      // Stage one: deterministic structural recognition, never an import.
+      const collection = await recognizeSources(files);
+      const byName = new Map(collection.sources.map((result) => [result.name, result]));
+      const rows: ReviewRow[] = files.map((file) => {
+        const result = byName.get(file.name);
+        if (!result) throw new Error(`Core did not return recognition for ${file.name}`);
+        return {
+          file, result, name: result.name, format: result.format, type: result.type,
+          included: result.actionable, members: result.members, manuallyToggled: false,
+        };
+      });
+      setReview({ rows, relations: collection.relations });
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Core could not recognize the selected source set");
+    } finally { setRecognizing(false); }
+  }
+
+  function setRowType(name: string, type: RecognitionTypeId) {
+    setReview((current) => current ? {
+      ...current,
+      rows: current.rows.map((row) => row.name === name
+        ? { ...row, type, included: row.manuallyToggled ? row.included : isActionableType(type) }
+        : row),
+    } : current);
+  }
+  function toggleRow(name: string) {
+    setReview((current) => current ? {
+      ...current,
+      rows: current.rows.map((row) => row.name === name
+        ? { ...row, included: !row.included, manuallyToggled: true }
+        : row),
+    } : current);
+  }
+
+  async function confirmReviewImport() {
+    if (!review || !importability.ok) return;
+    const included = review.rows.filter((row) => row.included);
     setBusy(true); setError(""); setNotice("");
     try {
-      const result = await importSources(campaign, student, files);
+      // Stage two: import exactly the operator-approved set; revised types are
+      // persisted alongside Core's own recognized type.
+      const result = await importSources(campaign, student, included.map((row) => ({
+        file: row.file,
+        ...(row.type !== row.result.type ? { type: row.type } : {}),
+      })));
       setData(result.workspace);
+      setReview(null);
       setSelectedSource(null);
       const summary = result.import.summary;
-      setNotice(`Imported ${summary.rows} supervisor row${summary.rows === 1 ? "" : "s"}; ${result.preparation.preparation_ids.length} local Preparation${result.preparation.preparation_ids.length === 1 ? "" : "s"} available for review.`);
+      setNotice(`Imported ${summary.rows} supervisor row${summary.rows === 1 ? "" : "s"}; ${result.preparation.preparation_ids.length} local Preparation${result.preparation.preparation_ids.length === 1 ? "" : "s"} from ${included.length} of ${review.rows.length} reviewed source${review.rows.length === 1 ? "" : "s"}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Core rejected the selected source set");
     } finally { setBusy(false); }
@@ -109,16 +188,16 @@ export default function IntakePage() {
   </>}>
     <div className="workspace" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <Topbar className="sm-topbar" breadcrumb="Source mapping" homeHref="#workflow">
-        <div className="sm-student-switch" role="group" aria-label="Switch student">{data?.students.map((item) => <button key={item.id} className={item.id === student ? "is-active" : ""} aria-pressed={item.id === student} title={`${item.name} · ${item.mailbox}`} onClick={() => { setStudent(item.id); setSelectedTask(null); void load(campaign, item.id); }}><span className="sm-student-avatar blue">{initials(item.name)}</span><strong>{item.name}</strong></button>)}</div>
+        <div className="sm-student-switch" role="group" aria-label="Switch student">{data?.students.map((item) => <button key={item.id} className={item.id === student ? "is-active" : ""} aria-pressed={item.id === student} title={`${item.name} · ${item.mailbox}`} onClick={() => { setStudent(item.id); setSelectedTask(null); void load(item.id); }}><span className="sm-student-avatar blue">{initials(item.name)}</span><strong>{item.name}</strong></button>)}</div>
         <span className="sm-divider" />
-        <label className="sm-campaign"><Icon name="folder" size={15} /><select aria-label="Campaign" value={campaign} disabled={busy} onChange={(event) => { setCampaign(event.target.value); void load(event.target.value, student); }}>{data?.campaigns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><span className="sm-demo-label">CORE</span></label>
+        <span className="sm-campaign"><Icon name="folder" size={15} /><strong>{data?.campaign?.name || "No Campaign"}</strong><span className="sm-demo-label">CORE</span></span>
         <SearchField label="Search source findings and tasks" value={query} onChange={setQuery} placeholder="Search source findings or resolved tasks…" iconSize={16} />
-        <button className="sm-add-top" disabled={busy || !campaign || !student} onClick={() => fileInput.current?.click()}><Icon name="plus" size={14} />{busy ? "Importing…" : "Add source set"}</button><div className="sm-user">OP</div>
+        <button className="sm-add-top" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()}><Icon name="plus" size={14} />{recognizing ? "Recognizing…" : busy ? "Importing…" : "Add source set"}</button><div className="sm-user">OP</div>
       </Topbar>
       {(notice || error) && <div className="sm-notice" role={error ? "alert" : "status"}><Icon name={error ? "warning" : "check"} size={16} />{error || notice}<button aria-label="Dismiss notification" onClick={() => { setNotice(""); setError(""); }}><Icon name="close" size={15} /></button></div>}
       <main className="sm-board">
         <section className="sm-sources"><div className="sm-column-heading"><Icon name="folder" size={16} /><h2>Unresolved raw sources</h2><span>{String(unresolved.length).padStart(2, "0")}</span></div><div className="sm-source-list">
-          {unresolved.map((source) => <button key={source.id} className={`sm-source-card ${selectedSource?.id === source.id ? "is-selected" : ""}`} aria-pressed={selectedSource?.id === source.id} onClick={() => setSelectedSource(selectedSource?.id === source.id ? null : source)} onDoubleClick={() => inspectSource(source)}><span className="sm-file-icon slate"><Icon name="file" size={20} /></span><span className="sm-source-copy"><strong>{source.name}</strong><small>{Math.max(1, Math.round(source.size / 1024))} KB</small><span className="sm-source-meta-line"><em>{source.finding || "Core could not associate this source"}</em></span></span><Icon name="chevron" size={13} /></button>)}
+          {unresolved.map((source) => <button key={source.id} className={`sm-source-card ${selectedSource?.id === source.id ? "is-selected" : ""}`} aria-pressed={selectedSource?.id === source.id} onClick={() => setSelectedSource(selectedSource?.id === source.id ? null : source)} onDoubleClick={() => inspectSource(source)}><span className="sm-file-icon slate"><Icon name="file" size={20} /></span><span className="sm-source-copy"><strong>{source.name}</strong><small>{Math.max(1, Math.round(source.size / 1024))} KB</small><span className="sm-source-meta-line"><em>{source.recognition?.label ?? (source.finding || "Core could not associate this source")}</em>{source.recognition?.revised && <b className="sm-revised-tag">Revised</b>}</span></span><Icon name="chevron" size={13} /></button>)}
           {!loading && !unresolved.length && <p className="sm-empty">{query ? "No matching unresolved sources." : "No unresolved Source Materials in this scope."}</p>}
           <button className="sm-add-source" disabled={busy || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} /> Drag &amp; drop a supported source set<span>Browse files</span></button>
           {selectedSource && <div className="sm-selection"><span>Inspecting <strong>{selectedSource.name}</strong></span><button onClick={() => inspectSource(selectedSource)}>Inspect evidence <Icon name="arrow" size={13} /></button><button onClick={() => setSelectedSource(null)}>Clear selection</button></div>}
@@ -137,9 +216,72 @@ export default function IntakePage() {
         </div><div className="sm-output-note"><Icon name="shield" size={14} /><span>Core creates one Outreach Task per Student, Supervisor and Campaign. Preparation and readiness remain separate.</span></div></section>
       </main>
       <footer className="sm-footer"><span><i className="sm-dot ready" />Persisted Core data<span className="footer-separator">|</span>{sources.length} sources · {activeCount} active · {(data?.tasks.length ?? 0) - activeCount} missing email · {currentStudent?.name || "No Student"}</span><span><Icon name="shield" size={12} />Original bytes and evidence are retained</span></footer>
-      {dragging && <div className="sm-drop-overlay" aria-hidden="true"><div className="sm-drop-card"><span className="sm-drop-icon"><Icon name="file" size={26} /></span><strong>Drop to import through SmartMail Core</strong><span>Select one .xlsx master list or a .zip bundle containing exactly one master list and its related documents.</span></div></div>}
+      {dragging && <div className="sm-drop-overlay" aria-hidden="true"><div className="sm-drop-card"><span className="sm-drop-icon"><Icon name="file" size={26} /></span><strong>Drop to recognize with SmartMail Core</strong><span>Core classifies .docx, .xlsx and .csv sources from their structure first. You review and revise the types, then import only the approved set.</span></div></div>}
     </div>
     <input ref={fileInput} type="file" multiple accept=".xlsx,.zip,.docx,.pdf,.csv" hidden onChange={(event) => { void ingest(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
+    <dialog ref={reviewDialog} aria-label="Review recognized sources" className="sm-recog" onClose={() => setReview(null)} onClick={(event) => { if (event.target === event.currentTarget && !busy) setReview(null); }}>
+      {review && <div className="sm-recog-inner" role="document">
+        <div className="sm-recog-top">
+          <div>
+            <span>DETERMINISTIC RECOGNITION</span>
+            <h2>{review.rows.length} source{review.rows.length === 1 ? "" : "s"} recognized</h2>
+            <p>Core classified every file from its structure and discourse, not its extension. Revise a type or toggle inclusion; uncertain imports stay blocked.</p>
+          </div>
+          <button aria-label="Cancel recognition review" disabled={busy} onClick={() => setReview(null)}><Icon name="close" size={19} /></button>
+        </div>
+        {review.relations.length > 0 && <div className="sm-recog-relations">
+          {review.relations.map((relation, index) => <div key={index} className="sm-recog-relation">
+            <Icon name="branch" size={14} />
+            <span><strong>{relation.relation === "exact_duplicate" ? "Exact duplicate" : "Near-duplicate / version"}</strong>
+              {": "}{relation.a.split("/").pop()} ↔ {relation.b.split("/").pop()}
+              {relation.relation === "near_duplicate" && ` · ${Math.round((relation.containment ?? relation.similarity) * 100)}% shared content`}
+              {" — both retained, nothing is merged automatically."}</span>
+          </div>)}
+        </div>}
+        <div className="sm-recog-rows">
+          {review.rows.map((row) => {
+            const option = typeOption(row.type);
+            const revised = row.type !== row.result.type;
+            const tone = confidenceTone(row.result.confidence);
+            const summary = identitySummary({ ...row.result, type: row.type });
+            const evidence = row.result.reasons[0] ?? "No supporting structural evidence; held for operator review.";
+            return <article key={row.name} className={`sm-recog-row ${row.included ? "is-included" : "is-excluded"}`}>
+              <label className="sm-recog-check" title={row.included ? "Exclude from this import" : "Include in this import"}>
+                <input type="checkbox" checked={row.included} disabled={busy} onChange={() => toggleRow(row.name)} />
+              </label>
+              <span className={`sm-recog-type-icon ${row.included ? "" : "is-off"}`}><Icon name={option.icon} size={17} /></span>
+              <div className="sm-recog-copy">
+                <strong title={row.name}>{row.name}{revised && <b className="sm-revised-tag">Revised</b>}</strong>
+                <small>{summary ? `${summary} · ` : ""}{Math.max(1, Math.round(row.file.size / 1024))} KB</small>
+                <em title={[...row.result.reasons, ...row.result.cautions].join("\n")}>{evidence}{row.result.cautions.length > 0 ? ` · ${row.result.cautions.length} caution${row.result.cautions.length === 1 ? "" : "s"}` : ""}</em>
+              </div>
+              <span className={`sm-recog-confidence ${tone}`} title={[...row.result.reasons, ...row.result.cautions].join("\n")}>
+                <i className={`sm-dot ${tone === "ready" ? "ready" : ""}`} />{row.result.confidence}
+              </span>
+              <select aria-label={`Revise recognized type for ${row.name}`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.name, event.target.value as RecognitionTypeId)}>
+                <optgroup label="Creates outreach work">
+                  {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </optgroup>
+                <optgroup label="Reference / unresolved">
+                  {recognitionTypeOptions.filter((item) => !item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                </optgroup>
+              </select>
+            </article>;
+          })}
+        </div>
+        <div className="sm-recog-footer">
+          <div className="sm-recog-foot-note">
+            {importability.ok
+              ? <><Icon name="check" size={15} /><span>{includedCount} of {review.rows.length} source{review.rows.length === 1 ? "" : "s"} will import. Reference material stays out unless you include it.</span></>
+              : <><Icon name="warning" size={15} /><ul>{importability.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></>}
+          </div>
+          <div className="sm-recog-actions">
+            <button className="sm-recog-cancel" disabled={busy} onClick={() => setReview(null)}>Cancel</button>
+            <button className="primary" disabled={busy || !importability.ok} onClick={() => void confirmReviewImport()}>{busy ? "Importing…" : `Import ${includedCount} source${includedCount === 1 ? "" : "s"}`}</button>
+          </div>
+        </div>
+      </div>}
+    </dialog>
     <dialog ref={inspector} aria-label="Source evidence inspector" className="sm-detail" onClick={(event) => { if (event.target === event.currentTarget) { inspector.current?.close(); setInspection(null); } }}><div className="sm-detail-inner"><div className="sm-detail-top"><span>RETAINED EVIDENCE</span><button aria-label="Close inspector" onClick={() => { inspector.current?.close(); setInspection(null); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name="link" size={27} /></div><h2>{inspection?.title}</h2><p>{inspection?.detail}</p><pre>{JSON.stringify(inspection?.evidence, null, 2)}</pre><div className="sm-detail-note"><Icon name="shield" size={17} />Core remains authoritative for supported associations and readiness.</div><button className="primary full" onClick={() => { inspector.current?.close(); setInspection(null); }}>Done</button></div></dialog>
     <dialog ref={taskDialog} aria-label="Resolved task inspector" className="sm-detail sm-task-detail" onClick={(event) => { if (event.target === event.currentTarget) { taskDialog.current?.close(); setSelectedTask(null); } }}>{selectedTask && (() => { const preparation = selectedTask.preparations.find((item) => item.status !== "superseded"); return <div className="sm-detail-inner"><div className="sm-detail-top"><span>OUTREACH TASK · {preparation?.ready ? "READY" : "IN PREPARATION"}</span><button aria-label="Close task inspector" onClick={() => { taskDialog.current?.close(); setSelectedTask(null); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name={preparation ? "file" : "user"} size={27} /></div><h2>{selectedTask.task.supervisor.name}</h2><p>{currentStudent?.name} → {selectedTask.task.supervisor.name} · {selectedTask.task.institution.name}</p><div className="sm-detail-fields"><div><span>Campaign</span><strong>{data?.campaign?.name}</strong></div><div><span>Recipient address</span><strong>{selectedTask.task.supervisor.addresses.join(", ") || "Missing — no usable address recorded"}</strong></div><div><span>Active Preparation</span><strong>{preparation ? `${preparation.source.name} · ${preparation.subject || "subject required"}` : "No supported draft associated"}</strong></div><div><span>Mailbox identity</span><strong>{selectedTask.task.mailbox.address}</strong></div><div><span>Task exceptions</span><strong>{selectedTask.task.exceptions.map((item) => human(item.code)).join(", ") || "None"}</strong></div><div><span>Readiness findings</span><strong>{preparation?.readiness_findings.map((item) => human(item.code)).join(", ") || "None"}</strong></div></div><div className="sm-detail-note"><Icon name="shield" size={17} />Corrections and attachment confirmation continue in Readiness review.</div><button className="primary full" onClick={() => { taskDialog.current?.close(); setSelectedTask(null); window.location.hash = "#review"; }}>Open readiness review</button></div>; })()}</dialog>
   </AppShell>;

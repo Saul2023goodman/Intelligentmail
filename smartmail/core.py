@@ -53,7 +53,8 @@ class SmartMail(
         self._db.row_factory = sqlite3.Row
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.execute(
-            "CREATE TABLE IF NOT EXISTS campaigns (id TEXT PRIMARY KEY, name TEXT NOT NULL)"
+            "CREATE TABLE IF NOT EXISTS campaigns ("
+            "id TEXT PRIMARY KEY, name TEXT NOT NULL, student_id TEXT REFERENCES students(id))"
         )
         self._db.commit()
         self._db.executescript(Path(__file__).with_name("schema.sql").read_text(encoding="utf-8"))
@@ -61,6 +62,12 @@ class SmartMail(
 
     def _migrate(self) -> None:
         """Keep an existing local store usable as the versioned Preparation schema grows."""
+        campaign_columns = {row["name"] for row in self._db.execute("PRAGMA table_info(campaigns)")}
+        if "student_id" not in campaign_columns:
+            self._db.execute(
+                "ALTER TABLE campaigns ADD COLUMN student_id TEXT REFERENCES students(id)")
+            self._link_students_to_campaigns()
+            self._db.commit()
         columns = {row["name"] for row in self._db.execute("PRAGMA table_info(preparations)")}
         if "superseded_by" not in columns:
             self._db.execute(
@@ -91,6 +98,26 @@ class SmartMail(
                 self._db.execute(f"ALTER TABLE {table} ADD COLUMN {definition}")
                 self._db.commit()
         self._recover_unfinished_execution()
+
+    def _link_students_to_campaigns(self) -> None:
+        """Recover the Student-to-Campaign link a store recorded only by name.
+
+        Earlier sessions established one Campaign per Student but persisted no
+        relationship, so the link is recovered once, and only where the intent is
+        unambiguous: exactly one unlinked Campaign and exactly one Student share the
+        name. Name matching is never used again after this migration.
+        """
+        unlinked: dict[str, list[str]] = {}
+        for row in self._db.execute("SELECT id, name FROM campaigns"):
+            unlinked.setdefault(row["name"], []).append(row["id"])
+        owners: dict[str, list[str]] = {}
+        for row in self._db.execute("SELECT id, name FROM students"):
+            owners.setdefault(row["name"], []).append(row["id"])
+        for name, campaign_ids in unlinked.items():
+            student_ids = owners.get(name, [])
+            if len(campaign_ids) == 1 and len(student_ids) == 1:
+                self._db.execute("UPDATE campaigns SET student_id = ? WHERE id = ?",
+                                 (student_ids[0], campaign_ids[0]))
 
     def _instant(self) -> datetime:
         """The store's controlled instant, always timezone-aware."""

@@ -71,6 +71,8 @@ export type MailboxSummary = {
   student_id: string;
   student_name: string;
   address: string;
+  /** The Student's own Campaign; one Student owns exactly one Campaign. */
+  campaign_id: string;
   observation_count: number;
   message_count: number;
   latest: null | {

@@ -73,18 +73,33 @@ test("Core rejects HTTP failures and network failures", async (t) => {
   await assert.rejects(core("workspace", {}), /Network unavailable/);
 });
 
-test("browser intake transports selected bytes through the allowlisted command", async (t) => {
+test("browser intake transports approved selections through the allowlisted command", async (t) => {
   t.mock.method(globalThis, "fetch", async (_url, options) => {
     const request = JSON.parse(options.body);
     assert.equal(request.command, "intake_import");
     assert.equal(request.campaign_id, "campaign-1");
     assert.equal(request.student_id, "student-1");
-    assert.deepEqual(request.files, [{ name: "master.xlsx", content: "AQID" }]);
+    assert.deepEqual(request.files, [
+      { name: "master.xlsx", content: "AQID" },
+      { name: "notes.docx", content: "AQID", type: "planning_document" },
+    ]);
     return Response.json({ result: { import: {}, preparation: {}, workspace: {} } });
   });
-  await importSources(
-    "campaign-1",
-    "student-1",
-    [new File([new Uint8Array([1, 2, 3])], "master.xlsx")],
-  );
+  const file = new File([new Uint8Array([1, 2, 3])], "master.xlsx");
+  const notes = new File([new Uint8Array([1, 2, 3])], "notes.docx");
+  await importSources("campaign-1", "student-1", [
+    { file },
+    { file: notes, type: "planning_document" },
+  ]);
+});
+
+test("recognition review calls a read-only command without campaign scope", async (t) => {
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.command, "intake_recognize");
+    assert.deepEqual(request.files, [{ name: "Ping Tan.docx", content: "AQID" }]);
+    return Response.json({ result: { sources: [], relations: [] } });
+  });
+  const { recognizeSources } = await import("../src/core/index.ts");
+  await recognizeSources([new File([new Uint8Array([1, 2, 3])], "Ping Tan.docx")]);
 });

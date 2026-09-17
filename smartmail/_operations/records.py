@@ -16,14 +16,15 @@ class RecordsOperations:
     """Campaigns, Students, Outreach Tasks and preserved Source Material."""
 
     def create_campaign(self, name: str) -> dict:
+        """Create a standalone Campaign; a Student's own Campaign is established with them."""
         campaign = {"id": str(uuid4()), "name": name.strip()}
         if not campaign["name"]:
             raise SmartMailError("Campaign name is required")
         with self._db:
             self._db.execute(
-                "INSERT INTO campaigns VALUES (:id, :name)", campaign
+                "INSERT INTO campaigns (id, name) VALUES (:id, :name)", campaign
             )
-        return campaign
+        return self.get_campaign(campaign["id"])
 
     def list_campaigns(self) -> list[dict]:
         return [dict(row) for row in self._db.execute("SELECT * FROM campaigns ORDER BY rowid")]
@@ -37,6 +38,11 @@ class RecordsOperations:
         return dict(row)
 
     def create_student(self, name: str, mailbox_address: str) -> dict:
+        """Register the Student, their Mailbox and their Campaign as one relationship.
+
+        One Student owns exactly one Campaign. The link is persisted here and never
+        re-derived by matching a Campaign name against a Student name.
+        """
         name = name.strip()
         address = email_address(mailbox_address)
         if not name or not address:
@@ -46,28 +52,45 @@ class RecordsOperations:
         if existing:
             if existing["name"] != name:
                 raise SmartMailError(f"Mailbox already belongs to Student {existing['id']}; select that Student or resolve ownership")
-            return dict(existing)
+            if not self._student_campaign_id(existing["id"]):
+                # A Student registered before the relationship was persisted.
+                with self._db:
+                    self._db.execute(
+                        "INSERT INTO campaigns (id, name, student_id) VALUES (?, ?, ?)",
+                        (str(uuid4()), existing["name"], existing["id"]))
+            return self.get_student(existing["id"])
         student_id = str(uuid4())
         with self._db:
-            self._db.execute("INSERT INTO students VALUES (?, ?)", (student_id, name.strip()))
+            self._db.execute("INSERT INTO students VALUES (?, ?)", (student_id, name))
             self._db.execute("INSERT INTO mailboxes VALUES (?, ?, ?)",
                              (str(uuid4()), student_id, address))
+            self._db.execute("INSERT INTO campaigns (id, name, student_id) VALUES (?, ?, ?)",
+                             (str(uuid4()), name, student_id))
         return self.get_student(student_id)
 
+    def _student_campaign_id(self, student_id: str) -> str:
+        row = self._db.execute(
+            "SELECT id FROM campaigns WHERE student_id = ?", (student_id,)).fetchone()
+        return row["id"] if row else ""
+
     def list_students(self) -> list[dict]:
-        return [dict(r) for r in self._db.execute("SELECT * FROM students ORDER BY rowid")]
+        return [dict(r) for r in self._db.execute(
+            "SELECT s.*, COALESCE(c.id, '') AS campaign_id FROM students s "
+            "LEFT JOIN campaigns c ON c.student_id = s.id ORDER BY s.rowid")]
 
     def list_mailboxes(self) -> list[dict]:
-        """Registered Student mailboxes, available before any Campaign intake."""
+        """Registered Student mailboxes with the Student's Campaign, before any intake."""
         return [dict(row) for row in self._db.execute(
-            "SELECT m.id, m.student_id, m.address, s.name AS student_name "
-            "FROM mailboxes m JOIN students s ON s.id = m.student_id ORDER BY m.rowid")]
+            "SELECT m.id, m.student_id, m.address, s.name AS student_name, "
+            "COALESCE(c.id, '') AS campaign_id FROM mailboxes m "
+            "JOIN students s ON s.id = m.student_id "
+            "LEFT JOIN campaigns c ON c.student_id = s.id ORDER BY m.rowid")]
 
     def get_student(self, student_id: str) -> dict:
         row = self._db.execute("SELECT * FROM students WHERE id = ?", (student_id,)).fetchone()
         if row is None:
             raise SmartMailError(f"Student not found: {student_id}")
-        return dict(row)
+        return {**dict(row), "campaign_id": self._student_campaign_id(student_id)}
 
     def import_master(self, campaign_id: str, student_id: str, path: Path) -> dict:
         self.get_campaign(campaign_id)

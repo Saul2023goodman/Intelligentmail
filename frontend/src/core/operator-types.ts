@@ -1,8 +1,8 @@
 import type { DuplicateCheck, FullPreparation } from "./records-types";
 import type { Campaign, StudentWorkspace, Task } from "./types";
 import type { Confirmation } from "./execution-types";
+import type { SourceRecognitionAnnotation } from "./recognition-types";
 
-export type IntakeStudent = Omit<StudentWorkspace, "campaign_id">;
 export type IntakeSource = {
   id: string;
   name: string;
@@ -39,11 +39,12 @@ export type IntakeTask = {
 };
 export type IntakeWorkspace = {
   campaigns: Campaign[];
-  students: IntakeStudent[];
+  students: StudentWorkspace[];
   campaign: Campaign | null;
   student: { id: string; name: string } | null;
   imports: IntakeImport[];
   source_categories: Record<string, string>;
+  source_recognition: Record<string, SourceRecognitionAnnotation>;
   tasks: IntakeTask[];
 };
 export type IntakeImportResult = {

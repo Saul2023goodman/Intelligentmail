@@ -34,8 +34,13 @@ with `python -m smartmail`.
 | `extensions/netease163/` | Manifest, connection popup, worker and isolated mailbox scripts |
 
 The existing `intake.py`, `documents.py` and `identity.py` implement deterministic
-parsing and normalization. `mailbox.py` provides stable imports for the external
-adapter interface and its disabled, controlled and dedicated extension implementations.
+parsing and normalization. `recognition.py` classifies an arbitrary
+`.docx`/`.xlsx`/`.csv`/`.zip` source before import from structural, register and
+discourse evidence (letter moves, CV role, workflow/program headers, timeline
+schemas, batch envelopes), returning typed, confidence-rated reasons, identities,
+bundle segments and duplicate/version relations instead of trusting extensions or
+file names. `mailbox.py` provides stable imports for the external adapter interface
+and its disabled, controlled and dedicated extension implementations.
 `schema.sql` remains alongside `core.py`. The extension bridge has separate transport
 storage; it does not initialize or recover the business store. See the
 [extension migration guide](browser-extension-pivot.md) for installation and protocol rules.

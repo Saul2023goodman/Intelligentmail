@@ -12,11 +12,16 @@ import type {
   IntakeWorkspace,
   ReviewWorkspace,
 } from "./operator-types";
+import type {
+  RecognitionCollection,
+  RecognitionTypeId,
+} from "./recognition-types";
 export type * from "./types";
 export type * from "./execution-types";
 export type * from "./mailbox-types";
 export type * from "./records-types";
 export type * from "./operator-types";
+export type * from "./recognition-types";
 
 /** The allowlist mirrors smartmail/ui.py. Core owns all domain decisions. */
 type Commands = {
@@ -24,11 +29,15 @@ type Commands = {
     args: { campaign_id?: string; student_id?: string };
     result: IntakeWorkspace;
   };
+  intake_recognize: {
+    args: { files: { name: string; content: string }[] };
+    result: RecognitionCollection;
+  };
   intake_import: {
     args: {
       campaign_id: string;
       student_id: string;
-      files: { name: string; content: string }[];
+      files: { name: string; content: string; type?: RecognitionTypeId }[];
     };
     result: IntakeImportResult;
   };
@@ -141,16 +150,30 @@ async function fileContent(file: File) {
   return btoa(binary);
 }
 
+export async function recognizeSources(files: File[]) {
+  return core("intake_recognize", {
+    files: await Promise.all(
+      files.map(async (file) => ({ name: file.name, content: await fileContent(file) })),
+    ),
+  });
+}
+
+export type ImportSelection = { file: File; type?: RecognitionTypeId };
+
 export async function importSources(
   campaignId: string,
   studentId: string,
-  files: File[],
+  selections: ImportSelection[],
 ) {
   return core("intake_import", {
     campaign_id: campaignId,
     student_id: studentId,
     files: await Promise.all(
-      files.map(async (file) => ({ name: file.name, content: await fileContent(file) })),
+      selections.map(async ({ file, type }) => ({
+        name: file.name,
+        content: await fileContent(file),
+        ...(type ? { type } : {}),
+      })),
     ),
   });
 }

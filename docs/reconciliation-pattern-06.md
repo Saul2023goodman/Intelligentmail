@@ -30,24 +30,39 @@ and its message rows are discarded.
 
 After the extension has connected, refresh performs only these actions:
 
-1. Confirm the authenticated account matches the intended Mailbox.
-2. Discover the five recognized built-in folders from the visible DOM: Inbox,
-   Drafts, Sent, Deleted and Spam.
-3. Enumerate canonical message IDs in bounded pages and read header, MIME-part and
-   attachment metadata for each ID.
-4. Return direction, folder, canonical ID, counterpart, subject, observed time,
-   mailbox status, list evidence and metadata-detail evidence.
+1. Confirm the authenticated account matches the intended Mailbox through the
+   official webmail runtime (`$S('uid')`), with a DOM-based fallback.
+2. Discover the five recognized built-in folders through `mbox:getAllFolders`:
+   Inbox, Drafts, Sent, Deleted and Spam.
+3. Enumerate canonical message IDs in bounded pages (200 rows per page) through
+   `mbox:listMessages`.
+4. Read every envelope through `mbox:readMessage` **without `markRead`** — header,
+   MIME-part and attachment metadata — and fetch the full text/html MIME parts
+   through the read-only `mbox:getMessageData` GET endpoint (GBK/GB2312 decoded).
+5. For drafts, load the native Compose model through `mbox:restoreDraft`, which
+   carries To/Cc/Bcc, HTML/plain body, attachments and cloud links so imported
+   drafts can be revised and re-sent. Locked drafts stay envelope-only and are
+   never auto-unlocked.
+6. Return direction, folder, canonical ID, counterpart, subject, observed time,
+   mailbox status, RFC `Message-ID`/threading headers, participants, full body
+   text/HTML, attachment descriptors (with on-demand `download_path`), the draft
+   Compose model where applicable, and raw list/detail evidence.
 
-The extension never opens Compose during observation, fetches message-body HTML,
-edits a draft, sends, schedules, deletes, cancels or recalls. Draft, Deleted and
-Spam rows remain explicit non-delivery states. Sent is established only by positive
-platform metadata; otherwise the row is `ambiguous`.
+The observation drives the official `$.DataAction` runtime in the page's MAIN
+world; pages without that runtime transparently fall back to the ISOLATED
+metadata-only observer. The extension never marks a message read, opens Compose,
+edits or unlocks a draft, sends, schedules, deletes, cancels or recalls during
+observation. Attachment bytes are not embedded in the observation; the recorded
+`download_path` locates them on demand. Draft, Deleted and Spam rows remain
+explicit non-delivery states. Sent is established only by positive platform
+metadata; otherwise the row is `ambiguous`.
 
-Each folder retains its reported total, enumerated-ID count, page and detail
-attempts, failures and completeness. Supported-scope completeness is separate from
-whole-mailbox completeness: custom folders, virtual views and bodies are outside
-the declared scope. A missing local match therefore remains qualified by the
-available Evidence Coverage.
+Each folder retains its reported total, enumerated-ID count, page, detail,
+content and draft-restore attempts, failures and completeness. Supported-scope
+completeness is separate from whole-mailbox completeness: custom folders,
+virtual views and attachment bytes are outside the declared scope, and each
+folder is bounded at 5,000 rows. A missing local match therefore remains
+qualified by the available Evidence Coverage.
 
 ## Persistence and Reconciliation
 
