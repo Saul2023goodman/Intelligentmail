@@ -418,6 +418,7 @@ export default function ExecutionPage() {
           <NavigationItem route="review" />
           <NavigationItem route="execution" active />
           <NavigationItem route="mailbox" />
+          <NavigationItem route="records" />
           <div className="rail-spacer" />
         </>
       }

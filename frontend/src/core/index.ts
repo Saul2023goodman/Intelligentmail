@@ -6,9 +6,11 @@ import type {
   ReviewRequest,
   ReviewResult,
 } from "./execution-types";
+import type { RecordsTaskDetail, RecordsWorkspace } from "./records-types";
 export type * from "./types";
 export type * from "./execution-types";
 export type * from "./mailbox-types";
+export type * from "./records-types";
 
 /** The allowlist mirrors smartmail/ui.py. Core owns all domain decisions. */
 type Commands = {
@@ -50,6 +52,11 @@ type Commands = {
     result: { finding: string };
   };
   mailbox_history: { args: { student_id: string }; result: MailboxHistory };
+  records_workspace: {
+    args: { campaign_id: string };
+    result: RecordsWorkspace;
+  };
+  records_task: { args: { task_id: string }; result: RecordsTaskDetail };
   refresh_mailbox: {
     args: { student_id: string };
     result: {

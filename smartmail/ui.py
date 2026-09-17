@@ -13,12 +13,17 @@ from .errors import SmartMailError
 from .mailbox import NetEase163ExtensionMailbox
 from .execution_ui import dispatch_execution
 from .mailbox_ui import mailbox_workspace
+from .records_ui import mailbox_summaries, records_workspace, records_task
 
 
 def dispatch(core, request):
     command = request.get("command")
     if command == "mailbox_workspace":
         return mailbox_workspace(core, request["campaign_id"], request["student_id"])
+    if command == "records_workspace":
+        return records_workspace(core, request["campaign_id"])
+    if command == "records_task":
+        return records_task(core, request["task_id"])
     if isinstance(command, str) and command.startswith("execution_"):
         return dispatch_execution(core, request)
     if command == "workspace":
@@ -83,19 +88,6 @@ def rewrite_sources(core, task_id):
             if imported["student_id"] == task["student_id"]
             for source in core.get_import(imported["id"])["sources"]
             if source["name"].lower().endswith(".docx")]
-
-
-def mailbox_summaries(core):
-    summaries = []
-    for mailbox in core.list_mailboxes():
-        observations = core.list_mailbox_observations(mailbox["student_id"])
-        latest = observations[-1] if observations else None
-        summaries.append({**mailbox, "observation_count": len(observations),
-                          "message_count": sum(len(run["messages"]) for run in observations),
-                          "latest": {key: latest[key] for key in (
-                              "id", "status", "observed_at", "detail", "evidence_coverage")}
-                          if latest else None})
-    return summaries
 
 
 def main():
