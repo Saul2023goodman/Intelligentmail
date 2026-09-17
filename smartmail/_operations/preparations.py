@@ -220,6 +220,14 @@ class PreparationOperations:
             self._record_finding(
                 preparation_id, "identity_conflict",
                 "The associated Outreach Task has an unresolved Supervisor identity conflict")
+        if preparation["action_kind"] == "initial" and self._db.execute(
+                "SELECT 1 FROM exceptions WHERE task_id = ? "
+                "AND code = 'prior_outreach_conflict' AND blocking = 1",
+                (preparation["task_id"],)).fetchone():
+            self._record_finding(
+                preparation_id, "prior_outreach_conflict",
+                "The Outreach Task has unresolved evidence that initial outreach was already "
+                "sent; resolve the import conflict before new initial outreach")
 
     def set_subject(self, preparation_id: str, subject: str) -> dict:
         """Record an explicit operator subject as the field's Authoritative Source."""

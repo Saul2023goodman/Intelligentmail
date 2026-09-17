@@ -40,6 +40,12 @@ $imported = .\.venv\Scripts\python -m smartmail import 'C:\path\sample.zip' --ca
 
 To select existing records after restarting, use `campaign list` and `student list`, then pass their IDs explicitly to `import`. Campaign selection is never inferred from a filename, directory or previous command. Registering the same Student name and Mailbox again returns that existing Student; a conflicting owner is rejected.
 
+`import` is idempotent and reports every master row as `new`, `reused` or `duplicate` plus a `summary` (`new`/`reused`/`duplicate` rows, `conflicts`, `new_sources`). Importing the exact same file again returns `duplicate: true` with the original import id and stores nothing twice; a revision bundle preserves only its new member bytes. A duplicate row inside one workbook (same Supervisor, no new evidence) becomes a non-blocking `duplicate_import_row` Exception. If the Campaign already has a recorded initial send, or the Student's Mailbox observes a prior outbound sent message to a known Supervisor address, the Task gets a blocking `prior_outreach_conflict` Exception; resolve reviewed evidence explicitly after inspection (linked Follow-up Actions stay ready):
+
+```powershell
+.\.venv\Scripts\python -m smartmail task resolve-prior-outreach TASK_ID
+```
+
 `imports show` lists original filenames, Source Material IDs, sizes and SHA-256 hashes. Open a preserved material using its ID:
 
 ```powershell
