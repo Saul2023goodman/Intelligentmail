@@ -42,13 +42,16 @@ Linked Follow-up Actions are excluded from initial-outreach duplication. A Prepa
 ## Reconciliation before execution
 
 `execution run` re-checks duplicates for each Confirmation after authorization and before creating an Execution Attempt:
-
 - a `duplicate_suspicion` or `ambiguous_match` finding **pauses the current Execution Flow** with the finding as its reason and submits nothing;
 - a batch stops at the affected action, keeping already executed attempts;
 - `execution status --campaign` reports the pause, and a later `execution run` refuses while the flow is paused;
 - No Duplicate Found proceeds, including when coverage is incomplete.
 
 Existing behaviour is unchanged: Repeat Execution, changed content and new readiness blockers are still refused by the authorization guard rather than paused.
+
+## Import-time prior-outreach conflicts
+
+The same evidence rules run while importing master lists, before any Preparation exists. A same-Campaign initial Sent Record or a matched outbound `sent` Mailbox Observation records a blocking `prior_outreach_conflict` Exception on the imported Task. It blocks new `initial` Preparations (linked Follow-up Actions stay ready) and is resolved explicitly with `task resolve-prior-outreach TASK_ID`. Repeat imports and duplicate rows inside one workbook are handled idempotently; see [Supported Intake Pattern 01](intake-pattern-01.md).
 
 ## Controlled fixtures
 

@@ -87,6 +87,8 @@ def dispatch(core, args):
             result = core.list_tasks(args.campaign)
         elif args.action == "show":
             result = core.get_task(args.id)
+        elif args.action == "resolve-prior-outreach":
+            result = core.resolve_prior_outreach(args.id)
         else:
             result = core.confirm_task_identity(args.id)
     elif args.command == "exceptions":

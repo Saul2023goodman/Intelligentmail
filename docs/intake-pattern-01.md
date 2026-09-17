@@ -25,11 +25,34 @@ Aliases are narrowly equivalent labels for the observed fields, including omissi
 
 ## Identity and evidence
 
-An Outreach Task has unique Student × Supervisor × Campaign identity. Different Students or Campaigns produce separate tasks even when they share a Supervisor. Every successful import retains new source evidence; repeating an import reuses tasks when identity is established.
+An Outreach Task has unique Student × Supervisor × Campaign identity. Different Students or Campaigns produce separate tasks even when they share a Supervisor. Repeating an import is idempotent: tasks, Source Materials and Source Associations are reused rather than duplicated when identity is established.
+
+### Repeat imports and idempotency
+
+Every import returns a per-row report with an outcome and a summary. Row outcomes:
+
+| Outcome | Meaning |
+| --- | --- |
+| `new` | The row created a new Outreach Task. |
+| `reused` | The row attached to an existing Task through reliable identity or source-record continuity. |
+| `duplicate` | Another row in this same workbook already resolved to the same Task with no new evidence; one Task is retained and both rows remain associated as evidence. A non-blocking `duplicate_import_row` Exception names both row coordinates. |
+
+- Identical Source Material bytes are stored once per Campaign × Student. Importing the exact same file again reports `duplicate: true`, returns the original import id, creates no second import, Source or association, and reports every row as `reused`.
+- A revision bundle whose master bytes are unchanged but whose other members are new remains a new import: the master rows are reused, while only the genuinely new member bytes are preserved. This keeps revised draft documents available for Rewrite without duplicating master evidence.
+- A repeat of the exact same workbook bytes, worksheet and source row reuses that recorded Supervisor identity even when the row remains unresolved, across Students and Campaigns. This is source-record continuity, not a name-based identity guess.
+- Re-importing changed information that matches a reliably identified Supervisor is reported in the row's `changes`: `profile_added` fills a previously empty profile, `address_added` records an additional known Supervisor address, and `address_absent_in_row` retains the recorded address instead of raising `invalid_recipient`. Routine enrichment never creates an Exception; non-blocking duplicate rows and blocking identity/recipient findings stay explicit. Task Exceptions are recorded once per condition, so repeat imports never duplicate them.
+
+### Prior outreach conflicts at import
+
+Import also checks the same deterministic duplicate evidence as [Pattern 07](duplicate-pattern-07.md): a same-Campaign immutable Sent Record of initial outreach, or an outbound `sent` Mailbox Observation in the Student's own Mailbox to a known Supervisor address (excluding ambiguous observations and unresolved identities), produces a blocking `prior_outreach_conflict` Exception on the Task. Cross-Campaign Sent Records alone do not conflict; a later student-wide Mailbox observation surfaces the conflict in every affected Campaign.
+
+The Blocker prevents confirmation of new `initial` Preparations; linked Follow-up Actions remain ready and report `linked_follow_up`. The operator resolves reviewed evidence explicitly:
+
+```powershell
+python -m smartmail task resolve-prior-outreach TASK_ID
+```
 
 Supervisor matches require a compatible name and exact trimmed Institution plus a shared recorded email address or the same explicitly supplied Supervisor profile URL. Name comparison ignores letter case, repeated whitespace and leading Dr/Prof/Professor titles. Profile comparison normalizes scheme/host case and a trailing slash/empty fragment; it does not follow redirects, fetch websites or infer equivalence between different profile URLs. Contradictory nonempty profiles prevent address-based merging. Later reliable profile evidence is retained for subsequent matching.
-
-A repeat of the exact same workbook bytes, worksheet and source row reuses that recorded Supervisor identity even when the row remains unresolved. This is source-record continuity, not a name-based identity guess.
 
 Same-name/same-Institution candidates without reliable shared evidence remain separate. Shared addresses or profiles with conflicting identities are also surfaced. `identity_ambiguity` Blockers identify candidate Supervisor IDs and are attached to all affected existing tasks, across Students and Campaigns. No automatic merging of multiple candidates is performed. Resolution commands belong to subsequent correction/readiness work.
 

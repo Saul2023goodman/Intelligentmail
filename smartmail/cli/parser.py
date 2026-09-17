@@ -87,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
     tasks.add_parser("list").add_argument("--campaign", required=True)
     tasks.add_parser("show").add_argument("id")
     tasks.add_parser("confirm-identity", help="Confirm a Task's Supervisor identity").add_argument("id")
+    tasks.add_parser("resolve-prior-outreach",
+                     help="Resolve a Task's import-time prior-outreach conflict").add_argument("id")
 
     exceptions = commands.add_parser("exceptions", help="List and inspect blocking Exceptions").add_subparsers(dest="action", required=True)
     exceptions.add_parser("list").add_argument("--campaign", required=True)
