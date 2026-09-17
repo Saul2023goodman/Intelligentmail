@@ -222,7 +222,11 @@ export type Correction = { field: string; value: string; prior: string };
 export type AttachmentSlot = {
   id: string;
   label: string;
-  attachment: SentAttachment | null;
+  declared?: string;
+  basis: string;
+  suggested_source_id: string | null;
+  candidates: { id: string; name: string; sha256: string }[];
+  attachment: { id: string; name: string; sha256: string; size: number } | null;
   [key: string]: unknown;
 };
 

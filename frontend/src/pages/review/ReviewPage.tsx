@@ -1,811 +1,186 @@
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AppShell, NavigationItem, Topbar } from "../../app/shell";
+import { navigate } from "../../app/routes";
+import { core, human, type ReviewRow, type ReviewWorkspace, type Workspace } from "../../core";
 import Icon from "../../shared/Icon";
-import type { IconName } from "../../shared/Icon";
 import "./Review.css";
 
 type Tone = "blocked" | "attention" | "ready";
-const preparations: {
-  name: string;
-  institution: string;
-  topic: string;
-  status: Tone;
-  note: string;
-}[] = [
-  {
-    name: "Dr. Eleanor Morgan",
-    institution: "University of Cambridge",
-    topic: "Human-centered machine learning",
-    status: "blocked",
-    note: "Recipient conflict",
-  },
-  {
-    name: "Prof. Daniel Kim",
-    institution: "Imperial College London",
-    topic: "Trustworthy artificial intelligence",
-    status: "attention",
-    note: "Attachment to review",
-  },
-  {
-    name: "Dr. Sofia Andersson",
-    institution: "University of Edinburgh",
-    topic: "Responsible natural language processing",
-    status: "ready",
-    note: "Checks passed",
-  },
-  {
-    name: "Prof. James Chen",
-    institution: "University of Oxford",
-    topic: "Interpretable machine learning",
-    status: "ready",
-    note: "Checks passed",
-  },
-  {
-    name: "Dr. Olivia Patel",
-    institution: "University College London",
-    topic: "Human–AI collaboration",
-    status: "ready",
-    note: "Checks passed",
-  },
-];
-const statusLabel = {
-  blocked: "Blocked",
-  attention: "Needs review",
-  ready: "Ready",
-};
-function Signal({
-  tone,
-  children,
-}: {
-  tone: Tone;
-  children?: React.ReactNode;
-}) {
-  return (
-    <span className={`rv-signal ${tone}`}>
-      <Icon
-        name={
-          tone === "ready" ? "check" : tone === "blocked" ? "stop" : "warning"
-        }
-        size={13}
-      />
-      {children}
-    </span>
-  );
+type Focus = "recipient" | "subject" | "attachment" | "duplicate" | "source" | "exception";
+
+function relevantExceptions(row: ReviewRow) {
+  return row.task.exceptions.filter((exception) =>
+    row.preparation.action_kind !== "follow_up" || exception.code !== "prior_outreach_conflict");
 }
+
+function toneOf(row: ReviewRow): Tone {
+  if (row.preparation.readiness_findings.some((finding) => finding.blocking)) return "blocked";
+  if (relevantExceptions(row).some((exception) => exception.blocking)) return "blocked";
+  if (row.preparation.attachment_slots.some((slot) => !slot.attachment)) return "attention";
+  return "ready";
+}
+
+function initials(name: string) {
+  return name.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join("").toUpperCase();
+}
+
+function Signal({ tone, children }: { tone: Tone; children?: React.ReactNode }) {
+  return <span className={`rv-signal ${tone}`}><Icon name={tone === "ready" ? "check" : tone === "blocked" ? "stop" : "warning"} size={13} />{children}</span>;
+}
+
 export default function ReviewPage() {
-  const [selected, setSelected] = useState(0);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [data, setData] = useState<ReviewWorkspace | null>(null);
+  const [campaign, setCampaign] = useState("");
+  const [selectedId, setSelectedId] = useState("");
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
-  const [resolved, setResolved] = useState(false);
-  const [attachmentChecked, setAttachmentChecked] = useState(false);
-  const [focus, setFocus] = useState("recipient");
+  const [focus, setFocus] = useState<Focus>("source");
   const [panel, setPanel] = useState("message");
   const [mobile, setMobile] = useState("message");
-  const [reviewed, setReviewed] = useState<number[]>([]);
+  const [reviewed, setReviewed] = useState<string[]>([]);
+  const [subject, setSubject] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
-  const item = preparations[selected];
-  const tone: Tone =
-    selected === 0 && resolved
-      ? "ready"
-      : selected === 1 && attachmentChecked
-        ? "ready"
-        : item.status;
-  const address =
-    selected === 0
-      ? "e.morgan@cam.ac.uk"
-      : `${item.name.split(" ").at(-1)?.toLowerCase()}@university.ac.uk`;
-  const currentAddress =
-    selected === 0 && !resolved ? "eleanor.morgan@cambridge.org" : address;
-  const entries = preparations
-    .map((p, i) => ({
-      ...p,
-      id: i,
-      status:
-        (i === 0 && resolved) || (i === 1 && attachmentChecked)
-          ? ("ready" as Tone)
-          : p.status,
-    }))
-    .filter(
-      (p) =>
-        (filter === "all" || p.status === filter) &&
-        `${p.name} ${p.institution}`
-          .toLowerCase()
-          .includes(query.toLowerCase()),
-    );
-  function choose(id: number) {
-    setSelected(id);
-    setFocus(id === 0 ? "recipient" : id === 1 ? "attachment" : "source");
+
+  const load = useCallback(async (scope?: string) => {
+    setLoading(true);
+    setError("");
+    try {
+      const nextWorkspace = await core("workspace", scope ? { campaign_id: scope } : {});
+      const id = scope || nextWorkspace.report?.campaign.id || nextWorkspace.campaigns[0]?.id || "";
+      const next = id ? await core("review_workspace", { campaign_id: id }) : null;
+      setWorkspace(nextWorkspace);
+      setCampaign(id);
+      setData(next);
+      setSelectedId((current) => next?.rows.some((row) => row.preparation.id === current)
+        ? current : next?.rows[0]?.preparation.id || "");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Unable to load readiness workbench");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    // Initial synchronization with the long-lived local Core worker.
+    // oxlint-disable-next-line react/set-state-in-effect
+    void load();
+  }, [load]);
+  const row = data?.rows.find((item) => item.preparation.id === selectedId) ?? null;
+  useEffect(() => {
+    // Reset the editable field when the operator selects a different Preparation.
+    // oxlint-disable-next-line react/set-state-in-effect
+    setSubject(row?.preparation.subject ?? "");
+  }, [row?.preparation.id, row?.preparation.subject]);
+
+  const entries = useMemo(() => (data?.rows ?? []).filter((item) => {
+    const tone = toneOf(item);
+    return (filter === "all" || tone === filter)
+      && `${item.task.supervisor.name} ${item.task.institution.name} ${item.preparation.subject}`
+        .toLowerCase().includes(query.toLowerCase());
+  }), [data, filter, query]);
+  const ready = (data?.rows ?? []).filter((item) => toneOf(item) === "ready").length;
+  const tone = row ? toneOf(row) : "blocked";
+  const blocking = row?.preparation.readiness_findings.filter((finding) => finding.blocking) ?? [];
+  const taskExceptions = row ? relevantExceptions(row) : [];
+  const taskBlocking = taskExceptions.filter((exception) => exception.blocking);
+  const blockerCount = blocking.length + taskBlocking.length;
+  const slot = row?.preparation.attachment_slots.find((item) => !item.attachment)
+    ?? row?.preparation.attachment_slots[0] ?? null;
+  const recordedRecipient = row?.task.supervisor.addresses[0] ?? "";
+
+  async function mutate(action: () => Promise<unknown>, message: string) {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await action();
+      await load(campaign);
+      setNotice(message);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Core rejected the change");
+    } finally { setBusy(false); }
+  }
+
+  function choose(item: ReviewRow) {
+    setSelectedId(item.preparation.id);
+    const first = item.preparation.readiness_findings[0]?.code;
+    setFocus(first === "recipient_conflict" || first === "invalid_recipient" ? "recipient"
+      : first === "missing_subject" ? "subject"
+        : item.preparation.attachment_slots.some((attachment) => !attachment.attachment) ? "attachment" : "source");
     setNotice("");
   }
-  function inspect(field: string) {
-    setFocus(field);
-    setMobile("checks");
-  }
-  const sources: {
-    icon: IconName;
-    title: string;
-    detail: string;
-    color: string;
-  }[] = [
-    {
-      icon: "file",
-      title: "Outreach draft.docx",
-      detail: "Message · paragraph 1–4",
-      color: "blue",
-    },
-    {
-      icon: "source",
-      title: "Supervisor shortlist.xlsx",
-      detail: `Supervisor record · row ${selected + 12}`,
-      color: "green",
-    },
-    {
-      icon: "file",
-      title: "Alex_Lin_CV.pdf",
-      detail: "Student CV · 248 KB",
-      color: "purple",
-    },
-  ];
-  return (
-    <AppShell
-      className="review-page"
-      navigation={
-        <>
-          <NavigationItem route="workflow" />
-          <NavigationItem route="sources" />
-          <NavigationItem route="review" active />
-          <NavigationItem route="execution" />
-          <NavigationItem route="mailbox" />
-          <NavigationItem route="records" />
-          <div className="rail-spacer" />
-        </>
-      }
-    >
-      <div className="workspace">
-        <Topbar breadcrumb="Review" homeHref="#workflow">
-          <span className="rv-campaign">Autumn 2026 · PhD outreach</span>
-          <span className="rv-demo">
-            <span /> SAMPLE WORKSPACE
-          </span>
-        </Topbar>
-        <div className="rv-heading">
-          <div>
-            <div className="rv-eyebrow">PREPARE WITH CONFIDENCE</div>
-            <h1>
-              Readiness workbench<span>Review</span>
-            </h1>
-            <p>
-              Every detail, backed by evidence. Resolve what matters before
-              moving on.
-            </p>
-          </div>
-          <div className="rv-heading-count">
-            <strong>
-              {
-                preparations.filter(
-                  (_, i) =>
-                    i > 1 ||
-                    (i === 0 && resolved) ||
-                    (i === 1 && attachmentChecked),
-                ).length
-              }
-              <span> / 5</span>
-            </strong>
-            <span>preparations ready</span>
-          </div>
-        </div>
-        <div className="rv-mobile-tabs" aria-label="Workbench panels">
-          {["queue", "message", "checks"].map((tab) => (
-            <button
-              key={tab}
-              className={mobile === tab ? "active" : ""}
-              onClick={() => setMobile(tab)}
-            >
-              {tab === "queue"
-                ? "Preparations"
-                : tab === "message"
-                  ? "Message"
-                  : "Readiness"}
-            </button>
-          ))}
-        </div>
-        <main className={`rv-layout rv-show-${mobile}`}>
-          <aside
-            className="rv-left"
-            aria-label="Preparations and source materials"
-          >
-            <section className="rv-card rv-queue">
-              <div className="rv-section-title">
-                <h2>Review queue</h2>
-                <span className="rv-counter">05</span>
-              </div>
-              <div className="rv-search">
-                <Icon name="search" size={16} />
-                <input
-                  aria-label="Search preparations"
-                  placeholder="Find a supervisor…"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                />
-              </div>
-              <div className="rv-filters">
-                {["all", "blocked", "attention"].map((f) => (
-                  <button
-                    key={f}
-                    className={filter === f ? "active" : ""}
-                    onClick={() => setFilter(f)}
-                  >
-                    {f === "all"
-                      ? "All 5"
-                      : f === "blocked"
-                        ? "Blocked"
-                        : "Needs review"}
-                  </button>
-                ))}
-              </div>
-              <div className="rv-queue-list">
-                {entries.map((p) => (
-                  <button
-                    className={`rv-task ${selected === p.id ? "selected" : ""}`}
-                    key={p.id}
-                    onClick={() => choose(p.id)}
-                  >
-                    <div className={`rv-initials ${p.status}`}>
-                      {p.name
-                        .split(" ")
-                        .slice(1)
-                        .map((s) => s[0])
-                        .join("")}
-                    </div>
-                    <div>
-                      <strong>{p.name}</strong>
-                      <small>{p.institution}</small>
-                      <span className={`rv-task-note ${p.status}`}>
-                        <Signal tone={p.status} />
-                        {reviewed.includes(p.id)
-                          ? "Review complete"
-                          : p.status === "ready"
-                            ? "Checks passed"
-                            : p.note}
-                      </span>
-                    </div>
-                    {selected === p.id && <span className="rv-selection-dot" />}
-                  </button>
-                ))}
-                {entries.length === 0 && (
-                  <p className="rv-empty">
-                    No preparations match your filters.
-                  </p>
-                )}
-              </div>
-              <div className="rv-queue-foot">
-                <Icon name="user" size={14} />
-                Student: <strong>Alex Lin</strong>
-              </div>
-            </section>
-            <section className="rv-card rv-sources">
-              <div className="rv-section-title">
-                <h2>Source materials</h2>
-                <span className="rv-counter">3</span>
-              </div>
-              {sources.map((s, i) => (
-                <button
-                  key={s.title}
-                  className={`rv-source ${focus === (i === 2 ? "attachment" : "source") ? "selected" : ""}`}
-                  onClick={() => {
-                    setFocus(i === 2 ? "attachment" : "source");
-                    setPanel(i === 0 ? "message" : "evidence");
-                    setMobile("message");
-                  }}
-                >
-                  <span className={`rv-file-icon ${s.color}`}>
-                    <Icon name={s.icon} size={19} />
-                  </span>
-                  <span>
-                    <strong>{s.title}</strong>
-                    <small>{s.detail}</small>
-                  </span>
-                  <Icon name="chevron" size={13} />
-                </button>
-              ))}
-              <p className="rv-source-hint">
-                <Icon name="link" size={13} />
-                Select a source to inspect its evidence.
-              </p>
-            </section>
-            <div className="rv-legend">
-              <span>
-                <i className="blocked" />
-                Blocker
-              </span>
-              <span>
-                <i className="attention" />
-                Review
-              </span>
-              <span>
-                <i className="ready" />
-                Verified
-              </span>
-            </div>
-          </aside>
-          <section className="rv-center" aria-label="Preparation preview">
-            <div className="rv-preview-toolbar">
-              <div className="rv-view-tabs">
-                <button
-                  className={panel === "message" ? "active" : ""}
-                  onClick={() => setPanel("message")}
-                >
-                  <Icon name="mail" size={15} />
-                  Message preview
-                </button>
-                <button
-                  className={panel === "evidence" ? "active" : ""}
-                  onClick={() => setPanel("evidence")}
-                >
-                  Source evidence
-                </button>
-              </div>
-              <span>PREP-{String(selected + 1).padStart(3, "0")} · v1</span>
-            </div>
-            <div className="rv-document-scroll">
-              <div className={`rv-status-banner ${tone}`}>
-                <Signal tone={tone} />
-                <div>
-                  <strong>
-                    {tone === "blocked"
-                      ? "Hold for review — recipient conflict"
-                      : tone === "attention"
-                        ? "One detail needs your attention"
-                        : "Preparation checks passed"}
-                  </strong>
-                  <p>
-                    {tone === "blocked"
-                      ? "The draft recipient differs from the associated supervisor record."
-                      : tone === "attention"
-                        ? "Check the suggested CV against the message before proceeding."
-                        : "No unresolved blockers. Sending requires separate confirmation."}
-                  </p>
-                </div>
-              </div>
-              {panel === "message" ? (
-                <article className="rv-paper">
-                  <div className="rv-paper-heading">
-                    <span className="rv-mail-icon">
-                      <Icon name="mail" size={24} />
-                    </span>
-                    <div>
-                      <span className="rv-eyebrow">INITIAL OUTREACH</span>
-                      <h2>PhD inquiry · Autumn 2026</h2>
-                    </div>
-                    <span className="rv-local-label">LOCAL PREPARATION</span>
-                  </div>
-                  <dl className="rv-envelope">
-                    <div>
-                      <dt>From</dt>
-                      <dd>
-                        Alex Lin <span>&lt;alex.lin@163.com&gt;</span>
-                        <Signal tone="ready" />
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>To</dt>
-                      <dd>
-                        <button
-                          className={`rv-highlight ${tone === "blocked" ? "blocked" : "ready"} ${focus === "recipient" ? "focused" : ""}`}
-                          onClick={() => inspect("recipient")}
-                        >
-                          {currentAddress}
-                          <Icon
-                            name={tone === "blocked" ? "warning" : "check"}
-                            size={14}
-                          />
-                        </button>
-                      </dd>
-                    </div>
-                    <div>
-                      <dt>Subject</dt>
-                      <dd>Prospective PhD student — {item.topic}</dd>
-                    </div>
-                  </dl>
-                  <div className="rv-message-body">
-                    <p>Dear {item.name},</p>
-                    <p>
-                      My name is Alex Lin, and I am writing to express my
-                      interest in pursuing a PhD under your supervision at{" "}
-                      <button
-                        className={`rv-inline blue ${focus === "source" ? "focused" : ""}`}
-                        onClick={() => inspect("source")}
-                      >
-                        {item.institution}
-                        <Icon name="link" size={12} />
-                      </button>
-                      .
-                    </p>
-                    <p>
-                      My research focuses on{" "}
-                      <button
-                        className="rv-inline blue"
-                        onClick={() => inspect("source")}
-                      >
-                        {item.topic.toLowerCase()}
-                        <Icon name="link" size={12} />
-                      </button>
-                      . I am particularly interested in how we can develop
-                      systems that are both technically robust and useful to the
-                      people who rely on them.
-                    </p>
-                    <p>
-                      During my master's studies, I explored evaluation methods
-                      for machine learning models and developed a strong
-                      foundation in experimental research. I would welcome the
-                      opportunity to contribute to your group's work.
-                    </p>
-                    <p>
-                      I have attached{" "}
-                      <button
-                        className={`rv-inline ${selected === 1 && !attachmentChecked ? "attention" : "ready"}`}
-                        onClick={() => inspect("attachment")}
-                      >
-                        my CV for your consideration
-                        <Icon name="clip" size={12} />
-                      </button>
-                      . Are you considering new PhD students for Autumn 2026?
-                    </p>
-                    <p>Thank you for your time and consideration.</p>
-                    <p>
-                      Best regards,
-                      <br />
-                      <strong>Alex Lin</strong>
-                      <br />
-                      <span className="rv-muted">MSc Computer Science</span>
-                    </p>
-                  </div>
-                  <button
-                    className="rv-attachment"
-                    onClick={() => inspect("attachment")}
-                  >
-                    <span className="rv-file-icon purple">
-                      <Icon name="file" size={19} />
-                    </span>
-                    <span>
-                      <strong>Alex_Lin_CV.pdf</strong>
-                      <small>
-                        248 KB ·{" "}
-                        {selected === 1 && !attachmentChecked
-                          ? "Suggested association"
-                          : "Associated source material"}
-                      </small>
-                    </span>
-                    <Signal
-                      tone={
-                        selected === 1 && !attachmentChecked
-                          ? "attention"
-                          : "ready"
-                      }
-                    />
-                  </button>
-                  <div className="rv-paper-foot">
-                    <Icon name="shield" size={13} />
-                    Source highlights are review annotations and are not part of
-                    the message.
-                  </div>
-                </article>
-              ) : (
-                <article className="rv-paper rv-evidence">
-                  <div className="rv-eyebrow">SOURCE EVIDENCE · SAMPLE</div>
-                  <h2>
-                    {focus === "attachment"
-                      ? "Alex_Lin_CV.pdf"
-                      : "Supervisor shortlist.xlsx"}
-                  </h2>
-                  <p>Associated with {item.name} · Alex Lin</p>
-                  <dl>
-                    <dt>Supervisor</dt>
-                    <dd>{item.name}</dd>
-                    <dt>Institution</dt>
-                    <dd>{item.institution}</dd>
-                    <dt>Recorded recipient</dt>
-                    <dd>{address}</dd>
-                    <dt>Research area</dt>
-                    <dd>{item.topic}</dd>
-                    <dt>Student CV</dt>
-                    <dd>Alex Lin · MSc Computer Science · 248 KB</dd>
-                  </dl>
-                  <div className="rv-evidence-note">
-                    This prototype shows illustrative source excerpts. Original
-                    file contents are not loaded.
-                  </div>
-                  <button
-                    className="rv-secondary"
-                    onClick={() => setPanel("message")}
-                  >
-                    <Icon name="reply" size={15} />
-                    Back to message
-                  </button>
-                </article>
-              )}
-            </div>
-            <div className="rv-action-bar">
-              <div>
-                <Signal tone={tone} />
-                <span>
-                  {reviewed.includes(selected)
-                    ? "Review recorded locally"
-                    : tone === "blocked"
-                      ? "Resolve blocker to finish review"
-                      : "Ready for your review"}
-                </span>
-              </div>
-              <button
-                className="rv-primary"
-                disabled={tone !== "ready" || reviewed.includes(selected)}
-                onClick={() => {
-                  setReviewed([...reviewed, selected]);
-                  setNotice(
-                    "Review recorded for this sample preparation. No sending confirmation was created.",
-                  );
-                }}
-              >
-                <Icon name="check" size={16} />
-                {reviewed.includes(selected) ? "Reviewed" : "Mark reviewed"}
-              </button>
-            </div>
-          </section>
-          <aside className="rv-right" aria-label="Readiness checks">
-            <section className="rv-card rv-readiness">
-              <div className="rv-section-title">
-                <h2>
-                  <Icon name="shield" size={17} />
-                  Readiness overview
-                </h2>
-                <Signal tone={tone}>{statusLabel[tone]}</Signal>
-              </div>
-              <div className="rv-score">
-                <strong>
-                  {tone === "ready" ? "6" : "5"}
-                  <span>/ 6</span>
-                </strong>
-                <div>
-                  <b>checks passed</b>
-                  <p>
-                    {tone === "blocked"
-                      ? "1 blocker requires resolution"
-                      : tone === "attention"
-                        ? "1 item needs review"
-                        : "All preparation checks complete"}
-                  </p>
-                </div>
-              </div>
-              <div className="rv-segments">
-                {Array.from({ length: 6 }, (_, i) => (
-                  <span key={i} className={i === 5 ? tone : "ready"} />
-                ))}
-              </div>
-              <p className="rv-readiness-note">
-                Readiness is separate from sending confirmation.
-              </p>
-            </section>
-            <section className="rv-card rv-finding">
-              <div className="rv-section-title">
-                <h2>
-                  {focus === "recipient"
-                    ? "Recipient evidence"
-                    : focus === "attachment"
-                      ? "Attachment review"
-                      : focus === "duplicate"
-                        ? "Duplicate evidence"
-                        : "Source association"}
-                </h2>
-                <Icon name="link" size={16} />
-              </div>
-              {focus === "recipient" ? (
-                <>
-                  <div className="rv-compare">
-                    <div>
-                      <span>IN PREPARATION</span>
-                      <strong
-                        className={tone === "blocked" ? "rv-red-text" : ""}
-                      >
-                        {currentAddress}
-                      </strong>
-                      <small>Outreach draft.docx</small>
-                    </div>
-                    <Icon name="arrow" size={17} />
-                    <div>
-                      <span>SUPERVISOR RECORD</span>
-                      <strong>{address}</strong>
-                      <small>Shortlist · row {selected + 12}</small>
-                    </div>
-                  </div>
-                  {tone === "blocked" ? (
-                    <div className="rv-resolution blocked">
-                      <strong>
-                        <Icon name="warning" size={15} />
-                        Resolve the recipient mismatch
-                      </strong>
-                      <p>
-                        Compare the sources and explicitly choose the recorded
-                        address for this sample preparation.
-                      </p>
-                      <button
-                        className="rv-primary"
-                        onClick={() => {
-                          setResolved(true);
-                          setNotice(
-                            "Sample recipient corrected and checks refreshed. Previous confirmation would be invalidated.",
-                          );
-                        }}
-                      >
-                        Use recorded recipient
-                        <Icon name="arrow" size={14} />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="rv-resolution ready">
-                      <Signal tone="ready" />
-                      Recipient matches the associated record.
-                    </div>
-                  )}
-                </>
-              ) : focus === "attachment" ? (
-                <div className="rv-detail">
-                  <span className="rv-file-icon purple">
-                    <Icon name="file" />
-                  </span>
-                  <h3>Alex_Lin_CV.pdf</h3>
-                  <p>
-                    Student: Alex Lin · 248 KB
-                    <br />
-                    Suggested by the CV reference in the message.
-                  </p>
-                  <button
-                    className="rv-secondary"
-                    onClick={() => {
-                      setPanel("evidence");
-                      setMobile("message");
-                    }}
-                  >
-                    Inspect source excerpt
-                    <Icon name="arrow" size={14} />
-                  </button>
-                  {selected === 1 && !attachmentChecked && (
-                    <button
-                      className="rv-primary"
-                      onClick={() => {
-                        setAttachmentChecked(true);
-                        setNotice("CV association checked in this sample.");
-                      }}
-                    >
-                      Confirm sample association
-                    </button>
-                  )}
-                </div>
-              ) : focus === "duplicate" ? (
-                <div className="rv-detail">
-                  <Signal tone="ready">No Duplicate Found</Signal>
-                  <p>No matching prior send in the sample evidence coverage.</p>
-                  <dl>
-                    <dt>Campaign records</dt>
-                    <dd>Autumn 2026 · 12 records</dd>
-                    <dt>Mailbox observation</dt>
-                    <dd>1–17 Sep 2026 · outbound only</dd>
-                  </dl>
-                  <p>
-                    Earlier mailbox history is not covered. This is not proof
-                    that no prior send exists.
-                  </p>
-                </div>
-              ) : (
-                <div className="rv-detail">
-                  <Signal tone="ready">Explicit source association</Signal>
-                  <p>
-                    {item.name} and {item.institution} match the supervisor
-                    record in row {selected + 12}.
-                  </p>
-                  <button
-                    className="rv-secondary"
-                    onClick={() => {
-                      setPanel("evidence");
-                      setMobile("message");
-                    }}
-                  >
-                    Inspect source excerpt
-                    <Icon name="arrow" size={14} />
-                  </button>
-                </div>
-              )}
-            </section>
-            <section className="rv-card rv-checks">
-              <div className="rv-section-title">
-                <h2>Preparation checklist</h2>
-                <span className="rv-counter">6</span>
-              </div>
-              {[
-                {
-                  label: "Student & mailbox",
-                  detail: "Alex Lin · identity matched",
-                  field: "source",
-                  tone: "ready" as Tone,
-                },
-                {
-                  label: "Recipient",
-                  detail:
-                    tone === "blocked"
-                      ? "Conflicting source values"
-                      : "Matches supervisor record",
-                  field: "recipient",
-                  tone:
-                    tone === "blocked"
-                      ? ("blocked" as Tone)
-                      : ("ready" as Tone),
-                },
-                {
-                  label: "Subject & body",
-                  detail: "Required content present",
-                  field: "source",
-                  tone: "ready" as Tone,
-                },
-                {
-                  label: "Source associations",
-                  detail: "3 materials linked",
-                  field: "source",
-                  tone: "ready" as Tone,
-                },
-                {
-                  label: "Attachments",
-                  detail:
-                    selected === 1 && !attachmentChecked
-                      ? "CV association needs review"
-                      : "CV association checked",
-                  field: "attachment",
-                  tone:
-                    selected === 1 && !attachmentChecked
-                      ? ("attention" as Tone)
-                      : ("ready" as Tone),
-                },
-                {
-                  label: "Duplicate check",
-                  detail: "No match in covered evidence",
-                  field: "duplicate",
-                  tone: "ready" as Tone,
-                },
-              ].map((c) => (
-                <button
-                  className={`rv-check ${c.tone} ${focus === c.field ? "focused" : ""}`}
-                  key={c.label}
-                  onClick={() => setFocus(c.field)}
-                >
-                  <Signal tone={c.tone} />
-                  <span>
-                    <strong>{c.label}</strong>
-                    <small>{c.detail}</small>
-                  </span>
-                  <Icon name="chevron" size={13} />
-                </button>
-              ))}
-            </section>
-            <div className="rv-guidance">
-              <Icon name="book" size={19} />
-              <div>
-                <strong>Your review, grounded in evidence</strong>
-                <p>
-                  Select a highlighted field or a check to trace it back to its
-                  source.
-                </p>
-              </div>
-            </div>
-          </aside>
-        </main>
-        <footer className="rv-footer">
-          <span>
-            <i />
-            Local prototype · sample data · changes reset on navigation
-          </span>
-          <span role="status">
-            {notice || "Review only · no external actions"}
-          </span>
-        </footer>
+
+  return <AppShell className="review-page" navigation={<>
+    <NavigationItem route="workflow" /><NavigationItem route="sources" />
+    <NavigationItem route="review" active /><NavigationItem route="execution" />
+    <NavigationItem route="mailbox" /><NavigationItem route="records" /><div className="rail-spacer" />
+  </>}>
+    <div className="workspace">
+      <Topbar breadcrumb="Review" homeHref="#workflow">
+        <label className="rv-campaign">Campaign <select value={campaign} disabled={busy} onChange={(event) => void load(event.target.value)}>
+          {workspace?.campaigns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+        </select></label>
+        <span className="rv-demo"><span /> CORE WORKSPACE</span>
+      </Topbar>
+      <div className="rv-heading"><div><div className="rv-eyebrow">PREPARE WITH CONFIDENCE</div><h1>Readiness workbench<span>Review</span></h1><p>Inspect Core evidence and resolve blockers before separate sending confirmation.</p></div>
+        <div className="rv-heading-count"><strong>{ready}<span> / {data?.rows.length ?? 0}</span></strong><span>preparations ready</span></div>
       </div>
-    </AppShell>
-  );
+      <div className="rv-mobile-tabs" aria-label="Workbench panels">{["queue", "message", "checks"].map((tab) => <button key={tab} className={mobile === tab ? "active" : ""} onClick={() => setMobile(tab)}>{tab === "queue" ? "Preparations" : tab === "message" ? "Message" : "Readiness"}</button>)}</div>
+      {error && <div className="rv-status-banner blocked" role="alert"><Signal tone="blocked" /><div><strong>{error}</strong><p>Nothing was treated as successful.</p></div></div>}
+      <main className={`rv-layout rv-show-${mobile}`}>
+        <aside className="rv-left" aria-label="Preparations and source materials">
+          <section className="rv-card rv-queue"><div className="rv-section-title"><h2>Review queue</h2><span className="rv-counter">{String(data?.rows.length ?? 0).padStart(2, "0")}</span></div>
+            <div className="rv-search"><Icon name="search" size={16} /><input aria-label="Search preparations" placeholder="Find a supervisor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
+            <div className="rv-filters">{["all", "blocked", "attention"].map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value === "all" ? `All ${data?.rows.length ?? 0}` : value === "blocked" ? "Blocked" : "Needs review"}</button>)}</div>
+            <div className="rv-queue-list">{entries.map((item) => { const itemTone = toneOf(item); return <button className={`rv-task ${selectedId === item.preparation.id ? "selected" : ""}`} key={item.preparation.id} onClick={() => choose(item)}>
+              <div className={`rv-initials ${itemTone}`}>{initials(item.task.supervisor.name)}</div><div><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name}</small><span className={`rv-task-note ${itemTone}`}><Signal tone={itemTone} />{reviewed.includes(item.preparation.id) ? "Review complete" : itemTone === "ready" ? "Checks passed" : itemTone === "blocked" ? "Blocking finding" : "Attachment to review"}</span></div>{selectedId === item.preparation.id && <span className="rv-selection-dot" />}
+            </button>; })}{!loading && entries.length === 0 && <p className="rv-empty">{data?.rows.length ? "No preparations match your filters." : "Import and prepare supported source materials first."}</p>}</div>
+            <div className="rv-queue-foot"><Icon name="user" size={14} />{row ? <>Student: <strong>{row.task.student.name}</strong></> : "No preparation selected"}</div>
+          </section>
+          <section className="rv-card rv-sources"><div className="rv-section-title"><h2>Source materials</h2><span className="rv-counter">{row?.sources.length ?? 0}</span></div>
+            {row?.sources.map((source) => <button key={source.id} className={`rv-source ${focus === "source" ? "selected" : ""}`} onClick={() => { setFocus("source"); setPanel("evidence"); setMobile("message"); }}><span className="rv-file-icon blue"><Icon name="file" size={19} /></span><span><strong>{source.name}</strong><small>{source.sheet ? `${source.sheet} · row ${source.row}` : `${Math.round(source.size / 1024)} KB`}</small></span><Icon name="chevron" size={13} /></button>)}
+          </section>
+          <div className="rv-legend"><span><i className="blocked" />Blocker</span><span><i className="attention" />Review</span><span><i className="ready" />Verified</span></div>
+        </aside>
+
+        <section className="rv-center" aria-label="Preparation preview">
+          <div className="rv-preview-toolbar"><div className="rv-view-tabs"><button className={panel === "message" ? "active" : ""} onClick={() => setPanel("message")}><Icon name="mail" size={15} />Message preview</button><button className={panel === "evidence" ? "active" : ""} onClick={() => setPanel("evidence")}>Source evidence</button></div><span>{row ? row.preparation.id.slice(0, 12) : "NO PREPARATION"}</span></div>
+          <div className="rv-document-scroll">{row ? <>
+            <div className={`rv-status-banner ${tone}`}><Signal tone={tone} /><div><strong>{tone === "blocked" ? "Hold for review — Core reports a blocker" : tone === "attention" ? "Attachment association needs attention" : "Preparation checks passed"}</strong><p>{tone === "ready" ? "No unresolved blockers. Sending still requires separate Confirmation." : blocking[0]?.detail || taskBlocking[0]?.detail || "Review the advisory attachment association."}</p></div></div>
+            {panel === "message" ? <article className="rv-paper"><div className="rv-paper-heading"><span className="rv-mail-icon"><Icon name="mail" size={24} /></span><div><span className="rv-eyebrow">{human(row.preparation.action_kind).toUpperCase()}</span><h2>{row.preparation.subject || "Subject required"}</h2></div><span className="rv-local-label">LOCAL PREPARATION</span></div>
+              <dl className="rv-envelope"><div><dt>From</dt><dd>{row.task.student.name} <span>&lt;{row.preparation.sender}&gt;</span></dd></div><div><dt>To</dt><dd><button className={`rv-highlight ${blocking.some((item) => item.code.includes("recipient")) ? "blocked" : "ready"} ${focus === "recipient" ? "focused" : ""}`} onClick={() => { setFocus("recipient"); setMobile("checks"); }}>{row.preparation.recipient}<Icon name={blocking.some((item) => item.code.includes("recipient")) ? "warning" : "check"} size={14} /></button></dd></div><div><dt>Subject</dt><dd><button className={`rv-inline ${row.preparation.subject ? "blue" : "attention"}`} onClick={() => { setFocus("subject"); setMobile("checks"); }}>{row.preparation.subject || "Add an authoritative subject"}</button></dd></div></dl>
+              <div className="rv-message-body">{row.preparation.body.split(/\n{2,}/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
+              {row.preparation.attachment_slots.map((attachment) => <button className="rv-attachment" key={attachment.id} onClick={() => { setFocus("attachment"); setMobile("checks"); }}><span className="rv-file-icon purple"><Icon name="file" size={19} /></span><span><strong>{attachment.attachment?.name || attachment.candidates?.[0]?.name || attachment.label}</strong><small>{attachment.attachment ? `${attachment.attachment.size} bytes · confirmed snapshot` : "Advisory association — operator confirmation required"}</small></span><Signal tone={attachment.attachment ? "ready" : "attention"} /></button>)}
+              <div className="rv-paper-foot"><Icon name="shield" size={13} />This is retained local content; no external mailbox draft was created.</div>
+            </article> : <article className="rv-paper rv-evidence"><div className="rv-eyebrow">RETAINED SOURCE EVIDENCE</div><h2>{row.preparation.source.name}</h2><p>Associated with {row.task.supervisor.name} · {row.task.student.name}</p><dl><dt>Institution</dt><dd>{row.task.institution.name}</dd><dt>Recorded recipient</dt><dd>{recordedRecipient || "No usable address recorded"}</dd><dt>Source digest</dt><dd>{row.preparation.source.sha256}</dd><dt>Association</dt><dd><pre>{JSON.stringify(row.preparation.association, null, 2)}</pre></dd></dl><button className="rv-secondary" onClick={() => setPanel("message")}><Icon name="reply" size={15} />Back to message</button></article>}
+          </> : <div className="rv-paper rv-evidence"><h2>{loading ? "Loading Core preparations…" : "No prepared communication actions"}</h2><p>Use Source mapping to import a supported bundle and create local Preparations.</p></div>}</div>
+          <div className="rv-action-bar"><div><Signal tone={tone} /><span>{notice || (row ? tone === "blocked" ? "Resolve blockers to finish review" : "Ready for operator review" : "Waiting for a Preparation")}</span></div><button className="rv-primary" disabled={!row || tone !== "ready" || reviewed.includes(selectedId)} onClick={() => { setReviewed((items) => [...items, selectedId]); setNotice("Review marked complete in this operator session. No Confirmation was created."); }}><Icon name="check" size={16} />{reviewed.includes(selectedId) ? "Reviewed" : "Mark reviewed"}</button></div>
+        </section>
+
+        <aside className="rv-right" aria-label="Readiness checks">
+          <section className="rv-card rv-readiness"><div className="rv-section-title"><h2><Icon name="shield" size={17} />Readiness overview</h2><Signal tone={tone}>{tone === "ready" ? "Ready" : tone === "attention" ? "Needs review" : "Blocked"}</Signal></div><div className="rv-score"><strong>{row ? Math.max(0, 6 - blockerCount) : 0}<span>/ 6</span></strong><div><b>checks passed</b><p>{blockerCount ? `${blockerCount} blocker${blockerCount === 1 ? "" : "s"} require resolution` : tone === "attention" ? "Confirm attachment evidence" : "All Core readiness checks complete"}</p></div></div><p className="rv-readiness-note">Readiness is separate from sending Confirmation.</p></section>
+          <section className="rv-card rv-finding"><div className="rv-section-title"><h2>{focus === "recipient" ? "Recipient evidence" : focus === "subject" ? "Subject correction" : focus === "attachment" ? "Attachment review" : focus === "duplicate" ? "Duplicate evidence" : focus === "exception" ? "Task exception" : "Source association"}</h2><Icon name="link" size={16} /></div>
+            {!row ? <p>Select a Preparation.</p> : focus === "recipient" ? <div className="rv-detail"><div className="rv-compare"><div><span>IN PREPARATION</span><strong>{row.preparation.recipient}</strong><small>{row.preparation.source.name}</small></div><Icon name="arrow" size={17} /><div><span>SUPERVISOR RECORD</span><strong>{recordedRecipient || "Missing"}</strong><small>Retained source association</small></div></div>{recordedRecipient && row.preparation.recipient !== recordedRecipient && <button className="rv-primary" disabled={busy} onClick={() => void mutate(() => core("update_preparation", { preparation_id: row.preparation.id, subject: row.preparation.subject, recipient: recordedRecipient }), "Recipient corrected and readiness recomputed. Any prior Confirmation was invalidated.")}>Use recorded recipient <Icon name="arrow" size={14} /></button>}</div>
+              : focus === "subject" ? <form className="rv-detail" onSubmit={(event) => { event.preventDefault(); void mutate(() => core("update_preparation", { preparation_id: row.preparation.id, subject, recipient: row.preparation.recipient }), "Subject updated and readiness recomputed."); }}><label>Authoritative subject<input value={subject} onChange={(event) => setSubject(event.target.value)} /></label><button className="rv-primary" disabled={busy || !subject.trim() || subject === row.preparation.subject}>Save subject</button></form>
+                : focus === "attachment" ? <div className="rv-detail">{slot ? <><h3>{slot.attachment?.name || slot.label}</h3><p>{slot.basis}</p>{slot.attachment ? <Signal tone="ready">Confirmed snapshot</Signal> : slot.suggested_source_id ? <button className="rv-primary" disabled={busy} onClick={() => void mutate(() => core("confirm_attachment", { preparation_id: row.preparation.id, slot_id: slot.id }), "Attachment bytes snapshotted and associated with this Preparation.")}>Confirm suggested file</button> : <>{slot.candidates?.map((candidate) => <button className="rv-secondary" key={candidate.id} disabled={busy} onClick={() => void mutate(() => core("set_attachment_source", { preparation_id: row.preparation.id, slot_id: slot.id, source_id: candidate.id }), `Associated ${candidate.name}.`)}>{candidate.name}</button>)}{!slot.candidates?.length && <p>No single preserved Source Material is available for this slot.</p>}</>}</> : <p>No attachment declaration in this Preparation.</p>}</div>
+                  : focus === "duplicate" ? <div className="rv-detail">{row.duplicate_check ? <><Signal tone={row.duplicate_check.finding === "no_duplicate_found" ? "ready" : "blocked"}>{human(row.duplicate_check.finding)}</Signal><p>{row.duplicate_check.detail}</p><pre>{JSON.stringify(row.duplicate_check.evidence_coverage, null, 2)}</pre></> : <p>No Duplicate Check has been recorded for this Preparation.</p>}<button className="rv-secondary" disabled={busy} onClick={() => void mutate(() => core("check_duplicate", { preparation_id: row.preparation.id }), "Duplicate evidence refreshed from retained records and mailbox coverage.")}>Run duplicate check</button></div>
+                    : focus === "exception" ? <div className="rv-detail">{taskExceptions.length ? taskExceptions.map((exception) => <div key={exception.id}><h3>{human(exception.code)}</h3><p>{exception.detail}</p>{(exception.code === "identity_ambiguity" || exception.code === "prior_outreach_conflict") && <button className="rv-primary" disabled={busy} onClick={() => void mutate(() => core("resolve_review_exception", { task_id: row.task.id, code: exception.code as "identity_ambiguity" | "prior_outreach_conflict" }), `Resolved ${human(exception.code)} after explicit operator review.`)}>Resolve after review</button>}</div>) : <Signal tone="ready">No unresolved Task exceptions for this action</Signal>}</div>
+                      : <div className="rv-detail"><Signal tone="ready">Explicit source association</Signal><p>{row.task.supervisor.name} and {row.task.institution.name} are linked through retained import evidence.</p><button className="rv-secondary" onClick={() => { setPanel("evidence"); setMobile("message"); }}>Inspect retained evidence <Icon name="arrow" size={14} /></button></div>}
+          </section>
+          <section className="rv-card rv-checks"><div className="rv-section-title"><h2>Preparation checklist</h2><span className="rv-counter">6</span></div>{row && [
+            { label: "Student & mailbox", detail: `${row.task.student.name} · ${row.preparation.sender}`, field: "source" as Focus, tone: "ready" as Tone },
+            { label: "Recipient", detail: blocking.some((item) => item.code.includes("recipient")) ? "Correction required" : "Usable recipient", field: "recipient" as Focus, tone: blocking.some((item) => item.code.includes("recipient")) ? "blocked" as Tone : "ready" as Tone },
+            { label: "Subject & body", detail: row.preparation.subject ? "Required content present" : "Authoritative subject missing", field: "subject" as Focus, tone: row.preparation.subject ? "ready" as Tone : "blocked" as Tone },
+            { label: "Task exceptions", detail: taskExceptions.length ? `${taskExceptions.length} relevant` : "None unresolved", field: "exception" as Focus, tone: taskExceptions.some((item) => item.blocking) ? "blocked" as Tone : "ready" as Tone },
+            { label: "Attachments", detail: slot?.attachment ? "Snapshot confirmed" : slot ? "Association needs review" : "None declared", field: "attachment" as Focus, tone: slot && !slot.attachment ? "attention" as Tone : "ready" as Tone },
+            { label: "Duplicate check", detail: row.duplicate_check ? human(row.duplicate_check.finding) : "Not checked", field: "duplicate" as Focus, tone: !row.duplicate_check || row.duplicate_check.review_required ? "attention" as Tone : "ready" as Tone },
+          ].map((check) => <button className={`rv-check ${check.tone} ${focus === check.field ? "focused" : ""}`} key={check.label} onClick={() => setFocus(check.field)}><Signal tone={check.tone} /><span><strong>{check.label}</strong><small>{check.detail}</small></span><Icon name="chevron" size={13} /></button>)}</section>
+          <div className="rv-guidance"><Icon name="book" size={19} /><div><strong>Core-grounded operator review</strong><p>Every mutation is revalidated and remains separate from external authority.</p></div></div>
+        </aside>
+      </main>
+      <footer className="rv-footer"><span><i />Persisted Core data · no sample records</span><span role="status">{notice || "Review only · no external actions"}</span><button className="rv-secondary" disabled={!ready} onClick={() => navigate("execution")}>Continue to execution</button></footer>
+    </div>
+  </AppShell>;
 }

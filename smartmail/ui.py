@@ -14,10 +14,26 @@ from .mailbox import NetEase163ExtensionMailbox
 from .execution_ui import dispatch_execution
 from .mailbox_ui import mailbox_workspace
 from .records_ui import mailbox_summaries, records_workspace, records_task
+from .intake_ui import intake_workspace, import_uploaded_sources
+from .review_ui import review_workspace, resolve_review_exception
 
 
 def dispatch(core, request):
     command = request.get("command")
+    if command == "intake_workspace":
+        return intake_workspace(core, request.get("campaign_id"), request.get("student_id"))
+    if command == "intake_import":
+        return import_uploaded_sources(
+            core, request["campaign_id"], request["student_id"], request["files"])
+    if command == "review_workspace":
+        return review_workspace(core, request["campaign_id"])
+    if command == "confirm_attachment":
+        return core.confirm_attachment(request["preparation_id"], request["slot_id"])
+    if command == "set_attachment_source":
+        return core.set_attachment(
+            request["preparation_id"], request["slot_id"], source_id=request["source_id"])
+    if command == "resolve_review_exception":
+        return resolve_review_exception(core, request["task_id"], request["code"])
     if command == "mailbox_workspace":
         return mailbox_workspace(core, request["campaign_id"], request["student_id"])
     if command == "records_workspace":
@@ -94,8 +110,18 @@ def main():
     sys.stdin.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser()
     parser.add_argument("--home", type=Path, default=Path(".smartmail"))
+    parser.add_argument("--enable-extension-send", action="store_true")
+    parser.add_argument("--enable-extension-schedule", action="store_true")
+    parser.add_argument("--enable-extension-recall", action="store_true")
     args = parser.parse_args()
-    with SmartMail(args.home, mailbox=NetEase163ExtensionMailbox(args.home, timeout=20)) as core:
+    mailbox = NetEase163ExtensionMailbox(
+        args.home,
+        enable_send=args.enable_extension_send,
+        enable_schedule=args.enable_extension_schedule,
+        enable_recall=args.enable_extension_recall,
+        timeout=20,
+    )
+    with SmartMail(args.home, mailbox=mailbox) as core:
         for line in sys.stdin:
             request = {}
             try:

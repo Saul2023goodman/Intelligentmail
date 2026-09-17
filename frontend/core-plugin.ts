@@ -9,15 +9,22 @@ export function corePlugin(): Plugin {
     name: "smartmail-core",
     configureServer(server) {
       const root = fileURLToPath(new URL("../", import.meta.url));
+      const workerArguments = [
+        "-u",
+        "-m",
+        "smartmail.ui",
+        "--home",
+        process.env.SMARTMAIL_HOME || ".smartmail",
+      ];
+      const enabled = (name: string) => ["1", "true", "yes"].includes(
+        (process.env[name] || "").toLowerCase(),
+      );
+      if (enabled("SMARTMAIL_ENABLE_EXTENSION_SEND")) workerArguments.push("--enable-extension-send");
+      if (enabled("SMARTMAIL_ENABLE_EXTENSION_SCHEDULE")) workerArguments.push("--enable-extension-schedule");
+      if (enabled("SMARTMAIL_ENABLE_EXTENSION_RECALL")) workerArguments.push("--enable-extension-recall");
       const child = spawn(
         process.env.SMARTMAIL_PYTHON || "python",
-        [
-          "-u",
-          "-m",
-          "smartmail.ui",
-          "--home",
-          process.env.SMARTMAIL_HOME || ".smartmail",
-        ],
+        workerArguments,
         { cwd: root, windowsHide: true, stdio: ["pipe", "pipe", "inherit"] },
       );
       let sequence = 0;
@@ -61,7 +68,7 @@ export function corePlugin(): Plugin {
           let body = "";
           for await (const chunk of req) {
             body += chunk;
-            if (body.length > 16000) throw new Error("Request too large");
+            if (body.length > 40 * 1024 * 1024) throw new Error("Request too large");
           }
           const request = JSON.parse(body);
           if (stopped)
@@ -74,7 +81,7 @@ export function corePlugin(): Plugin {
                 error:
                   "Core request timed out. Refresh to check the result before retrying.",
               });
-            }, 30000);
+            }, request.command === "intake_import" ? 120000 : 30000);
             pending.set(id, (value) => {
               clearTimeout(timer);
               resolve(value);

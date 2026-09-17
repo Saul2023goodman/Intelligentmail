@@ -1,7 +1,7 @@
 # Frontend foundation
 
-The foundation extraction preserves the existing desktop Workspace and Intake
-pages. Intake is still labeled **Source mapping** and remains a local sample.
+The foundation preserves the existing desktop Workspace and Intake layouts.
+Intake remains labeled **Source mapping** and is backed by the local Core bridge.
 The original page content, controls, dialogs, and Core operations are retained.
 
 | Owner | Files | Responsibility |
@@ -11,7 +11,8 @@ The original page content, controls, dialogs, and Core operations are retained.
 | Foundation | `frontend/src/shared/` | Design tokens, typed icons, SearchField, primitive CSS |
 | Core integration | `frontend/src/core/` | Typed bridge commands and report models |
 | Workspace | `frontend/src/pages/workspace/` | Workflow graph, student (campaign) switcher and student creation |
-| Intake | `frontend/src/pages/intake/` | Source mapping, sample data, file staging, local inspection and filtering |
+| Intake | `frontend/src/pages/intake/` | Source mapping, browser source import, Core evidence inspection and filtering |
+| Review | `frontend/src/pages/review/` | Preparation readiness, evidence inspection and supported operator corrections |
 
 ## Page development
 
@@ -67,8 +68,8 @@ non-responsive layout guidance.
 - Hash changes drive browser back/forward and active rail state.
 - Workspace stays mounted while Intake is visible, preserving campaign state, as
   before. It renders no DOM while another route is active.
-- Intake mounts when entered and unmounts when left. Its sample edits, filters and
-  staged file metadata reset on navigation or reload, as before.
+- Intake and Review mount when entered and unmount when left. Filters and transient
+  review markings reset on navigation; imported sources and Core mutations persist.
 
 ## Core integration
 
@@ -80,10 +81,11 @@ stdio bridge. HTTP, transport and Core errors remain visible to the caller.
 TypeScript models describe the bridge payload; they are not runtime validation of
 untrusted data. Backend validation and the allowlist remain authoritative.
 
-No new Core capability is introduced. Preparation readiness, duplicate checks,
-confirmation invalidation, Rewrite eligibility, reconciliation and external action
-authority remain in Core. Intake has no Core import and does not parse or persist
-its staged files. See [workflow and bridge details](frontend-workflow.md).
+Preparation readiness, deterministic intake, duplicate checks, confirmation
+invalidation, Rewrite eligibility, reconciliation and external action authority
+remain in Core. Intake transports selected bytes to an allowlisted command; Core
+validates supported patterns and persists Source Materials. See
+[workflow and bridge details](frontend-workflow.md).
 
 ## Verification
 

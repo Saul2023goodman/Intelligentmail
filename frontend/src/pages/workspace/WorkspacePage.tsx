@@ -223,7 +223,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
             <Icon name="refresh" size={18} />
           </button>
         </Topbar>
-        <section className="workflow-stage" aria-label="Outreach workflow">
+        <main className="workflow-stage" aria-label="Outreach workflow">
           <div className="student-bar">
             <div className="student-chips" role="group" aria-label="Student switcher">
               {data?.mailboxes.map((mailbox) => {
@@ -301,7 +301,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
               </span>
             </div>
           </div>
-        </section>
+        </main>
         {newStudent && (
           <div
             className="modal-backdrop"

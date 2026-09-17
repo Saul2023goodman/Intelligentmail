@@ -9,18 +9,32 @@ $env:SMARTMAIL_PYTHON = (Resolve-Path ../.venv/Scripts/python.exe).Path
 npm run dev
 ```
 
+Mailbox writes remain off by default. For an operator-approved live extension
+acceptance session, opt into only the required capabilities before starting Vite:
+
+```powershell
+$env:SMARTMAIL_ENABLE_EXTENSION_SEND = '1'
+$env:SMARTMAIL_ENABLE_EXTENSION_SCHEDULE = '1' # only when required
+npm run dev
+```
+
+These flags expose the same guarded capabilities as the CLI. The selected extension
+tab must still be connected, every action still requires exact operator Confirmation,
+and Core rechecks authority before execution.
+
 Open the loopback URL printed by Vite. The Core bridge defaults to the repository's
 `.smartmail` store. Set `SMARTMAIL_HOME` to another store directory before starting
 Vite if needed. `SMARTMAIL_PYTHON` is optional when `python` already has the
 repository requirements installed.
 
-The page supports campaign selection/creation, workflow exploration, task search,
-message and source inspection, read-only mailbox intake, persisted evidence,
-duplicate checks, subject/recipient correction, source-based Rewrite, zoom and fit.
-Connect the dedicated extension in the explicitly selected Student mailbox to
-enable reading. Sending remains disabled in the UI bridge. Existing imported
-records appear immediately; a fresh store shows an empty workflow. Import through
-the Core CLI using the same store, then refresh the page.
+The pages support campaign and Student scoping, browser source-set import, supported
+document preparation, readiness review, task search, message and source inspection,
+read-only mailbox intake, persisted evidence, duplicate checks, subject/recipient
+correction, attachment confirmation, source-based Rewrite, zoom and fit. Connect
+the dedicated extension in the explicitly selected Student mailbox to enable
+reading. External capabilities remain independently guarded by Core and the
+configured mailbox adapter. Existing imported records appear immediately; a fresh
+store shows an empty workflow.
 
 ```powershell
 npm run build
@@ -48,31 +62,25 @@ Keep page development within its directory. See
 [foundation interfaces and state lifetime](../docs/frontend-foundation.md) and
 [frontend agent guidance](AGENTS.md) before starting page worktrees.
 
-## Source-mapping prototype
+## Source mapping
 
 Open `/#source-mapping`, or select **Source mapping** in the workflow toolbar or
-sidebar. This second page uses labeled sample data to demonstrate spreadsheets,
-documents, attachments, student mailbox identities, and imported mailbox records
-being associated with structured outreach tasks. Select a source to trace its
-tasks; inspect rules and tasks for field mappings and source evidence. Search,
-source-type and task-status filters, collapsible groups, and diagram zoom work locally.
+sidebar. This page is backed by Core Campaigns, Students, imports, Source Materials,
+Outreach Tasks and Preparations. **Add source set** accepts a supported `.xlsx`
+master list or `.zip` bundle, retains the original bytes, creates or reuses Tasks,
+and runs supported deterministic document association. Unsupported or replacement
+documents stay visible as unresolved evidence. Filters and inspectors are
+presentation-only; they never infer associations or authorize sending.
 
-The sample contains nine ready preparations, two attachment blockers, and one
-duplicate suspicion. **Validate mapping** displays the sample validation summary.
-**Add sources** stages file metadata locally without reading or parsing file contents.
-Sample changes reset on navigation or reload; this page does not persist to Core,
-import mailbox history, or authorize sending. The existing workflow remains connected
-to Core.
+## Readiness review
 
-## Review prototype
-
-Open `/#review`, or select **Readiness review** in the sidebar. The third page is
-an isolated sample-data readiness workbench with a searchable preparation queue,
-annotated full-message preview, source excerpts, recipient comparison, attachment
-review, and duplicate evidence coverage. A sample recipient conflict blocks review
-completion until explicitly corrected. Review markings and corrections live in
-memory and reset when leaving the page. Readiness and local review markings do not
-grant sending confirmation; this page performs no Core mutations or external actions.
+Open `/#review`, or select **Readiness review** in the sidebar. The third page reads
+current Preparations and retained evidence from Core. Recipient and subject
+corrections revalidate the Preparation and invalidate stale Confirmation; attachment
+confirmation snapshots selected bytes; duplicate checks retain their coverage; and
+supported identity and prior-outreach Exceptions require explicit operator
+resolution. **Mark reviewed** is session-local and deliberately does not create
+sending Confirmation. No action on this page writes to a mailbox.
 
 Desktop uses three independently bounded regions. At widths of 900px or less,
 Preparations, Message, and Readiness tabs expose the same content and controls.

@@ -4,94 +4,103 @@
 async (page) => {
   const origin = await page.evaluate(() => location.origin);
   const results = [];
-  for (const route of ["workflow", "source-mapping"]) {
+  const routes = ["workflow", "source-mapping", "review", "execution", "mailbox", "records"];
+  const sizes = [[1920, 1080], [1440, 900], [1280, 720], [1024, 600], [800, 600], [390, 844], [900, 450]];
+
+  for (const route of routes) {
     await page.goto(`${origin}/#${route}`);
-    for (const [width, height] of [[1920, 1080], [1440, 900], [1280, 720], [1024, 600], [800, 600], [390, 844], [900, 450]]) {
+    await page.locator(".app-shell").waitFor();
+    // Core-backed pages and the workflow ResizeObserver need one short settle period.
+    await page.waitForTimeout(250);
+    for (const [width, height] of sizes) {
       await page.setViewportSize({ width, height });
-      // Allow ResizeObserver and React to settle after the viewport changes.
-      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      await page.waitForTimeout(75);
       const layout = await page.evaluate(() => {
-        const selectors = ["html", "body", "#root", ".app-shell", ".workspace", "main"];
-        const overflow = selectors.flatMap(selector => {
-          const el = document.querySelector(selector);
-          return el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 1
-            ? [{ selector, client: [el.clientWidth, el.clientHeight], scroll: [el.scrollWidth, el.scrollHeight] }] : [];
+        const selectors = ["html", "body", "#root", ".app-shell", ".workspace"];
+        const overflow = selectors.flatMap((selector) => {
+          const element = document.querySelector(selector);
+          if (!element) return [];
+          return element.scrollWidth > element.clientWidth + 1 || element.scrollHeight > element.clientHeight + 1
+            ? [{ selector, client: [element.clientWidth, element.clientHeight], scroll: [element.scrollWidth, element.scrollHeight] }]
+            : [];
         });
-        const regions = [...document.querySelectorAll("main > section, main > aside")].map(el => {
-          const rect = el.getBoundingClientRect();
-          return { name: el.className, width: rect.width, height: rect.height, bottom: rect.bottom, right: rect.right };
-        });
+        const regions = [...document.querySelectorAll("main > section, main > aside")]
+          .map((element) => {
+            const rect = element.getBoundingClientRect();
+            return { name: element.className, width: rect.width, height: rect.height, bottom: rect.bottom, right: rect.right };
+          })
+          .filter((region) => region.width > 1 && region.height > 1);
         return { overflow, regions };
       });
       results.push({ route, width, height, ...layout });
-      if (layout.overflow.length || layout.regions.some(r => r.height < 40 || r.width < 40 || r.bottom > height + 1 || r.right > width + 1)) {
+      if (layout.overflow.length || layout.regions.some((region) =>
+        region.height < 40 || region.width < 40 || region.bottom > height + 1 || region.right > width + 1)) {
         throw new Error(JSON.stringify(results.at(-1)));
       }
     }
   }
+
+  // Intake categories and Task details expose retained Core evidence in bounded dialogs.
+  await page.goto(`${origin}/#source-mapping`);
   await page.setViewportSize({ width: 1024, height: 600 });
-  // Student switching lives in the top bar.
-  await page.getByRole("group", { name: "Switch student" }).getByRole("button", { name: /Mei Zhang/ }).click();
-  // Classify an unresolved raw source into the Attachments category.
-  const countSources = () => page.evaluate(() => ({
-    unresolved: document.querySelectorAll(".sm-source-list .sm-source-card").length,
-    attached: document.querySelectorAll('.sm-category-card[data-category="attachments"] .sm-file-chip:not(.is-empty)').length,
-  }));
-  const before = await countSources();
-  await page.locator(".sm-source-card").filter({ hasText: /transcript/i }).first().click();
-  await page.locator('.sm-category-card[data-category="attachments"] .sm-classify-btn').click();
-  await page.getByRole("status").waitFor();
-  const after = await countSources();
-  if (after.unresolved !== before.unresolved - 1 || after.attached !== before.attached + 1) {
-    throw new Error(`Classification must move the raw source into its category: ${JSON.stringify({ before, after })}`);
+  await page.locator(".sm-category-main").first().click();
+  const evidenceDialog = page.getByRole("dialog", { name: "Source evidence inspector" });
+  await evidenceDialog.waitFor();
+  await evidenceDialog.getByRole("button", { name: "Done", exact: true }).click();
+  const firstTask = page.locator(".sm-task-row").first();
+  if (await firstTask.count()) {
+    await firstTask.click();
+    const taskDialog = page.getByRole("dialog", { name: "Resolved task inspector" });
+    await taskDialog.waitFor();
+    await page.keyboard.press("Escape");
   }
-  // Missing-email supervisors remain visible as grey incomplete rows.
-  const incomplete = await page.locator(".sm-task-row.is-incomplete", { hasText: "Sophie Lee" }).count();
-  if (incomplete !== 1) throw new Error("A supervisor without an email must remain visible as an incomplete task");
-  // Per-task attachment overrides live in the on-demand task inspector.
-  await page.locator(".sm-task-row:not(.is-incomplete)").first().click();
-  const taskDialog = page.getByRole("dialog", { name: "Resolved task inspector" });
-  await taskDialog.waitFor();
-  await taskDialog.getByRole("checkbox").first().uncheck();
-  await taskDialog.getByText(/per-task override/).waitFor();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await taskDialog.getByRole("button", { name: "Done", exact: true }).click();
-  const scrolledPage = await page.evaluate(() => [document.documentElement, document.body, document.querySelector(".workspace")].some(el => el.scrollTop !== 0 || el.scrollLeft !== 0));
-  if (scrolledPage) throw new Error("Reaching internal content scrolled the page");
-  // In a short window the source/task lists scroll internally and the fixed
-  // category column never scrolls; all six categories stay reachable.
+
+  // Short-window lists either fit or own their scrolling; page chrome never scrolls.
   await page.setViewportSize({ width: 900, height: 450 });
-  const listCheck = await page.evaluate(() => {
-    const read = selector => {
+  const intakeRegions = await page.evaluate(() => {
+    const read = (selector) => {
       const region = document.querySelector(selector);
+      if (!region) return { exists: false };
       region.scrollTop = region.scrollHeight;
-      return { canScroll: region.scrollTop > 0, overflows: region.scrollHeight > region.clientHeight + 1 };
+      return {
+        exists: true,
+        overflows: region.scrollHeight > region.clientHeight + 1,
+        reachable: region.scrollHeight <= region.clientHeight + 1 || region.scrollTop > 0,
+      };
     };
-    const sources = read(".sm-source-list");
-    const tasks = read(".sm-task-list");
-    const categories = read(".sm-category-list");
-    const region = document.querySelector(".sm-category-list").getBoundingClientRect();
-    const cards = [...document.querySelectorAll(".sm-category-card")].map(el => {
-      const rect = el.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom };
-    });
-    const cardsReachable = cards.every(rect => rect.top >= region.top - 1 && rect.bottom <= region.bottom + 1);
-    return { sources, tasks, categories, cardsReachable };
+    return {
+      sources: read(".sm-source-list"),
+      tasks: read(".sm-task-list"),
+      categories: read(".sm-category-list"),
+      pageScrolled: [document.documentElement, document.body, document.querySelector(".workspace")]
+        .filter(Boolean).some((element) => element.scrollTop !== 0 || element.scrollLeft !== 0),
+    };
   });
-  if (!listCheck.sources.canScroll || !listCheck.tasks.canScroll) {
-    throw new Error(`Source and task lists must scroll internally: ${JSON.stringify(listCheck)}`);
+  if (!intakeRegions.sources.reachable || !intakeRegions.tasks.reachable
+      || !intakeRegions.categories.reachable || intakeRegions.pageScrolled) {
+    throw new Error(`Intake regions must remain internally reachable: ${JSON.stringify(intakeRegions)}`);
   }
-  if (listCheck.categories.overflows || !listCheck.cardsReachable) {
-    throw new Error(`Center category column must fit without scrolling: ${JSON.stringify(listCheck)}`);
+
+  // Review's mobile tabs expose all three bounded workbench regions.
+  await page.goto(`${origin}/#review`);
+  await page.setViewportSize({ width: 900, height: 450 });
+  for (const name of ["Preparations", "Message", "Readiness"]) {
+    await page.getByRole("button", { name, exact: true }).click();
+    const selected = await page.getByRole("button", { name, exact: true }).evaluate((element) =>
+      element.classList.contains("active"));
+    if (!selected) throw new Error(`Review tab did not become active: ${name}`);
   }
+
+  // The workflow guide remains reachable and scrolls inside the short window.
   await page.goto(`${origin}/#workflow`);
   await page.setViewportSize({ width: 900, height: 450 });
   await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Workflow guide" }).click();
   await page.getByRole("dialog").waitFor();
-  const dialogFits = await page.getByRole("dialog").evaluate(el => {
-    const rect = el.getBoundingClientRect();
-    el.scrollTop = el.scrollHeight;
-    return rect.top >= 0 && rect.bottom <= innerHeight && el.scrollTop > 0;
+  const dialogFits = await page.getByRole("dialog").evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    element.scrollTop = element.scrollHeight;
+    return rect.top >= 0 && rect.bottom <= innerHeight && element.scrollTop > 0;
   });
   if (!dialogFits) throw new Error("Short-window dialog must fit and scroll internally");
   await page.keyboard.press("Escape");

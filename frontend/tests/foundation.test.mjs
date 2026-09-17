@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { resolveRoute, navigate } from "../src/app/routes.ts";
-import { core } from "../src/core/index.ts";
+import { core, importSources } from "../src/core/index.ts";
 
 test("existing links and unknown hashes resolve predictably", () => {
   assert.equal(resolveRoute("#source-mapping"), "sources");
@@ -71,4 +71,20 @@ test("Core rejects HTTP failures and network failures", async (t) => {
     throw new Error("Network unavailable");
   });
   await assert.rejects(core("workspace", {}), /Network unavailable/);
+});
+
+test("browser intake transports selected bytes through the allowlisted command", async (t) => {
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const request = JSON.parse(options.body);
+    assert.equal(request.command, "intake_import");
+    assert.equal(request.campaign_id, "campaign-1");
+    assert.equal(request.student_id, "student-1");
+    assert.deepEqual(request.files, [{ name: "master.xlsx", content: "AQID" }]);
+    return Response.json({ result: { import: {}, preparation: {}, workspace: {} } });
+  });
+  await importSources(
+    "campaign-1",
+    "student-1",
+    [new File([new Uint8Array([1, 2, 3])], "master.xlsx")],
+  );
 });

@@ -1,5 +1,6 @@
 """UI bridge acceptance against persisted Core operations, without mailbox writes."""
 import json
+import base64
 import subprocess
 import sys
 import tempfile
@@ -186,6 +187,46 @@ class UiBridgeTests(ExecutionTestCase):
         self.assertTrue(detail["sources"])
         self.assertEqual(self.mailbox.requests, [])
 
+    def test_readiness_workspace_uses_real_preparation_and_operator_actions(self):
+        preparation, _ = self.ready_preparation(subject=None, attach=False)
+        view = dispatch(self.core, {"command": "review_workspace",
+                                    "campaign_id": self.campaign["id"]})
+        self.assertEqual(view["campaign"]["id"], self.campaign["id"])
+        row = view["rows"][0]
+        self.assertEqual(row["preparation"]["id"], preparation["id"])
+        self.assertFalse(row["preparation"]["ready"])
+        self.assertIn(preparation["source"]["id"], {source["id"] for source in row["sources"]})
+        slot = row["preparation"]["attachment_slots"][0]
+        confirmed = dispatch(self.core, {"command": "confirm_attachment",
+                                         "preparation_id": preparation["id"],
+                                         "slot_id": slot["id"]})
+        self.assertIsNotNone(confirmed["attachment_slots"][0]["attachment"])
+        duplicate = dispatch(self.core, {"command": "check_duplicate",
+                                         "preparation_id": preparation["id"]})
+        self.assertEqual(duplicate["finding"], "no_duplicate_found")
+        refreshed = dispatch(self.core, {"command": "review_workspace",
+                                         "campaign_id": self.campaign["id"]})
+        self.assertEqual(refreshed["rows"][0]["duplicate_check"]["id"], duplicate["id"])
+
+    def test_browser_intake_imports_and_prepares_supported_uploaded_bundle(self):
+        self.import_bundle([
+            ("Example University_Dr Alex Green.docx",
+             ["Email: alex@example.edu", "", "", "", "Dear Dr Green,", "",
+              "I am writing about your research.", "", "Yours sincerely,", "Test Student"])
+        ])
+        payload = base64.b64encode((self.directory / "bundle.zip").read_bytes()).decode("ascii")
+        other_campaign = self.core.create_campaign("Browser intake")
+        result = dispatch(self.core, {"command": "intake_import",
+                                      "campaign_id": other_campaign["id"],
+                                      "student_id": self.student["id"],
+                                      "files": [{"name": "bundle.zip", "content": payload}]})
+        self.assertEqual(result["import"]["summary"]["new"], 1)
+        self.assertEqual(len(result["preparation"]["preparation_ids"]), 1)
+        self.assertEqual(len(result["workspace"]["tasks"]), 1)
+        categories = set(result["workspace"]["source_categories"].values())
+        self.assertIn("master", categories)
+        self.assertIn("drafts", categories)
+
     def test_duplicate_command_persists_core_coverage_without_execution(self):
         preparation, _ = self.ready_preparation()
         result = dispatch(self.core, {"command": "check_duplicate", "preparation_id": preparation["id"]})
@@ -236,4 +277,17 @@ class UiProtocolTests(unittest.TestCase):
             self.assertEqual(replies[3]['id'], 2)
             self.assertEqual(replies[3]['result']['campaigns'][0]['name'], '研究 outreach')
             self.assertEqual(replies[3]['result']['report']['counts']['tasks'], 0)
+
+    def test_stdio_acceptance_flags_are_explicit_and_do_not_fake_connection(self):
+        with tempfile.TemporaryDirectory() as home:
+            result = subprocess.run(
+                [sys.executable, '-m', 'smartmail.ui', '--home', home,
+                 '--enable-extension-send', '--enable-extension-schedule'],
+                input=json.dumps({"id": 1, "command": "workspace"}) + '\n',
+                capture_output=True, text=True, encoding='utf-8', cwd=ROOT, check=True)
+            workspace = json.loads(result.stdout)["result"]
+            capabilities = workspace["mailbox_capabilities"]["capabilities"]
+            self.assertFalse(capabilities["immediate_send"]["available"])
+            self.assertFalse(capabilities["native_scheduling"]["available"])
+            self.assertIn("explicitly enabled", capabilities["immediate_send"]["basis"])
 

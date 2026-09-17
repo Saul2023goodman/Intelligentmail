@@ -7,13 +7,47 @@ import type {
   ReviewResult,
 } from "./execution-types";
 import type { RecordsTaskDetail, RecordsWorkspace } from "./records-types";
+import type {
+  IntakeImportResult,
+  IntakeWorkspace,
+  ReviewWorkspace,
+} from "./operator-types";
 export type * from "./types";
 export type * from "./execution-types";
 export type * from "./mailbox-types";
 export type * from "./records-types";
+export type * from "./operator-types";
 
 /** The allowlist mirrors smartmail/ui.py. Core owns all domain decisions. */
 type Commands = {
+  intake_workspace: {
+    args: { campaign_id?: string; student_id?: string };
+    result: IntakeWorkspace;
+  };
+  intake_import: {
+    args: {
+      campaign_id: string;
+      student_id: string;
+      files: { name: string; content: string }[];
+    };
+    result: IntakeImportResult;
+  };
+  review_workspace: {
+    args: { campaign_id: string };
+    result: ReviewWorkspace;
+  };
+  confirm_attachment: {
+    args: { preparation_id: string; slot_id: string };
+    result: import("./records-types").FullPreparation;
+  };
+  set_attachment_source: {
+    args: { preparation_id: string; slot_id: string; source_id: string };
+    result: import("./records-types").FullPreparation;
+  };
+  resolve_review_exception: {
+    args: { task_id: string; code: "identity_ambiguity" | "prior_outreach_conflict" };
+    result: unknown;
+  };
   mailbox_workspace: {
     args: { campaign_id: string; student_id: string };
     result: import("./mailbox-types").MailboxWorkspace;
@@ -96,3 +130,27 @@ export async function core<T extends Request>(
 }
 
 export const human = (text: string) => text.replaceAll("_", " ");
+
+async function fileContent(file: File) {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = "";
+  const chunk = 0x8000;
+  for (let start = 0; start < bytes.length; start += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(start, start + chunk));
+  }
+  return btoa(binary);
+}
+
+export async function importSources(
+  campaignId: string,
+  studentId: string,
+  files: File[],
+) {
+  return core("intake_import", {
+    campaign_id: campaignId,
+    student_id: studentId,
+    files: await Promise.all(
+      files.map(async (file) => ({ name: file.name, content: await fileContent(file) })),
+    ),
+  });
+}

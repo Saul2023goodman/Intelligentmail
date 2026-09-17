@@ -56,10 +56,12 @@ The Vite development server proxies an allowlisted JSON protocol over private
 stdio to one long-lived `python -m smartmail.ui` process. A single Core instance
 avoids invoking restart recovery on every UI query. Vite binds to loopback and
 requires same-origin JSON POST requests, with bounded request sizes and timeouts.
-The Python bridge owns no network listener. It exposes the read-only mailbox
-refresh command; sending, scheduling, cancellation and Recall remain unavailable
-through the UI bridge. The adapter uses a 20-second timeout within the UI bridge
-request deadline, and all external write capabilities remain disabled.
+The Python bridge owns no network listener. It exposes mailbox observation and the
+same Confirmation-bound execution operations used by Core. External write
+capabilities remain disabled by default and can be enabled individually for an
+explicit extension acceptance session through Vite startup environment flags. The
+adapter uses a 20-second timeout within the UI bridge request deadline; Core still
+rechecks capability, Confirmation, content and execution state before every action.
 ADR-0001's extension Native Messaging boundary remains unchanged.
 
 This is a local development frontend. `npm run build` checks and bundles the UI;
@@ -67,12 +69,12 @@ the static build and `vite preview` alone do not start the Core bridge. Startup
 uses Core's existing lifecycle/recovery, just like the CLI. Do not open this
 workspace against a store that is currently executing in another process.
 
-Import, confirmation, execution, scheduled replacement and follow-up creation
-continue through the existing CLI. The UI can read the connected mailbox, inspect
-its saved observation batches and reconciliation findings, correct local subject and
-recipient, and Rewrite from an already imported document selected by filename. The in-page
-guide explains intake setup. No sample campaigns or messages are inserted into
-the user store.
+Confirmation, scheduled replacement and follow-up creation use the existing guarded
+Core commands. The UI can import a supported source set, prepare supported documents,
+review readiness, read the connected mailbox, inspect saved observations and
+reconciliation findings, correct local subject and recipient, confirm retained
+attachment bytes, run duplicate checks, and Rewrite from an already imported
+document. No sample campaigns or messages are inserted into the user store.
 
 ## Verification
 
