@@ -14,6 +14,62 @@ from smartmail.mailbox import ControlledMailbox, DisabledMailbox
 
 
 class UiBridgeTests(ExecutionTestCase):
+    def mailbox_workspace(self, campaign_id=None):
+        return dispatch(self.core, {'command': 'mailbox_workspace',
+                                   'campaign_id': campaign_id or self.campaign['id'],
+                                   'student_id': self.student['id']})
+
+    def test_mailbox_workspace_keeps_local_work_without_claiming_a_match(self):
+        preparation, _ = self.ready_preparation()
+        view = self.mailbox_workspace()
+        self.assertIsNone(view['observation'])
+        row = next(r for r in view['rows'] if r['local']['id'] == preparation['id'])
+        self.assertIsNone(row['observed'])
+        self.assertEqual(row['findings'], [])
+        self.assertEqual(self.mailbox.requests, [])
+
+    def test_mailbox_workspace_links_sent_evidence_and_limits_campaign_scope(self):
+        preparation, _ = self.ready_preparation()
+        confirmation = self.core.confirm(preparation['id'])
+        self.core.run_execution([confirmation['id']])
+        observation = observed_history()
+        observation['messages'] = [{**observation['messages'][1],
+                                    'counterpart': preparation['recipient'],
+                                    'subject': preparation['subject']}]
+        self.core.mailbox = ControlledMailbox(observations=[observation])
+        self.core.refresh_mailbox(self.student['id'])
+        view = self.mailbox_workspace()
+        matched = next(r for r in view['rows'] if r['findings'])
+        self.assertEqual(matched['findings'][0]['finding'], 'matched_sent_record')
+        self.assertEqual(matched['local']['kind'], 'sent_record')
+        self.assertEqual(matched['observed']['subject'], preparation['subject'])
+        self.assertFalse(view['observation']['evidence_coverage']['complete'])
+        other = self.core.create_campaign('Other campaign')
+        self.assertEqual(self.mailbox_workspace(other['id'])['rows'], [])
+        self.assertEqual(self.core.mailbox.requests, [])
+
+    def test_mailbox_workspace_preserves_unknown_attempt_and_uses_latest_observation(self):
+        preparation, _ = self.ready_preparation()
+        self.core.mailbox = ControlledMailbox(['unknown'])
+        confirmation = self.core.confirm(preparation['id'])
+        self.core.run_execution([confirmation['id']])
+        observation = observed_history()
+        observation['messages'] = [{**observation['messages'][1],
+                                    'counterpart': preparation['recipient'],
+                                    'subject': preparation['subject']}]
+        empty = {**observation, 'status': 'partial', 'messages': []}
+        self.core.mailbox = ControlledMailbox(observations=[observation, empty])
+        self.core.refresh_mailbox(self.student['id'])
+        view = self.mailbox_workspace()
+        row = next(r for r in view['rows'] if r['local'])
+        self.assertEqual(row['local']['state'], 'unknown')
+        self.assertEqual(row['findings'][0]['finding'], 'matched_unresolved_attempt')
+        self.core.refresh_mailbox(self.student['id'])
+        view = self.mailbox_workspace()
+        self.assertEqual(len(view['history']), 2)
+        self.assertTrue(all(r['observed'] is None for r in view['rows']))
+        self.assertEqual(self.core.mailbox.requests, [])
+
     def test_rewrite_source_choices_stay_with_student_and_campaign(self):
         preparation, _ = self.ready_preparation()
         other_campaign = self.core.create_campaign('Other scope')
