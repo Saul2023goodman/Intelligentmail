@@ -7,6 +7,7 @@ export const routes = {
   review: { hash: "#review", label: "Readiness review", icon: "shield" },
   execution: { hash: "#execution", label: "Batch execution", icon: "send" },
   mailbox: { hash: "#mailbox", label: "Mailbox reconciliation", icon: "mail" },
+  records: { hash: "#records", label: "Records evidence", icon: "book" },
 } as const;
 export type Route = keyof typeof routes;
 

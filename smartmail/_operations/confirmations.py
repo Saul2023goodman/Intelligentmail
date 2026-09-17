@@ -159,3 +159,10 @@ class ConfirmationOperations:
         return [self._confirmation_view(row) for row in self._db.execute(
             "SELECT c.* FROM confirmations c JOIN tasks t ON t.id = c.task_id "
             "WHERE t.campaign_id = ? AND c.status = 'active' ORDER BY c.rowid", (campaign_id,))]
+
+    def list_confirmation_history(self, campaign_id: str) -> list[dict]:
+        """Every Confirmation a Campaign produced: active, consumed and invalidated."""
+        self.get_campaign(campaign_id)
+        return [self._confirmation_view(row) for row in self._db.execute(
+            "SELECT c.* FROM confirmations c JOIN tasks t ON t.id = c.task_id "
+            "WHERE t.campaign_id = ? ORDER BY c.rowid", (campaign_id,))]
