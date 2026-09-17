@@ -155,6 +155,7 @@ export default function ReviewPage() {
           <NavigationItem route="sources" />
           <NavigationItem route="review" active />
           <NavigationItem route="execution" />
+          <NavigationItem route="mailbox" />
           <div className="rail-spacer" />
         </>
       }
