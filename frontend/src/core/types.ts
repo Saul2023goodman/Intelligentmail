@@ -28,6 +28,7 @@ export type Workspace = {
   mailbox_capabilities: {
     adapter: string;
     capabilities: {
+      [operation: string]: { available: boolean; verified: boolean; basis: string };
       read_history: { available: boolean; verified: boolean; basis: string };
     };
   };

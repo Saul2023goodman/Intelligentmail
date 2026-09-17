@@ -29,6 +29,11 @@ PLAN_DEFAULTS = {
 class PlanningOperations:
     """Sending Plan configuration, scheduling constraints and batch Confirmation."""
 
+    def get_plan_configuration(self, campaign_id: str) -> dict:
+        """Read the effective rules without changing the Campaign."""
+        self.get_campaign(campaign_id)
+        return self._plan_configuration(campaign_id)
+
     def configure_plan(self, campaign_id: str, *, timezone: str | None = None,
                        windows=None, spacing_minutes: int | None = None,
                        daily_limit: int | None = None,

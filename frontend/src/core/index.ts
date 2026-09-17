@@ -1,8 +1,38 @@
 import type { Campaign, Detail, MailboxHistory, Workspace } from "./types";
+import type {
+  ExecutionWorkspace,
+  PlanConfiguration,
+  SendingPlan,
+  ReviewRequest,
+  ReviewResult,
+} from "./execution-types";
 export type * from "./types";
+export type * from "./execution-types";
 
 /** The allowlist mirrors smartmail/ui.py. Core owns all domain decisions. */
 type Commands = {
+  execution_workspace: {
+    args: { campaign_id: string };
+    result: ExecutionWorkspace;
+  };
+  execution_configure: {
+    args: PlanConfiguration & { campaign_id: string };
+    result: PlanConfiguration;
+  };
+  execution_propose: { args: { campaign_id: string }; result: SendingPlan };
+  execution_adjust: {
+    args: { plan_id: string; preparation_id: string; scheduled_at: string };
+    result: SendingPlan;
+  };
+  execution_review: { args: ReviewRequest; result: ReviewResult };
+  execution_confirm: {
+    args: ReviewRequest & { token: string };
+    result: unknown;
+  };
+  execution_run: {
+    args: { confirmation_id: string };
+    result: { paused?: boolean; flow?: { state: string } };
+  };
   workspace: { args: { campaign_id?: string }; result: Workspace };
   task: { args: { task_id: string }; result: Detail };
   create_campaign: { args: { name: string }; result: Campaign };

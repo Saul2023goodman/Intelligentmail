@@ -1,7 +1,7 @@
 """Local UI stdio bridge. Domain decisions stay in SmartMail operations.
 
 One process owns one Core for its lifetime; requests never restart recovery.
-Only explicit read-only extension observations and local preparation commands are exposed.
+Explicit observations, preparation and batch execution commands are exposed.
 """
 import argparse
 import json
@@ -11,10 +11,13 @@ from pathlib import Path
 from .core import SmartMail
 from .errors import SmartMailError
 from .mailbox import NetEase163ExtensionMailbox
+from .execution_ui import dispatch_execution
 
 
 def dispatch(core, request):
     command = request.get("command")
+    if isinstance(command, str) and command.startswith("execution_"):
+        return dispatch_execution(core, request)
     if command == "workspace":
         campaigns = core.list_campaigns()
         campaign_id = request.get("campaign_id")
