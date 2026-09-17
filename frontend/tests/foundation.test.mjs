@@ -7,6 +7,7 @@ test("existing links and unknown hashes resolve predictably", () => {
   assert.equal(resolveRoute("#source-mapping"), "sources");
   assert.equal(resolveRoute("#workflow"), "workflow");
   assert.equal(resolveRoute("#tasks"), "tasks");
+  assert.equal(resolveRoute("#review"), "review");
   assert.equal(resolveRoute(""), "workflow");
   assert.equal(resolveRoute("#unknown"), "workflow");
 });
