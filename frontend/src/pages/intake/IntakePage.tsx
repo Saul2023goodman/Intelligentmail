@@ -303,6 +303,7 @@ export default function IntakePage() {
           <NavigationItem route="workflow" label="Outreach workflow" />
           <NavigationItem route="sources" active />
           <NavigationItem route="review" />
+          <NavigationItem route="execution" />
           <div className="sm-rail-line" />
           <button
             aria-label="Normalization workspace guide"

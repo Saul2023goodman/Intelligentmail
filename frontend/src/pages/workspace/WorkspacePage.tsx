@@ -471,7 +471,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
     setError("");
   };
   // Remain mounted while Intake is active, preserving scope and inspector state.
-  if (view === "sources" || view === "review") return null;
+  if (view === "sources" || view === "review" || view === "execution") return null;
   const banners = (floating: boolean) => (
     <>
       {error && (
@@ -553,6 +553,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
           />
           <NavigationItem route="sources" />
           <NavigationItem route="review" />
+          <NavigationItem route="execution" />
           <div className="rail-spacer" />
           <button
             onClick={() => {

@@ -154,6 +154,7 @@ export default function ReviewPage() {
           <NavigationItem route="workflow" />
           <NavigationItem route="sources" />
           <NavigationItem route="review" active />
+          <NavigationItem route="execution" />
           <div className="rail-spacer" />
         </>
       }
