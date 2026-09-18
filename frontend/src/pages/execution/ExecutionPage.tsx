@@ -7,10 +7,10 @@ import {
 } from "react";
 import { AppShell, Topbar } from "../../app/shell";
 import { useWorkspaceScope } from "../../app/scope";
+import { useCoreQuery } from "../../core/data";
 import {
   core,
   human,
-  type Workspace,
   type ExecutionWorkspace,
   type PreparationReview,
   type SendingPlan,
@@ -233,63 +233,30 @@ function Message({
 
 export default function ExecutionPage() {
   const { scope } = useWorkspaceScope();
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [data, setData] = useState<ExecutionWorkspace | null>(null);
   const campaign = scope?.campaignId ?? "";
+  const workspaceQuery = useCoreQuery("workspace", { campaign_id: campaign }, { enabled: Boolean(campaign) });
+  const executionQuery = useCoreQuery("execution_workspace", { campaign_id: campaign }, { enabled: Boolean(campaign) });
+  const workspace = workspaceQuery.data;
+  const data = executionQuery.data;
   const [search, setSearch] = useState("");
   const [executionSelection, setExecutionSelection] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [inspected, setInspected] = useState("");
   const [tab, setTab] = useState(0);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [replacement, setReplacement] = useState("");
-  const version = useRef(0);
   const actionLock = useRef(false);
 
-  async function refresh(scope = campaign) {
-    const current = ++version.current;
-    setLoading(true);
-    try {
-      if (!scope) {
-        setWorkspace(null);
-        setData(null);
-        return;
-      }
-      const next = await core("workspace", { campaign_id: scope });
-      const id = scope;
-      const execution = id
-        ? await core("execution_workspace", { campaign_id: id })
-        : null;
-      if (current !== version.current) return;
-      setWorkspace(next);
-      setData(execution);
-      setSelected((previous) =>
-        previous.filter((p) =>
-          execution?.reviews.some(
-            (r) => r.preparation_id === p && r.ready && !r.already_sent,
-          ),
-        ),
-      );
-    } finally {
-      if (current === version.current) setLoading(false);
-    }
+  async function refresh() {
+    if (!campaign) return;
+    await Promise.all([workspaceQuery.refresh(), executionQuery.refresh()]);
   }
-  useEffect(() => {
-    setSelected([]);
-    setExecutionSelection([]);
-    setInspected("");
-    refresh().catch((e) => setError(String(e.message || e)));
-    const generation = version;
-    return () => {
-      generation.current++;
-    };
-    // The Workflow owns the global Student/Campaign scope.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [campaign]);
+  const loading = workspaceQuery.isLoading || executionQuery.isLoading;
+  const queryError = workspaceQuery.error?.message || executionQuery.error?.message || "";
+  const displayError = error || queryError;
 
   async function perform(
     action: () => Promise<unknown>,
@@ -303,11 +270,10 @@ export default function ExecutionPage() {
     setNotice("");
     try {
       await action();
-      if (reload) await refresh();
       setNotice(message);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      if (reload) await refresh().catch(() => {});
+      if (reload) await Promise.resolve();
     } finally {
       actionLock.current = false;
       setBusy(false);
@@ -475,12 +441,12 @@ export default function ExecutionPage() {
             {data?.configuration.timezone || "UTC"}
           </span>
         </div>
-        {(error || notice) && (
+        {(displayError || notice) && (
           <div
-            className={`ex-banner ${error ? "ex-error" : ""}`}
-            role={error ? "alert" : "status"}
+            className={`ex-banner ${displayError ? "ex-error" : ""}`}
+            role={displayError ? "alert" : "status"}
           >
-            <span>{error || notice}</span>
+            <span>{displayError || notice}</span>
             <button
               aria-label="Dismiss notification"
               onClick={() => {

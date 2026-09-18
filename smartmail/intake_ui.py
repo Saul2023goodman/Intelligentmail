@@ -237,12 +237,7 @@ def intake_workspace(core, campaign_id=None, student_id=None):
                 else:
                     source_categories[source["id"]] = _legacy_category(core, source)
 
-    tasks = []
-    if campaign_id:
-        for task in core.list_tasks(campaign_id):
-            if student_id and task["student_id"] != student_id:
-                continue
-            tasks.append(core.report_task(task["id"]))
+    tasks = _task_summaries(core, campaign_id, student_id) if campaign_id else []
 
     return {
         "campaigns": campaigns,
@@ -259,6 +254,36 @@ def intake_workspace(core, campaign_id=None, student_id=None):
         "source_recognition": source_recognition,
         "tasks": tasks,
     }
+
+
+def _task_summaries(core, campaign_id, student_id):
+    """Return only the fields needed by the intake task list.
+
+    Full message bodies, source evidence, Exceptions and attachment metadata are
+    deliberately left to the existing per-Task drill-down command.
+    """
+    report = core.operations_report(campaign_id, student_id=student_id)
+    summaries = []
+    for row in report["tasks"]:
+        addresses = [entry["address"] for entry in core._db.execute(
+            "SELECT address FROM supervisor_addresses WHERE supervisor_id = ? ORDER BY address",
+            (row["supervisor_id"],))]
+        preparation = core._db.execute(
+            "SELECT p.id, p.subject, src.name AS source_name, "
+            "(SELECT count(*) FROM attachments a JOIN attachment_slots s ON s.id = a.slot_id "
+            " WHERE s.preparation_id = p.id) AS attachment_count "
+            "FROM preparations p JOIN sources src ON src.id = p.source_id "
+            "WHERE p.task_id = ? AND p.superseded_by IS NULL ORDER BY p.rowid DESC LIMIT 1",
+            (row["task_id"],)).fetchone()
+        summaries.append({
+            "task_id": row["task_id"],
+            "supervisor_name": row["supervisor_name"],
+            "institution_name": row["institution_name"],
+            "recipient_addresses": addresses,
+            "message_status": row["message_status"],
+            "preparation": dict(preparation) if preparation else None,
+        })
+    return summaries
 
 
 def import_uploaded_sources(core, campaign_id, student_id, files):

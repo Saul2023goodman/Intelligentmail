@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AppShell, Topbar } from "../../app/shell";
 import { navigate } from "../../app/routes";
 import { useWorkspaceScope } from "../../app/scope";
-import { core, human, type ReviewRow, type ReviewWorkspace } from "../../core";
+import { useCoreQuery } from "../../core/data";
+import { core, human, type ReviewRow } from "../../core";
 import Icon from "../../shared/Icon";
 import "./Review.css";
 
@@ -31,8 +32,9 @@ function Signal({ tone, children }: { tone: Tone; children?: React.ReactNode }) 
 
 export default function ReviewPage() {
   const { scope } = useWorkspaceScope();
-  const [data, setData] = useState<ReviewWorkspace | null>(null);
   const campaign = scope?.campaignId ?? "";
+  const queryState = useCoreQuery("review_workspace", { campaign_id: campaign }, { enabled: Boolean(campaign) });
+  const data = queryState.data;
   const [selectedId, setSelectedId] = useState("");
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -41,32 +43,15 @@ export default function ReviewPage() {
   const [mobile, setMobile] = useState("message");
   const [reviewed, setReviewed] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async (campaignId: string) => {
-    setLoading(true);
-    setError("");
-    try {
-      const next = campaignId ? await core("review_workspace", { campaign_id: campaignId }) : null;
-      setData(next);
-      setSelectedId((current) => next?.rows.some((row) => row.preparation.id === current)
-        ? current : next?.rows[0]?.preparation.id || "");
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load readiness workbench");
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    // Initial synchronization with the long-lived local Core worker.
-    // oxlint-disable-next-line react/set-state-in-effect
-    void load(campaign);
-  }, [campaign, load]);
-  const row = data?.rows.find((item) => item.preparation.id === selectedId) ?? null;
+  const loading = queryState.isLoading;
+  const displayError = error || queryState.error?.message || "";
+  const effectiveSelectedId = data?.rows.some((item) => item.preparation.id === selectedId)
+    ? selectedId : data?.rows[0]?.preparation.id || "";
+  const row = data?.rows.find((item) => item.preparation.id === effectiveSelectedId) ?? null;
   useEffect(() => {
     // Reset the editable field when the operator selects a different Preparation.
     // oxlint-disable-next-line react/set-state-in-effect
@@ -93,7 +78,6 @@ export default function ReviewPage() {
     setBusy(true); setError(""); setNotice("");
     try {
       await action();
-      await load(campaign);
       setNotice(message);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Core rejected the change");
@@ -118,14 +102,14 @@ export default function ReviewPage() {
         <div className="rv-heading-count"><strong>{ready}<span> / {data?.rows.length ?? 0}</span></strong><span>preparations ready</span></div>
       </div>
       <div className="rv-mobile-tabs" aria-label="Workbench panels">{["queue", "message", "checks"].map((tab) => <button key={tab} className={mobile === tab ? "active" : ""} onClick={() => setMobile(tab)}>{tab === "queue" ? "Preparations" : tab === "message" ? "Message" : "Readiness"}</button>)}</div>
-      {error && <div className="rv-status-banner blocked" role="alert"><Signal tone="blocked" /><div><strong>{error}</strong><p>Nothing was treated as successful.</p></div></div>}
+      {displayError && <div className="rv-status-banner blocked" role="alert"><Signal tone="blocked" /><div><strong>{displayError}</strong><p>Nothing was treated as successful.</p></div></div>}
       <main className={`rv-layout rv-show-${mobile}`}>
         <aside className="rv-left" aria-label="Preparations and source materials">
           <section className="rv-card rv-queue"><div className="rv-section-title"><h2>Review queue</h2><span className="rv-counter">{String(data?.rows.length ?? 0).padStart(2, "0")}</span></div>
             <div className="rv-search"><Icon name="search" size={16} /><input aria-label="Search preparations" placeholder="Find a supervisor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
             <div className="rv-filters">{["all", "blocked", "attention"].map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value === "all" ? `All ${data?.rows.length ?? 0}` : value === "blocked" ? "Blocked" : "Needs review"}</button>)}</div>
-            <div className="rv-queue-list">{entries.map((item) => { const itemTone = toneOf(item); return <button className={`rv-task ${selectedId === item.preparation.id ? "selected" : ""}`} key={item.preparation.id} onClick={() => choose(item)}>
-              <div className={`rv-initials ${itemTone}`}>{initials(item.task.supervisor.name)}</div><div><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name}</small><span className={`rv-task-note ${itemTone}`}><Signal tone={itemTone} />{reviewed.includes(item.preparation.id) ? "Review complete" : itemTone === "ready" ? "Checks passed" : itemTone === "blocked" ? "Blocking finding" : "Attachment to review"}</span></div>{selectedId === item.preparation.id && <span className="rv-selection-dot" />}
+            <div className="rv-queue-list">{entries.map((item) => { const itemTone = toneOf(item); return <button className={`rv-task ${effectiveSelectedId === item.preparation.id ? "selected" : ""}`} key={item.preparation.id} onClick={() => choose(item)}>
+              <div className={`rv-initials ${itemTone}`}>{initials(item.task.supervisor.name)}</div><div><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name}</small><span className={`rv-task-note ${itemTone}`}><Signal tone={itemTone} />{reviewed.includes(item.preparation.id) ? "Review complete" : itemTone === "ready" ? "Checks passed" : itemTone === "blocked" ? "Blocking finding" : "Attachment to review"}</span></div>{effectiveSelectedId === item.preparation.id && <span className="rv-selection-dot" />}
             </button>; })}{!loading && entries.length === 0 && <p className="rv-empty">{data?.rows.length ? "No preparations match your filters." : "Import and prepare supported source materials first."}</p>}</div>
             <div className="rv-queue-foot"><Icon name="user" size={14} />{row ? <>Student: <strong>{row.task.student.name}</strong></> : "No preparation selected"}</div>
           </section>
@@ -146,7 +130,7 @@ export default function ReviewPage() {
               <div className="rv-paper-foot"><Icon name="shield" size={13} />This is retained local content; no external mailbox draft was created.</div>
             </article> : <article className="rv-paper rv-evidence"><div className="rv-eyebrow">RETAINED SOURCE EVIDENCE</div><h2>{row.preparation.source.name}</h2><p>Associated with {row.task.supervisor.name} · {row.task.student.name}</p><dl><dt>Institution</dt><dd>{row.task.institution.name}</dd><dt>Recorded recipient</dt><dd>{recordedRecipient || "No usable address recorded"}</dd><dt>Source digest</dt><dd>{row.preparation.source.sha256}</dd><dt>Association</dt><dd><pre>{JSON.stringify(row.preparation.association, null, 2)}</pre></dd></dl><button className="rv-secondary" onClick={() => setPanel("message")}><Icon name="reply" size={15} />Back to message</button></article>}
           </> : <div className="rv-paper rv-evidence"><h2>{loading ? "Loading Core preparations…" : "No prepared communication actions"}</h2><p>Use Source mapping to import a supported bundle and create local Preparations.</p></div>}</div>
-          <div className="rv-action-bar"><div><Signal tone={tone} /><span>{notice || (row ? tone === "blocked" ? "Resolve blockers to finish review" : "Ready for operator review" : "Waiting for a Preparation")}</span></div><button className="rv-primary" disabled={!row || tone !== "ready" || reviewed.includes(selectedId)} onClick={() => { setReviewed((items) => [...items, selectedId]); setNotice("Review marked complete in this operator session. No Confirmation was created."); }}><Icon name="check" size={16} />{reviewed.includes(selectedId) ? "Reviewed" : "Mark reviewed"}</button></div>
+          <div className="rv-action-bar"><div><Signal tone={tone} /><span>{notice || (row ? tone === "blocked" ? "Resolve blockers to finish review" : "Ready for operator review" : "Waiting for a Preparation")}</span></div><button className="rv-primary" disabled={!row || tone !== "ready" || reviewed.includes(effectiveSelectedId)} onClick={() => { setReviewed((items) => [...items, effectiveSelectedId]); setNotice("Review marked complete in this operator session. No Confirmation was created."); }}><Icon name="check" size={16} />{reviewed.includes(effectiveSelectedId) ? "Reviewed" : "Mark reviewed"}</button></div>
         </section>
 
         <aside className="rv-right" aria-label="Readiness checks">

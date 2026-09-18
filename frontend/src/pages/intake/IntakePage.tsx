@@ -1,15 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import SearchField from "../../shared/SearchField";
 import Icon from "../../shared/Icon";
 import { AppShell, Topbar } from "../../app/shell";
 import { useWorkspaceScope } from "../../app/scope";
+import { useCoreQuery } from "../../core/data";
 import {
-  core,
   human,
   importSources,
   recognizeSources,
   type IntakeSource,
-  type IntakeTask,
   type IntakeWorkspace,
   type RecognitionRelation,
   type RecognitionTypeId,
@@ -46,15 +45,17 @@ function initials(name: string) {
 
 export default function IntakePage() {
   const { scope } = useWorkspaceScope();
-  const [data, setData] = useState<IntakeWorkspace | null>(null);
   const campaign = scope?.campaignId ?? "";
   const student = scope?.studentId ?? "";
+  const workspaceQuery = useCoreQuery("intake_workspace", { student_id: student }, { enabled: Boolean(student) });
+  const data: IntakeWorkspace | null = workspaceQuery.data;
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [selectedSource, setSelectedSource] = useState<SourceView | null>(null);
-  const [selectedTask, setSelectedTask] = useState<IntakeTask | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState("");
+  const taskQuery = useCoreQuery("task", { task_id: selectedTaskId }, { enabled: Boolean(selectedTaskId) });
+  const selectedTask = taskQuery.data;
   const [inspection, setInspection] = useState<{ title: string; detail: string; evidence: unknown } | null>(null);
-  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -66,30 +67,11 @@ export default function IntakePage() {
   const taskDialog = useRef<HTMLDialogElement>(null);
   const reviewDialog = useRef<HTMLDialogElement>(null);
   const dragDepth = useRef(0);
+  const loading = workspaceQuery.isLoading;
+  const displayError = error || workspaceQuery.error?.message || taskQuery.error?.message || "";
 
-  const load = useCallback(async (studentId: string) => {
-    setLoading(true); setError("");
-    try {
-      // A Student owns exactly one Campaign, so the Student chooses the intake scope.
-      if (!studentId) {
-        setData(null);
-        return;
-      }
-      const next = await core("intake_workspace", { student_id: studentId });
-      setData(next);
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Unable to load intake workspace");
-    } finally { setLoading(false); }
-  }, []);
-  useEffect(() => {
-    // Initial synchronization with the long-lived local Core worker.
-    // oxlint-disable-next-line react/set-state-in-effect
-    setSelectedSource(null);
-    setSelectedTask(null);
-    void load(student);
-  }, [load, student]);
   useEffect(() => { if (inspection) inspector.current?.showModal(); }, [inspection]);
-  useEffect(() => { if (selectedTask) taskDialog.current?.showModal(); }, [selectedTask]);
+  useEffect(() => { if (selectedTaskId) taskDialog.current?.showModal(); }, [selectedTaskId]);
   useEffect(() => {
     if (review) reviewDialog.current?.showModal();
     else reviewDialog.current?.close();
@@ -106,12 +88,12 @@ export default function IntakePage() {
   const unresolved = sources.filter((source) => source.category === "unresolved"
     && `${source.name} ${source.finding ?? ""}`.toLowerCase().includes(query.toLowerCase()));
   const tasks = (data?.tasks ?? []).filter((item) => {
-    const active = Boolean(item.task.supervisor.addresses.length);
+    const active = Boolean(item.recipient_addresses.length);
     return (filter === "all" || (filter === "active" ? active : !active))
-      && `${item.task.supervisor.name} ${item.task.institution.name} ${item.task.supervisor.addresses.join(" ")}`.toLowerCase().includes(query.toLowerCase());
+      && `${item.supervisor_name} ${item.institution_name} ${item.recipient_addresses.join(" ")}`.toLowerCase().includes(query.toLowerCase());
   });
   const currentStudent = data?.students.find((item) => item.id === student) ?? null;
-  const activeCount = data?.tasks.filter((item) => item.task.supervisor.addresses.length).length ?? 0;
+  const activeCount = data?.tasks.filter((item) => item.recipient_addresses.length).length ?? 0;
 
   const importability = useMemo(
     () => review ? reviewImportability(review.rows) : { ok: false, issues: [] as string[], advisories: [] as string[] },
@@ -166,7 +148,7 @@ export default function IntakePage() {
       // Stage two: import the operator-approved selection; zips are expanded
       // server-side and revised types persist alongside Core's own recognition.
       const result = await importSources(campaign, student, selections);
-      setData(result.workspace);
+      workspaceQuery.setData(result.workspace);
       setReview(null);
       setSelectedSource(null);
       const summary = result.import.summary;
@@ -196,7 +178,7 @@ export default function IntakePage() {
       <Topbar className="sm-topbar" breadcrumb="Source mapping" homeHref="#workflow">
         <SearchField label="Search source findings and tasks" value={query} onChange={setQuery} placeholder="Search source findings or resolved tasks…" iconSize={16} />
       </Topbar>
-      {(notice || error) && <div className="sm-notice" role={error ? "alert" : "status"}><Icon name={error ? "warning" : "check"} size={16} />{error || notice}<button aria-label="Dismiss notification" onClick={() => { setNotice(""); setError(""); }}><Icon name="close" size={15} /></button></div>}
+      {(notice || displayError) && <div className="sm-notice" role={displayError ? "alert" : "status"}><Icon name={displayError ? "warning" : "check"} size={16} />{displayError || notice}<button aria-label="Dismiss notification" onClick={() => { setNotice(""); setError(""); }}><Icon name="close" size={15} /></button></div>}
       <main className="sm-board">
         <section className="sm-sources"><div className="sm-column-heading"><Icon name="folder" size={16} /><h2>Unresolved raw sources</h2><span>{String(unresolved.length).padStart(2, "0")}</span></div><div className="sm-source-list">
           {unresolved.map((source) => <button key={source.id} className={`sm-source-card ${selectedSource?.id === source.id ? "is-selected" : ""}`} aria-pressed={selectedSource?.id === source.id} onClick={() => setSelectedSource(selectedSource?.id === source.id ? null : source)} onDoubleClick={() => inspectSource(source)}><span className="sm-file-icon slate"><Icon name="file" size={20} /></span><span className="sm-source-copy"><strong>{source.name}</strong><small>{Math.max(1, Math.round(source.size / 1024))} KB</small><span className="sm-source-meta-line"><em>{source.recognition?.label ?? (source.finding || "Core could not associate this source")}</em>{source.recognition?.revised && <b className="sm-revised-tag">Revised</b>}</span></span><Icon name="chevron" size={13} /></button>)}
@@ -213,7 +195,7 @@ export default function IntakePage() {
 
         <section className="sm-output"><div className="sm-column-heading"><Icon name="source" size={16} /><h2>Resolved tasks</h2><span>{tasks.length}</span><label className="sm-task-filter"><select aria-label="Filter resolved tasks" value={filter} onChange={(event) => setFilter(event.target.value as TaskFilter)}><option value="all">All</option><option value="active">Active</option><option value="incomplete">Missing email</option></select></label></div><div className="sm-task-list">
           {currentStudent && <div className="sm-task-student"><span className="sm-student-avatar blue">{initials(currentStudent.name)}</span><strong>{currentStudent.name}</strong><small>{data?.campaign?.name}</small><span className="sm-task-student-mail"><Icon name="mail" size={12} />{currentStudent.mailbox}</span></div>}
-          {tasks.map((item) => { const active = Boolean(item.task.supervisor.addresses.length); const preparation = item.preparations.find((value) => value.status !== "superseded"); const attachments = preparation?.attachment_slots.filter((slot) => slot.attachment).length ?? 0; return <button key={item.task.id} className={`sm-task-row ${active ? "" : "is-incomplete"}`} onClick={() => setSelectedTask(item)}><span className="sm-task-row-icon"><Icon name={preparation ? "file" : "user"} size={15} /></span><span className="sm-task-row-copy"><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name} · {item.task.supervisor.addresses.join(", ") || "no email identified"}</small></span><span className={`sm-task-badge ${preparation ? "" : "is-off"}`}><Icon name="file" size={12} />{preparation ? "Prepared" : "No draft"}</span><span className={`sm-task-badge ${attachments ? "" : "is-off"}`}><Icon name="clip" size={12} />{attachments}</span><span className={`sm-task-pill ${active ? "active" : "incomplete"}`}><i className={`sm-dot ${active ? "ready" : ""}`} />{active ? human(item.message_status) : "Missing email"}</span></button>; })}
+          {tasks.map((item) => { const active = Boolean(item.recipient_addresses.length); const preparation = item.preparation; const attachments = preparation?.attachment_count ?? 0; return <button key={item.task_id} className={`sm-task-row ${active ? "" : "is-incomplete"}`} onClick={() => setSelectedTaskId(item.task_id)}><span className="sm-task-row-icon"><Icon name={preparation ? "file" : "user"} size={15} /></span><span className="sm-task-row-copy"><strong>{item.supervisor_name}</strong><small>{item.institution_name} · {item.recipient_addresses.join(", ") || "no email identified"}</small></span><span className={`sm-task-badge ${preparation ? "" : "is-off"}`}><Icon name="file" size={12} />{preparation ? "Prepared" : "No draft"}</span><span className={`sm-task-badge ${attachments ? "" : "is-off"}`}><Icon name="clip" size={12} />{attachments}</span><span className={`sm-task-pill ${active ? "active" : "incomplete"}`}><i className={`sm-dot ${active ? "ready" : ""}`} />{active ? human(item.message_status) : "Missing email"}</span></button>; })}
           {!loading && !tasks.length && <div className="sm-empty"><Icon name="search" size={25} /><p>{data?.tasks.length ? "No matching Outreach Tasks." : "Import a supported source set for this Student and Campaign."}</p><button className="sm-button" onClick={() => { setQuery(""); setFilter("all"); }}>Clear task filters</button></div>}
         </div><div className="sm-output-note"><Icon name="shield" size={14} /><span>Core creates one Outreach Task per Student, Supervisor and Campaign. Preparation and readiness remain separate.</span></div></section>
       </main>
@@ -285,6 +267,6 @@ export default function IntakePage() {
       </div>}
     </dialog>
     <dialog ref={inspector} aria-label="Source evidence inspector" className="sm-detail" onClick={(event) => { if (event.target === event.currentTarget) { inspector.current?.close(); setInspection(null); } }}><div className="sm-detail-inner"><div className="sm-detail-top"><span>RETAINED EVIDENCE</span><button aria-label="Close inspector" onClick={() => { inspector.current?.close(); setInspection(null); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name="link" size={27} /></div><h2>{inspection?.title}</h2><p>{inspection?.detail}</p><pre>{JSON.stringify(inspection?.evidence, null, 2)}</pre><div className="sm-detail-note"><Icon name="shield" size={17} />Core remains authoritative for supported associations and readiness.</div><button className="primary full" onClick={() => { inspector.current?.close(); setInspection(null); }}>Done</button></div></dialog>
-    <dialog ref={taskDialog} aria-label="Resolved task inspector" className="sm-detail sm-task-detail" onClick={(event) => { if (event.target === event.currentTarget) { taskDialog.current?.close(); setSelectedTask(null); } }}>{selectedTask && (() => { const preparation = selectedTask.preparations.find((item) => item.status !== "superseded"); return <div className="sm-detail-inner"><div className="sm-detail-top"><span>OUTREACH TASK · {preparation?.ready ? "READY" : "IN PREPARATION"}</span><button aria-label="Close task inspector" onClick={() => { taskDialog.current?.close(); setSelectedTask(null); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name={preparation ? "file" : "user"} size={27} /></div><h2>{selectedTask.task.supervisor.name}</h2><p>{currentStudent?.name} → {selectedTask.task.supervisor.name} · {selectedTask.task.institution.name}</p><div className="sm-detail-fields"><div><span>Campaign</span><strong>{data?.campaign?.name}</strong></div><div><span>Recipient address</span><strong>{selectedTask.task.supervisor.addresses.join(", ") || "Missing — no usable address recorded"}</strong></div><div><span>Active Preparation</span><strong>{preparation ? `${preparation.source.name} · ${preparation.subject || "subject required"}` : "No supported draft associated"}</strong></div><div><span>Mailbox identity</span><strong>{selectedTask.task.mailbox.address}</strong></div><div><span>Task exceptions</span><strong>{selectedTask.task.exceptions.map((item) => human(item.code)).join(", ") || "None"}</strong></div><div><span>Readiness findings</span><strong>{preparation?.readiness_findings.map((item) => human(item.code)).join(", ") || "None"}</strong></div></div><div className="sm-detail-note"><Icon name="shield" size={17} />Corrections and attachment confirmation continue in Readiness review.</div><button className="primary full" onClick={() => { taskDialog.current?.close(); setSelectedTask(null); window.location.hash = "#review"; }}>Open readiness review</button></div>; })()}</dialog>
+    <dialog ref={taskDialog} aria-label="Resolved task inspector" className="sm-detail sm-task-detail" onClick={(event) => { if (event.target === event.currentTarget) { taskDialog.current?.close(); setSelectedTaskId(""); } }}>{selectedTask ? (() => { const preparation = selectedTask.preparations.find((item) => item.status !== "superseded"); return <div className="sm-detail-inner"><div className="sm-detail-top"><span>OUTREACH TASK · {preparation?.ready ? "READY" : "IN PREPARATION"}</span><button aria-label="Close task inspector" onClick={() => { taskDialog.current?.close(); setSelectedTaskId(""); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name={preparation ? "file" : "user"} size={27} /></div><h2>{selectedTask.task.supervisor.name}</h2><p>{currentStudent?.name} → {selectedTask.task.supervisor.name} · {selectedTask.task.institution.name}</p><div className="sm-detail-fields"><div><span>Campaign</span><strong>{data?.campaign?.name}</strong></div><div><span>Recipient address</span><strong>{selectedTask.task.supervisor.addresses.join(", ") || "Missing — no usable address recorded"}</strong></div><div><span>Active Preparation</span><strong>{preparation ? `${preparation.source.name} · ${preparation.subject || "subject required"}` : "No supported draft associated"}</strong></div><div><span>Mailbox identity</span><strong>{selectedTask.task.mailbox.address}</strong></div><div><span>Task exceptions</span><strong>{selectedTask.task.exceptions.map((item) => human(item.code)).join(", ") || "None"}</strong></div><div><span>Readiness findings</span><strong>{preparation?.readiness_findings.map((item) => human(item.code)).join(", ") || "None"}</strong></div></div><div className="sm-detail-note"><Icon name="shield" size={17} />Corrections and attachment confirmation continue in Readiness review.</div><button className="primary full" onClick={() => { taskDialog.current?.close(); setSelectedTaskId(""); window.location.hash = "#review"; }}>Open readiness review</button></div>; })() : <div className="sm-detail-inner"><h2>{taskQuery.isLoading ? "Loading task details…" : "Task details unavailable"}</h2></div>}</dialog>
   </AppShell>;
 }

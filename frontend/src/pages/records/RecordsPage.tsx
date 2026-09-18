@@ -1,11 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { AppShell, Topbar } from "../../app/shell";
 import { useWorkspaceScope } from "../../app/scope";
-import {
-  core,
-  type RecordsTaskDetail,
-  type RecordsWorkspace,
-} from "../../core";
+import { useCoreQuery } from "../../core/data";
 import Icon, { type IconName } from "../../shared/Icon";
 import {
   buildLineage,
@@ -298,51 +294,17 @@ function SectionLabel({ icon, title, count }: { icon: IconName; title: string; c
 export default function RecordsPage() {
   const { scope } = useWorkspaceScope();
   const campaign = scope?.campaignId ?? "";
-  const [data, setData] = useState<RecordsWorkspace | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
+  const workspaceQuery = useCoreQuery("records_workspace", { campaign_id: campaign }, { enabled: Boolean(campaign) });
+  const data = workspaceQuery.data;
+  const loading = workspaceQuery.isLoading;
+  const error = workspaceQuery.error?.message || "";
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [revision, setRevision] = useState(0);
   const [selectedTask, setSelectedTask] = useState("");
-  const [detail, setDetail] = useState<RecordsTaskDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
+  const detailQuery = useCoreQuery("records_task", { task_id: selectedTask }, { enabled: Boolean(selectedTask) });
+  const detail = detailQuery.data;
+  const detailLoading = detailQuery.isLoading;
   const [selectedNodeKey, setSelectedNodeKey] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    // Clear the previous scope while synchronizing this query with Core.
-    // eslint-disable-next-line react/set-state-in-effect
-    setData(null);
-    setError("");
-    if (!campaign) {
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    core("records_workspace", { campaign_id: campaign })
-      .then((value) => active && setData(value))
-      .catch((e) => active && setError(e.message))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
-  }, [campaign, revision]);
-
-  useEffect(() => {
-    let active = true;
-    // eslint-disable-next-line react/set-state-in-effect
-    setDetail(null);
-    if (!selectedTask) return;
-    setDetailLoading(true);
-    core("records_task", { task_id: selectedTask })
-      .then((value) => active && setDetail(value))
-      .catch(() => undefined)
-      .finally(() => active && setDetailLoading(false));
-    return () => {
-      active = false;
-    };
-  }, [selectedTask]);
 
   const rows = useMemo(() => (data ? buildTaskRows(data) : []), [data]);
   const filtered = useMemo(
@@ -436,7 +398,7 @@ export default function RecordsPage() {
         {error && (
           <div className="rc-notice rc-error" role="alert">
             <Icon name="warning" size={15} /><span>{error}</span>
-            <button onClick={() => setRevision((v) => v + 1)}>Retry</button>
+            <button onClick={() => void workspaceQuery.refresh()}>Retry</button>
           </div>
         )}
         <main className="rc-main">

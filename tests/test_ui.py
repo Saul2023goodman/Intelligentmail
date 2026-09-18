@@ -223,6 +223,14 @@ class UiBridgeTests(ExecutionTestCase):
         self.assertEqual(result["import"]["summary"]["new"], 1)
         self.assertEqual(len(result["preparation"]["preparation_ids"]), 1)
         self.assertEqual(len(result["workspace"]["tasks"]), 1)
+        task_summary = result["workspace"]["tasks"][0]
+        self.assertEqual(task_summary["supervisor_name"], "Dr Alex Green")
+        self.assertIn("preparation", task_summary)
+        self.assertNotIn("preparations", task_summary)
+        task_detail = dispatch(self.core, {"command": "task",
+                                           "task_id": task_summary["task_id"]})
+        self.assertEqual(task_detail["preparations"][0]["id"],
+                         result["preparation"]["preparation_ids"][0])
         categories = set(result["workspace"]["source_categories"].values())
         self.assertIn("master", categories)
         self.assertIn("drafts", categories)

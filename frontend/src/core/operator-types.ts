@@ -22,7 +22,7 @@ export type IntakeImport = {
     blocking: boolean;
   }[];
 };
-export type IntakeTask = {
+export type IntakeTaskDetail = {
   task: {
     id: string;
     campaign_id: string;
@@ -37,6 +37,19 @@ export type IntakeTask = {
   preparations: FullPreparation[];
   sources: IntakeSource[];
 };
+export type IntakeTaskSummary = {
+  task_id: string;
+  supervisor_name: string;
+  institution_name: string;
+  recipient_addresses: string[];
+  message_status: string;
+  preparation: null | {
+    id: string;
+    subject: string;
+    source_name: string;
+    attachment_count: number;
+  };
+};
 export type IntakeWorkspace = {
   campaigns: Campaign[];
   students: StudentWorkspace[];
@@ -45,7 +58,7 @@ export type IntakeWorkspace = {
   imports: IntakeImport[];
   source_categories: Record<string, string>;
   source_recognition: Record<string, SourceRecognitionAnnotation>;
-  tasks: IntakeTask[];
+  tasks: IntakeTaskSummary[];
 };
 export type IntakeImportResult = {
   import: {
@@ -66,7 +79,7 @@ export type IntakeImportResult = {
 };
 
 export type ReviewRow = {
-  task: IntakeTask["task"] & {
+  task: IntakeTaskDetail["task"] & {
     student: { id: string; name: string };
     campaign: Campaign;
   };

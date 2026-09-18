@@ -1,4 +1,4 @@
-import type { Campaign, Detail, MailboxHistory, Workspace } from "./types";
+import type { Campaign, MailboxHistory, Workspace } from "./types";
 import type {
   ExecutionWorkspace,
   PlanConfiguration,
@@ -9,6 +9,7 @@ import type {
 import type { RecordsTaskDetail, RecordsWorkspace } from "./records-types";
 import type {
   IntakeImportResult,
+  IntakeTaskDetail,
   IntakeWorkspace,
   ReviewWorkspace,
 } from "./operator-types";
@@ -16,6 +17,7 @@ import type {
   RecognitionCollection,
   RecognitionTypeId,
 } from "./recognition-types";
+import { publishCoreMutation } from "./events.ts";
 export type * from "./types";
 export type * from "./execution-types";
 export type * from "./mailbox-types";
@@ -24,7 +26,7 @@ export type * from "./operator-types";
 export type * from "./recognition-types";
 
 /** The allowlist mirrors smartmail/ui.py. Core owns all domain decisions. */
-type Commands = {
+export type Commands = {
   intake_workspace: {
     args: { campaign_id?: string; student_id?: string };
     result: IntakeWorkspace;
@@ -90,7 +92,7 @@ type Commands = {
     result: { paused?: boolean; flow?: { state: string } };
   };
   workspace: { args: { campaign_id?: string }; result: Workspace };
-  task: { args: { task_id: string }; result: Detail };
+  task: { args: { task_id: string }; result: IntakeTaskDetail & { rewrite_sources: { id: string; name: string }[] } };
   create_campaign: { args: { name: string }; result: Campaign };
   create_student: {
     args: { name: string; mailbox: string };
@@ -122,6 +124,10 @@ type Commands = {
   };
 };
 
+export type CommandName = keyof Commands;
+export type CommandArgs<K extends CommandName> = Commands[K]["args"];
+export type CommandResult<K extends CommandName> = Commands[K]["result"];
+
 type Request = {
   [K in keyof Commands]: [command: K, args: Commands[K]["args"]];
 }[keyof Commands];
@@ -141,8 +147,29 @@ export async function core<T extends Request>(
   });
   if (value.error) throw new Error(value.error);
   if (!response.ok) throw new Error("Unable to reach SmartMail Core");
+  if (MUTATING_COMMANDS.has(command)) {
+    publishCoreMutation({ command, args: args as Record<string, unknown> });
+  }
   return value.result;
 }
+
+const MUTATING_COMMANDS = new Set<CommandName>([
+  "intake_import",
+  "confirm_attachment",
+  "set_attachment_source",
+  "resolve_review_exception",
+  "execution_configure",
+  "execution_propose",
+  "execution_adjust",
+  "execution_confirm",
+  "execution_run",
+  "create_campaign",
+  "create_student",
+  "check_duplicate",
+  "refresh_mailbox",
+  "update_preparation",
+  "rewrite",
+]);
 
 export const human = (text: string) => text.replaceAll("_", " ");
 

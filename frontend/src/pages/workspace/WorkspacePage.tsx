@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { core } from "../../core";
 import type { Workspace } from "../../core";
+import { useCoreQuery } from "../../core/data";
 import { fitScale, gatewayHealth } from "./workflow-model";
 import Workflow from "./Workflow";
 import Icon from "../../shared/Icon";
@@ -22,14 +23,16 @@ const formatTime = (value: null | string) =>
 
 export default function WorkspacePage({ route }: { route: Route }) {
   const { scope, setScope } = useWorkspaceScope();
-  const [data, setData] = useState<Workspace | null>(null);
   const [studentId, setStudentId] = useState(
     () => scope?.studentId || localStorage.getItem(STUDENT_KEY) || "",
   );
+  const [campaignId, setCampaignId] = useState(scope?.campaignId || "");
+  const workspaceQuery = useCoreQuery("workspace", campaignId ? { campaign_id: campaignId } : {});
+  const data = workspaceQuery.data;
   const [selected, setSelected] = useState("mailbox");
   const [scale, setScale] = useState(1);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [newStudent, setNewStudent] = useState(false);
   const [gatewayPanel, setGatewayPanel] = useState(false);
@@ -40,7 +43,6 @@ export default function WorkspacePage({ route }: { route: Route }) {
   const frame = useRef<HTMLDivElement>(null);
   const modal = useRef<HTMLElement>(null);
   const activeChip = useRef<HTMLButtonElement>(null);
-  const revision = useRef(0);
   const studentMailbox =
     data?.mailboxes.find((mailbox) => mailbox.student_id === studentId) ??
     null;
@@ -54,26 +56,6 @@ export default function WorkspacePage({ route }: { route: Route }) {
       "",
     [],
   );
-  const load = useCallback(async (campaignId = "") => {
-    const request = ++revision.current;
-    setBusy(true);
-    setError("");
-    try {
-      const value = await core(
-        "workspace",
-        campaignId ? { campaign_id: campaignId } : {},
-      );
-      if (request === revision.current) setData(value);
-    } catch (e) {
-      if (request === revision.current) setError((e as Error).message);
-    } finally {
-      if (request === revision.current) setBusy(false);
-    }
-  }, []);
-  useEffect(() => {
-    // oxlint-disable-next-line react/set-state-in-effect -- Synchronize with the external Core store.
-    void load();
-  }, [load]);
   useEffect(() => {
     if (!data) return;
     if (!studentId || !data.mailboxes.some((mailbox) => mailbox.student_id === studentId)) {
@@ -85,28 +67,33 @@ export default function WorkspacePage({ route }: { route: Route }) {
       }
       return;
     }
-    const campaignId = campaignFor(studentId, data);
-    if (campaignId && campaignId !== data.report?.campaign.id) {
-      void load(campaignId);
+    const selectedCampaignId = campaignFor(studentId, data);
+    if (selectedCampaignId && selectedCampaignId !== campaignId) {
+      setCampaignId(selectedCampaignId);
+    }
+    if (selectedCampaignId && selectedCampaignId !== data.report?.campaign.id) {
       return;
     }
     const mailbox = data.mailboxes.find((item) => item.student_id === studentId);
-    const campaign = data.campaigns.find((item) => item.id === campaignId) ?? data.report?.campaign;
-    if (mailbox && campaignId) {
+    const campaign = data.campaigns.find((item) => item.id === selectedCampaignId) ?? data.report?.campaign;
+    if (mailbox && selectedCampaignId) {
       setScope({
         studentId,
         studentName: mailbox.student_name,
         mailbox: mailbox.address,
-        campaignId,
+        campaignId: selectedCampaignId,
         campaignName: campaign?.name ?? "",
       });
     }
-  }, [data, studentId, campaignFor, load, setScope]);
+  }, [campaignId, data, studentId, campaignFor, setScope]);
   const switchStudent = (id: string) => {
     setStudentId(id);
+    setCampaignId(campaignFor(id, data));
     localStorage.setItem(STUDENT_KEY, id);
   };
-  const reload = () => load(campaignFor(studentId, data));
+  const reload = () => workspaceQuery.refresh();
+  const busy = actionBusy;
+  const displayError = error || workspaceQuery.error?.message || "";
   const openGateway = useCallback(() => {
     setError("");
     setGatewayPanel(true);
@@ -192,7 +179,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
   }, [studentId, hasMailboxes]);
   const createStudent = async (event: React.SubmitEvent) => {
     event.preventDefault();
-    setBusy(true);
+    setActionBusy(true);
     setError("");
     try {
       const value = await core("create_student", {
@@ -203,15 +190,15 @@ export default function WorkspacePage({ route }: { route: Route }) {
       setName("");
       setMailboxAddress("");
       setStudentId(value.id);
+      setCampaignId(value.campaign_id);
       localStorage.setItem(STUDENT_KEY, value.id);
-      await load(value.campaign_id);
       setNotice(
         `已添加学生 ${value.name}（${value.mailbox}）。通过 Core CLI 导入来源材料后，任务将出现在工作流中。`,
       );
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setBusy(false);
+      setActionBusy(false);
     }
   };
   const closeDialog = () => {
@@ -222,13 +209,13 @@ export default function WorkspacePage({ route }: { route: Route }) {
   if (view !== "workflow") return null;
   const banners = (
     <>
-      {error && (
+      {displayError && (
         <div role="alert" className="banner error">
-          {error}
+          {displayError}
           <button onClick={reload}>Retry connection</button>
         </div>
       )}
-      {notice && !error && (
+      {notice && !displayError && (
         <div role="status" className="banner">
           {notice}
           <button
@@ -248,9 +235,9 @@ export default function WorkspacePage({ route }: { route: Route }) {
     >
       <div className="workspace">
         <Topbar breadcrumb="Workflow" homeHref="/" showScope={false}>
-          <span className={`connection ${error ? "offline" : ""}`}>
+          <span className={`connection ${displayError ? "offline" : ""}`}>
             <i />
-            {error
+            {displayError
               ? "Connection needs attention"
               : data
                 ? "Core connected"
@@ -261,7 +248,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
             title="Refresh Core data"
             aria-label="Refresh Core data"
             onClick={reload}
-            disabled={busy}
+            disabled={busy || workspaceQuery.isFetching}
           >
             <Icon name="refresh" size={18} />
           </button>

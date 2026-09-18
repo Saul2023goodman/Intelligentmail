@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppShell, Topbar } from '../../app/shell';
 import { useWorkspaceScope } from '../../app/scope';
-import { core, human, type Workspace, type MailboxWorkspace, type ComparisonRow } from '../../core';
+import { useCoreQuery } from '../../core/data';
+import { core, human, type ComparisonRow } from '../../core';
 import Icon from '../../shared/Icon';
 import { kindOf, statusOf, statuses, type Status } from './presentation';
 import './Mailbox.css';
@@ -17,51 +18,26 @@ function Dialog({ title, close, children }: { title: string; close: () => void; 
 }
 export default function MailboxPage() {
   const { scope } = useWorkspaceScope();
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const campaign = scope?.campaignId ?? '';
   const student = scope?.studentId ?? '';
-  const [data, setData] = useState<MailboxWorkspace | null>(null);
+  const workspaceQuery = useCoreQuery('workspace', { campaign_id: campaign }, { enabled: Boolean(campaign) });
+  const mailboxQuery = useCoreQuery('mailbox_workspace', { campaign_id: campaign, student_id: student }, { enabled: Boolean(campaign && student) });
+  const workspace = workspaceQuery.data;
+  const data = mailboxQuery.data;
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<Status | 'all'>('all');
   const [kind, setKind] = useState('all');
-  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [revision, setRevision] = useState(0);
   const [selected, setSelected] = useState<ComparisonRow | null>(null);
   const [history, setHistory] = useState(false);
-  useEffect(() => {
-    let active = true;
-    if (!campaign) {
-      return () => { active = false; };
-    }
-    core('workspace', { campaign_id: campaign }).then(w => {
-      if (!active) return;
-      setWorkspace(w);
-      setLoading(false);
-    }).catch(e => { if (active) { setError(String(e.message)); setLoading(false); } });
-    return () => { active = false; };
-  }, [campaign, revision]);
-  useEffect(() => {
-    let active = true;
-    // Clear the previous scope while synchronizing this query with Core.
-    // eslint-disable-next-line react/set-state-in-effect
-    setData(null); setSelected(null); setError('');
-    if (!campaign || !student) return;
-    setLoading(true);
-    core('mailbox_workspace', { campaign_id: campaign, student_id: student }).then(value => {
-      if (active) setData(value);
-    }).catch(e => { if (active) setError(e.message); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, [campaign, student, revision]);
+  const loading = workspaceQuery.isLoading || mailboxQuery.isLoading;
+  const displayError = error || workspaceQuery.error?.message || mailboxQuery.error?.message || '';
   async function refresh() {
     setRefreshing(true); setError(''); setNotice('');
     try {
       const result = await core('refresh_mailbox', { student_id: student });
-      const next = await core('mailbox_workspace', { campaign_id: campaign, student_id: student });
-      setData(next);
       setNotice(`Observation ${human(result.observation.status)}. ${result.observation.detail || 'Reconciliation evidence updated.'}`);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setRefreshing(false); }
@@ -79,7 +55,7 @@ export default function MailboxPage() {
       <section className="mb-heading"><div><div className="mb-eyebrow">COMMUNICATION OPERATIONS</div><h1>Mailbox <span>Reconciliation workspace</span></h1><p>What SmartMail expects. What the mailbox shows.</p></div><div className="mb-heading-actions"><button className="mb-button" onClick={() => setHistory(true)}><Icon name="clock" size={16} /> Observation history</button><button className="mb-button mb-primary" disabled={!student || !campaign || !canRead || loading || refreshing} onClick={refresh}><Icon name="refresh" size={16} />{refreshing ? 'Observing mailbox…' : 'Refresh evidence'}</button></div></section>
       <section className="mb-controls" aria-label="Mailbox evidence status"><div className="mb-observed-at"><i className={observation?.status === 'complete' ? 'complete' : ''} /><span>{observation ? `Last observation · ${date(observation.observed_at)}` : 'No mailbox observation yet'}<small>{canRead ? 'Read-only observation available' : 'Connect the dedicated 163 extension to refresh'}</small></span></div></section>
       <section className="mb-stats" aria-label="Reconciliation filters">{(['all', 'matched', 'discrepancy', 'unknown', 'external', 'reply'] as const).map(key => <button key={key} aria-pressed={status === key} className={`mb-stat ${key} ${status === key ? 'selected' : ''}`} onClick={() => setStatus(key)}><span>{key === 'all' ? 'All comparisons' : statuses[key].label}</span><strong>{loading ? '—' : key === 'all' ? rows.length : count(key)}</strong><small>{key === 'all' ? 'Current evidence' : key === 'matched' ? 'Established by Core' : key === 'discrepancy' ? 'External change detected' : key === 'unknown' ? 'Needs more evidence' : key === 'external' ? 'No local association' : 'Associated & unassociated'}</small></button>)}</section>
-      {error && <div className="mb-notice mb-error" role="alert"><Icon name="warning" size={16} /><span>{error}</span><button onClick={() => setRevision(v => v + 1)}>Retry loading</button></div>}
+      {displayError && <div className="mb-notice mb-error" role="alert"><Icon name="warning" size={16} /><span>{displayError}</span><button onClick={() => { void workspaceQuery.refresh(); void mailboxQuery.refresh(); }}>Retry loading</button></div>}
       {notice && <div className="mb-notice" role="status">{notice}</div>}
       <main className="mb-main">
         <div className="mb-toolbar"><div className="mb-tabs" aria-label="Record type">{['all', 'sent', 'schedules', 'replies'].map(k => <button aria-pressed={kind === k} className={kind === k ? 'active' : ''} key={k} onClick={() => setKind(k)}>{k === 'all' ? 'All records' : k[0].toUpperCase() + k.slice(1)}</button>)}</div><label className="mb-search"><Icon name="search" size={16} /><input aria-label="Search comparisons" placeholder="Search subject, supervisor, evidence…" value={query} onChange={e => setQuery(e.target.value)} /></label><select aria-label="Comparison status" value={status} onChange={e => setStatus(e.target.value as Status | 'all')}><option value="all">All statuses</option>{Object.entries(statuses).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></div>
