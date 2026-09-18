@@ -4,8 +4,8 @@ export const routes = {
   workflow: { hash: "#workflow", label: "Workflow", icon: "grid" },
   sources: { hash: "#source-mapping", label: "Source mapping", icon: "branch" },
   review: { hash: "#review", label: "Readiness review", icon: "shield" },
-  execution: { hash: "#execution", label: "Batch execution", icon: "send" },
   mailbox: { hash: "#mailbox", label: "Mailbox monitoring", icon: "mail" },
+  execution: { hash: "#execution", label: "Batch execution", icon: "send" },
   records: { hash: "#records", label: "Records evidence", icon: "book" },
 } as const;
 export type Route = keyof typeof routes;

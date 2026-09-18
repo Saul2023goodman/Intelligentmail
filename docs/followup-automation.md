@@ -1,52 +1,84 @@
-# Follow-up automation: trigger to execution
+# Follow-up automation: trigger to Ready Pool
 
-## Human and system responsibility
+## Responsibility boundary
 
-The operator configures one Campaign policy: delay after the latest Sent Record, maximum Follow-up count, deterministic subject and body templates, local send time, timezone, and enabled state. Saving an enabled policy is the **Follow-up Automation Confirmation**. There is no later per-message confirmation step.
+The operator configures one Campaign trigger policy: delay after the latest Sent
+Record, maximum Follow-up count, deterministic subject and body templates, local
+trigger time, timezone and enabled state. Saving an enabled policy confirms that
+SmartMail may create a linked Follow-up Action when those conditions become true.
+It does **not** authorize sending that action.
 
-SmartMail owns everything after that save: eligibility evaluation, reply gates, template rendering, linked Follow-up Action creation, exact Confirmation derivation, duplicate and readiness checks, execution entry, outcome recording, and retry refusal. A policy edit creates a new revision and invalidates pending Confirmations derived from the prior revision.
+Follow-up owns eligibility evaluation, reply gates, deterministic rendering and
+single-action creation. It stops after handing a Ready Preparation to the global
+Ready Pool. Batch execution exclusively owns selection, scheduling, exact sending
+Confirmation, duplicate/readiness rechecks, Execution Attempts and outcomes.
 
 ## Runtime flow
 
 ```mermaid
 flowchart LR
-  A[Operator saves enabled policy] --> B[Versioned automation Confirmation]
-  B --> C[30-second local scheduler tick]
-  C --> D{Follow-up Due?}
+  A[Operator confirms trigger policy] --> B[Versioned trigger configuration]
+  B --> C[Scheduler or mailbox refresh]
+  C --> D{Follow-up due?}
   D -->|No initial send / waiting| C
   D -->|Ordinary reply| H[Stopped]
   D -->|Ambiguous reply| I[Review required]
   D -->|Due| E[Render deterministic template]
-  E --> F[Create linked Follow-up Action and Ready Preparation]
-  F --> G[Derive exact per-action Confirmation]
-  G --> J{Execution safeguards pass?}
-  J -->|Mailbox unavailable| K[Confirmed queue]
-  J -->|Paused / duplicate / reply / not Ready| L[Blocked with evidence]
-  J -->|Pass| M[Execution Attempt]
-  M --> N[Mailbox evidence]
-  N --> O[Sent Record or paused unknown/failure]
+  E --> F[Create one linked Follow-up Action]
+  F --> G[Ready Preparation in global Ready Pool]
+  G --> J[Batch execution selects and plans]
+  J --> K[Exact sending Confirmation]
+  K --> L[Execution safeguards and Attempt]
+  L --> M[Mailbox evidence and immutable outcome]
 ```
 
-The scheduler calls only `process_follow_up_automation(campaign_id)`. That interface is intentionally deep: callers do not create Preparations, Confirmations, Attempts, or Sent Records themselves. Repeated calls are idempotent; an open Action prevents a second Action, an active exact Confirmation is reused, and any existing Attempt prevents automatic retry.
+The scheduler calls only `process_follow_up_automation(campaign_id)`. That interface
+may create Actions and Preparations; it never creates a sending Confirmation, an
+Execution Attempt or a mailbox request. Repeated calls are idempotent because an
+open Action keeps the Task out of the due state. Consequently one substantive due
+condition produces one Action and one Preparation.
 
 ## Trigger semantics
 
 - The anchor is the latest Sent Record for the Outreach Task.
-- The due date is the anchor's local calendar date plus `delay_days`, at the configured `send_time` in the configured IANA timezone.
-- A reliably Associated Ordinary Reply stops eligibility. A Recognized Automatic Reply does not. An ambiguous association holds the Task for review.
-- `maximum_count` counts linked Follow-up sends; only one open Follow-up Action may exist for a Task.
-- Templates may use only recorded values: `supervisor_name`, `student_name`, `institution`, and `original_subject`.
+- The due date is the anchor's local calendar date plus `delay_days`, at the
+  configured trigger time in the configured IANA timezone.
+- A reliably Associated Ordinary Reply stops eligibility. A Recognized Automatic
+  Reply does not. An ambiguous association holds the Task for review.
+- `maximum_count` counts linked Follow-up sends; only one open Follow-up Action may
+  exist for a Task.
+- Templates may use only recorded values: `supervisor_name`, `student_name`,
+  `institution` and `original_subject`.
 
-## Authorization and safety
+## Confirmation and safety
 
-The standing policy stores a revision, SHA-256 policy digest, and confirmation time. Every derived exact Confirmation records that revision and digest in its execution details and remains bound to the Preparation content and attachment digests. Saving a changed policy invalidates pending automation-derived Confirmations; the next scheduler pass regenerates content when necessary and derives a new exact Confirmation.
+The trigger policy stores a revision, SHA-256 policy digest and confirmation time.
+Every created Follow-up Action records the revision and digest that caused it. A
+policy edit applies to future eligibility evaluations; it does not rewrite or
+re-trigger an already created Action.
 
-Before any mailbox request, the existing Execution module rechecks active Confirmation, exact content, attachment bytes, Ready state, duplicate evidence, newly Associated Ordinary Replies, mailbox capability, and Execution Flow state. Unknown outcomes and failures pause the flow and are never retried by the scheduler.
+“Configured timing equals Confirmation” therefore means confirmation of trigger
+creation only. It is intentionally different from the exact sending Confirmation
+bound to Preparation content, attachment bytes and an execution plan. Batch
+execution creates that exact Confirmation and rechecks readiness, duplicate
+evidence, newly Associated Ordinary Replies, mailbox capability and Execution Flow
+state before any external request.
 
 ## Frontend integration
 
-`#mailbox` combines current mailbox monitoring with Follow-up automation because mailbox observations are the evidence that starts or stops no-reply eligibility. Its left bounded region is the only operator input surface; the right bounded regions show live monitoring, trigger status, and the policy → exact Confirmation → Attempt handoff. The page contains no domain decisions and offers no direct send control.
+`#mailbox` is the signal-and-trigger workspace. Its three-stage strip makes the
+boundary visible: Mailbox signal → Follow-up trigger → global Ready Pool. Current
+observation facts and trigger states stay in independently scrollable regions. The
+trigger policy opens in a modal so the main surface remains an operational monitor,
+and a direct handoff opens Batch execution. The page contains no send control.
 
-`FollowUpAutomationDriver` lives under the Mailbox page module but mounts at app scope. While the local desktop app is running, it evaluates the selected Campaign on mount, focus, and every 30 seconds while visible. Core owns idempotency and all external effects. The existing Batch execution page receives derived Confirmations and Attempts through its existing read model; no parallel queue was introduced. Historical Observation batches, coverage, Reconciliation findings, replies, Follow-up Actions, Confirmations, Attempts and Sent Records are inspected in Records.
+`FollowUpAutomationDriver` lives under the Mailbox module but mounts at app scope.
+While the local desktop app is running, it evaluates the selected Campaign on mount,
+focus and every 30 seconds while visible. Core owns idempotency. Triggered Ready
+Preparations appear through the existing execution queue rather than a parallel
+Follow-up queue.
 
-If the mailbox capability is unavailable, the exact Confirmation stays in the existing execution queue. If the flow is paused, the scheduler creates no Attempt. The automation currently follows the globally selected Student/Campaign scope because that scope also identifies the mailbox the extension must match.
+Records owns historical Mailbox Observations, coverage, Reconciliation findings,
+replies, Follow-up Actions, Confirmations, Attempts and Sent Records. Mailbox shows
+only the current signal and summary. Navigation places Mailbox immediately before
+Batch execution to match the ownership sequence.

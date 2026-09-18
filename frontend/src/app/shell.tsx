@@ -3,6 +3,15 @@ import Icon from "../shared/Icon";
 import { navigate, routes, type Route } from "./routes";
 import { ScopeSwitcher } from "./scope-switcher";
 
+const railLabels: Record<Route, string> = {
+  workflow: "Workflow",
+  sources: "Sources",
+  review: "Review",
+  mailbox: "Mailbox",
+  execution: "Execution",
+  records: "Records",
+};
+
 /** The shell owns one shared navigation rail; pages supply only their content. */
 export function AppShell({
   className = "",
@@ -20,11 +29,26 @@ export function AppShell({
           <span />
           <span />
         </div>
-        {(Object.keys(routes) as Route[]).map((route) => (
-          <NavigationItem key={route} route={route} active={route === activeRoute} />
-        ))}
-        <div className="rail-spacer" />
-        <div className="avatar">OP</div>
+        <div className="rail-destinations">
+          <div className="rail-group" role="group" aria-label="Preparation">
+            {(["workflow", "sources", "review"] as const).map((route) => (
+              <NavigationItem key={route} route={route} active={route === activeRoute} />
+            ))}
+          </div>
+          <div className="rail-group rail-operations" role="group" aria-label="Operations">
+            <NavigationItem route="mailbox" active={activeRoute === "mailbox"} />
+            <NavigationItem route="execution" active={activeRoute === "execution"} />
+            <NavigationItem route="records" active={activeRoute === "records"} />
+          </div>
+        </div>
+        <div className="rail-utilities">
+          <button className="rail-template" disabled title="Template library — coming soon" aria-label="Template library — coming soon">
+            <Icon name="copy" />
+            <span className="rail-label">Templates</span>
+            <span className="rail-soon">SOON</span>
+          </button>
+          <div className="avatar" title="Operator" aria-label="Operator">OP</div>
+        </div>
       </nav>
       {children}
     </div>
@@ -45,7 +69,7 @@ export function NavigationItem({
   const item = routes[route];
   return (
     <button
-      className={active ? "active" : ""}
+      className={`rail-item${route === "execution" ? " rail-execution" : ""}${active ? " active" : ""}`}
       title={label ?? item.label}
       aria-label={label ?? item.label}
       aria-current={active ? "page" : undefined}
@@ -55,6 +79,7 @@ export function NavigationItem({
       }}
     >
       <Icon name={item.icon} />
+      <span className="rail-label">{railLabels[route]}</span>
     </button>
   );
 }

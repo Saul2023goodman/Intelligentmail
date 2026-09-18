@@ -118,9 +118,6 @@ class FollowUpOperations:
                 "confirmed_at = excluded.confirmed_at, updated_at = excluded.updated_at",
                 (campaign_id, delay, maximum, subject, body, int(active), zone, clock,
                  revision, digest, confirmed_at, updated_at))
-            if changed:
-                self._invalidate_derived_confirmations(
-                    campaign_id, "follow_up_automation_configuration_changed")
         return self.get_follow_up_rule(campaign_id)
 
     def get_follow_up_rule(self, campaign_id: str) -> dict | None:
@@ -140,18 +137,6 @@ class FollowUpOperations:
             "policy_digest": row["policy_digest"], "confirmed_at": row["confirmed_at"],
             "updated_at": row["updated_at"],
         }
-
-    def _invalidate_derived_confirmations(self, campaign_id: str, reason: str) -> None:
-        rows = list(self._db.execute(
-            "SELECT c.id, c.execution_detail FROM confirmations c "
-            "JOIN follow_up_actions a ON a.preparation_id = c.preparation_id "
-            "WHERE a.campaign_id = ? AND c.status = 'active'", (campaign_id,)))
-        for row in rows:
-            execution = json.loads(row["execution_detail"])
-            if execution.get("authorization_source") == "follow_up_automation":
-                self._db.execute(
-                    "UPDATE confirmations SET status = 'invalidated', invalidated_reason = ? "
-                    "WHERE id = ?", (reason, row["id"]))
 
     # --- Deterministic eligibility --------------------------------------
 
@@ -419,19 +404,19 @@ class FollowUpOperations:
         self._revalidate(preparation_id)
         return preparation_id
 
-    # --- Standing automation Confirmation ------------------------------
+    # --- Confirmed trigger evaluation ----------------------------------
 
     def process_follow_up_automation(self, campaign_id: str) -> dict:
-        """Derive exact Confirmations and enter execution for one enabled rule.
+        """Trigger each due Action once and hand its Ready Preparation to Batch execution.
 
-        This is the small scheduler interface. It is safe to call repeatedly: an
-        open Action prevents duplicate preparation, an active Confirmation is
-        reused, and any recorded Execution Attempt prevents automatic retry.
+        This is the scheduler's only interface. It never creates a sending
+        Confirmation, an Execution Attempt, or a mailbox request. Repeated calls
+        are idempotent because an open Action keeps its Task out of the due state.
         """
         rule = self.get_follow_up_rule(campaign_id)
         result = {
             "campaign_id": campaign_id, "enabled": bool(rule and rule["enabled"]),
-            "created_action_ids": [], "confirmation_ids": [], "attempt_ids": [],
+            "created_action_ids": [], "ready_preparation_ids": [],
             "state": "not_configured" if rule is None else "disabled",
             "detail": "",
         }
@@ -440,91 +425,19 @@ class FollowUpOperations:
 
         created = self.prepare_follow_ups(campaign_id)
         result["created_action_ids"] = [action["id"] for action in created]
-        confirmations = []
-        for action in self.list_follow_up_actions(campaign_id):
-            if action["status"] == "sent" or not action["preparation_id"]:
-                continue
-            action = self._refresh_action_for_policy(action, rule)
-            preparation = action.get("preparation")
-            if not preparation or not preparation["ready"]:
-                continue
-            active = self._db.execute(
-                "SELECT * FROM confirmations WHERE preparation_id = ? AND status = 'active'",
-                (action["preparation_id"],)).fetchone()
-            if active is None:
-                confirmation = self.confirm(action["preparation_id"], execution={
-                    "kind": "immediate",
-                    "authorization_source": "follow_up_automation",
-                    "rule_revision": rule["revision"],
-                    "policy_digest": rule["policy_digest"],
-                    "trigger_due_at": action["due_at"],
-                    "configured_timezone": rule["timezone"],
-                    "configured_send_time": rule["send_time"],
-                }, confirmed_at=rule["confirmed_at"])
-            else:
-                confirmation = self._confirmation_view(active)
-            with self._db:
-                self._db.execute(
-                    "UPDATE follow_up_actions SET status = 'authorized' WHERE id = ?",
-                    (action["id"],))
-            confirmations.append(confirmation)
-
-        result["confirmation_ids"] = [item["id"] for item in confirmations]
-        flow = self._flow_state(campaign_id)
-        if flow["state"] == "paused":
-            result.update(state="paused", detail=flow["reason"])
-            return result
-        capability = self.mailbox_capabilities()["capabilities"].get("immediate_send", {})
-        if not capability.get("available"):
-            result.update(
-                state="awaiting_mailbox",
-                detail=capability.get("basis") or "Immediate sending is unavailable")
-            return result
-        pending = [confirmation for confirmation in confirmations if self._db.execute(
-            "SELECT 1 FROM execution_attempts WHERE confirmation_id = ? LIMIT 1",
-            (confirmation["id"],)).fetchone() is None]
-        if not pending:
-            result["state"] = "idle" if not confirmations else "already_entered"
-            return result
-        run = self.run_execution([item["id"] for item in pending])
-        result["attempt_ids"] = [item["id"] for item in run["attempts"]]
-        result["state"] = "paused" if run["paused"] else "executed"
-        result["detail"] = run["flow"].get("reason", "")
+        result["ready_preparation_ids"] = [
+            action["preparation_id"] for action in created
+            if (action.get("preparation") or {}).get("ready")
+        ]
+        if result["ready_preparation_ids"]:
+            result["state"] = "ready_pool"
+            result["detail"] = "Triggered Preparations entered the global Ready Pool"
+        elif created:
+            result["state"] = "preparation_required"
+            result["detail"] = "A due Action needs deterministic content before it can enter the Ready Pool"
+        else:
+            result["state"] = "idle"
         return result
-
-    def _refresh_action_for_policy(self, action: dict, rule: dict) -> dict:
-        """Make a still-open Action match the currently confirmed policy version."""
-        if action.get("policy_digest") == rule["policy_digest"]:
-            return action
-        task = self.get_task(action["task_id"])
-        anchor = self._db.execute(
-            "SELECT * FROM sent_records WHERE id = ?", (action["follows_sent_record_id"],)
-        ).fetchone()
-        rendered = self._render_templates(rule, task, anchor) if anchor else None
-        if rendered is None:
-            with self._db:
-                self._db.execute(
-                    "UPDATE follow_up_actions SET status = 'due_for_preparation', detail = ?, "
-                    "rule_revision = ?, policy_digest = ? WHERE id = ?",
-                    ("The confirmed automation template cannot be rendered from recorded values",
-                     rule["revision"], rule["policy_digest"], action["id"]))
-            return self.get_follow_up_action(action["id"])
-        current = self.get_preparation(action["preparation_id"])
-        preparation_id = current["id"]
-        if current["subject"] != rendered["subject"] or current["body"] != rendered["body"]:
-            with self._db:
-                preparation_id = self._store_prepared_action(
-                    action["id"], task, anchor, rendered["subject"], rendered["body"],
-                    template_used=True, source_id=self._initial_source_id(task["id"]))
-                self._db.execute(
-                    "UPDATE preparations SET superseded_by = ? WHERE id = ?",
-                    (preparation_id, current["id"]))
-        with self._db:
-            self._db.execute(
-                "UPDATE follow_up_actions SET status = 'prepared', preparation_id = ?, "
-                "rule_revision = ?, policy_digest = ?, detail = '' WHERE id = ?",
-                (preparation_id, rule["revision"], rule["policy_digest"], action["id"]))
-        return self.get_follow_up_action(action["id"])
 
     # --- Safeguard helpers used by Confirmation and Execution -----------
 

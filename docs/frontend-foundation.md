@@ -13,7 +13,7 @@ The original page content, controls, dialogs, and Core operations are retained.
 | Workspace | `frontend/src/pages/workspace/` | Workflow graph, the single global Student (Campaign) switcher and student creation |
 | Intake | `frontend/src/pages/intake/` | Source mapping, browser source import, Core evidence inspection and filtering |
 | Review | `frontend/src/pages/review/` | Preparation readiness, evidence inspection and supported operator corrections |
-| Mailbox | `frontend/src/pages/mailbox/` | Current mailbox monitoring, refresh, standing Follow-up Automation Confirmation and trigger status |
+| Mailbox | `frontend/src/pages/mailbox/` | Current mailbox monitoring, confirmed Follow-up trigger policy, trigger status and Ready Pool handoff |
 | Records | `frontend/src/pages/records/` | Historical mailbox observations, Reconciliation evidence and full communication lineage |
 
 ## Page development
@@ -102,6 +102,8 @@ non-responsive layout guidance.
 - `#source-mapping` retains the existing Intake deep link.
 - `#mailbox` opens the combined Mailbox monitoring and Follow-up automation workspace.
 - The former `#follow-ups` deep link redirects to `#mailbox` for compatibility.
+- Navigation places Mailbox monitoring before Batch execution to reflect the
+  signal → trigger → Ready Pool → authorize/execute sequence.
 - Hash changes drive browser back/forward and active rail state.
 - Workspace stays mounted on every route, preserving and synchronizing the global
   Student/Campaign scope. It renders no DOM while another route is active.

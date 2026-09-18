@@ -198,17 +198,17 @@ An associated reply identified by supported deterministic rules as machine-gener
 _Avoid_: Ordinary reply, semantic response classification
 
 **Follow-up Rule**:
-A supported campaign rule defining follow-up timing and count limits, optionally paired with a template for automatic preparation. A Rule by itself describes eligibility; only an enabled Follow-up Automation Confirmation authorizes unattended execution.
+A supported campaign rule defining follow-up timing and count limits, optionally paired with a template for automatic preparation. An enabled, confirmed version authorizes unattended trigger evaluation and Ready Preparation creation, never mailbox execution.
 _Avoid_: Per-message send instruction, inferred authorization
 
 **Follow-up Automation Confirmation**:
-An operator's standing authorization of one exact version of a Campaign's Follow-up Rule, content templates, and timing configuration. It permits SmartMail to derive exact per-action Confirmations while that version is enabled; it never bypasses reply, duplicate, readiness, mailbox-capability, or paused-flow checks.
-_Avoid_: Unbounded send permission, implicit approval, ordinary per-action Confirmation
+An operator's confirmation of one exact version of a Campaign's Follow-up Rule, content templates, and timing configuration. It authorizes deterministic creation of one linked Ready Preparation when the rule becomes due; it is not authorization for mailbox execution.
+_Avoid_: Sending Confirmation, unbounded send permission, implicit external-action approval
 
 **Follow-up Due**:
 The condition in which an outreach task meets its follow-up rules and has no reliably associated ordinary reply preventing eligibility.
 _Avoid_: Confirmed follow-up, permission to send
 
 **Follow-up Action**:
-A separate communication action linked to earlier outreach, prepared from a supported rule or template or by an operator. It requires an exact per-action Confirmation, which may be derived from an enabled Follow-up Automation Confirmation instead of repeated operator review.
+A separate communication action linked to earlier outreach, prepared from a supported rule or template or by an operator. Once triggered it enters the global Ready Pool and requires its own exact sending Confirmation in Batch execution.
 _Avoid_: Duplicate initial outreach, resend of the same action

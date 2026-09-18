@@ -76,10 +76,12 @@ reconciliation findings, correct local subject and recipient, confirm retained
 attachment bytes, run duplicate checks, and Rewrite from an already imported
 document. No sample campaigns or messages are inserted into the user store.
 
-Enabled Follow-up automation is the exception to repeated per-action operator review:
-the operator's saved, versioned trigger/template/time policy is a standing Follow-up
-Automation Confirmation. Core derives exact per-action Confirmations from it and still
-runs every existing execution safeguard. See [the trigger-to-execution design](followup-automation.md).
+Enabled Follow-up automation confirms only the trigger policy: the operator saves a
+versioned eligibility, template and trigger-time configuration. Core evaluates it and
+creates at most one linked Ready Preparation for a due Task. That Preparation then
+joins the global Batch execution Ready Pool; Batch execution remains the only owner
+of selection, planning, exact sending Confirmation and execution safeguards. See
+[the trigger-to-Ready-Pool design](followup-automation.md).
 
 ## Verification
 

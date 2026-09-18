@@ -176,8 +176,7 @@ export type FollowUpProcessResult = {
   campaign_id: string;
   enabled: boolean;
   created_action_ids: string[];
-  confirmation_ids: string[];
-  attempt_ids: string[];
+  ready_preparation_ids: string[];
   state: string;
   detail: string;
   workspace: FollowUpWorkspace;

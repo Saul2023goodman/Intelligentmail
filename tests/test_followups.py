@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from smartmail import SmartMail, SmartMailError
-from smartmail.mailbox import ControlledMailbox, DisabledMailbox
+from smartmail.mailbox import ControlledMailbox
 from tests.test_execution import (
     DECLARATION, DEFAULT_ROWS, DRAFT_NAME, ROOT, SUBJECT, ExecutionTestCase,
     bundle, document, draft_paragraphs, master,
@@ -447,7 +447,7 @@ class FollowUpAutomationTests(FollowUpTestCase):
                 self.campaign["id"], delay_days=3, maximum_count=2, enabled=True,
                 subject_template=SUBJECT_TEMPLATE, body_template=BODY_TEMPLATE)
 
-    def test_due_automation_derives_exact_confirmation_executes_and_is_idempotent(self):
+    def test_due_automation_enters_ready_pool_once_without_executing(self):
         initial = self.send_initial_at()
         self.at(SEND_AT + timedelta(hours=1))
         rule = self.enable_automation(delay_days=1, send_time="09:00")
@@ -455,39 +455,39 @@ class FollowUpAutomationTests(FollowUpTestCase):
 
         result = self.core.process_follow_up_automation(self.campaign["id"])
 
-        self.assertEqual(result["state"], "executed")
+        self.assertEqual(result["state"], "ready_pool")
         self.assertEqual(len(result["created_action_ids"]), 1)
-        self.assertEqual(len(result["confirmation_ids"]), 1)
-        self.assertEqual(len(result["attempt_ids"]), 1)
+        self.assertEqual(len(result["ready_preparation_ids"]), 1)
         action = self.core.get_follow_up_action(result["created_action_ids"][0])
-        self.assertEqual(action["status"], "sent")
+        self.assertEqual(action["status"], "prepared")
         self.assertEqual(action["policy_digest"], rule["policy_digest"])
-        confirmation = self.core.get_confirmation(result["confirmation_ids"][0])
-        self.assertEqual(
-            confirmation["execution"]["authorization_source"],
-            "follow_up_automation")
-        self.assertEqual(confirmation["confirmed_at"], rule["confirmed_at"])
-        self.assertEqual(len(self.mailbox.requests), 2)
-        self.assertEqual(self.state_for(initial["task_id"])["state"], "waiting")
+        self.assertEqual(self.core.list_confirmations(self.campaign["id"]), [])
+        ready = next(row for row in self.core.execution_queue(self.campaign["id"])
+                     if row["preparation_id"] == action["preparation_id"])
+        self.assertEqual(ready["state"], "ready_to_authorize")
+        self.assertEqual(len(self.mailbox.requests), 1)
+        self.assertEqual(self.state_for(initial["task_id"])["state"], "follow_up_open")
 
         again = self.core.process_follow_up_automation(self.campaign["id"])
         self.assertEqual(again["created_action_ids"], [])
-        self.assertEqual(len(self.mailbox.requests), 2)
+        self.assertEqual(again["ready_preparation_ids"], [])
+        self.assertEqual(len(self.mailbox.requests), 1)
 
-    def test_unavailable_mailbox_keeps_exact_confirmation_queued_without_attempt(self):
+    def test_trigger_never_depends_on_or_touches_mailbox_execution(self):
         self.send_initial_at()
         self.enable_automation(delay_days=1)
-        self.core.mailbox = DisabledMailbox()
+        fresh = ControlledMailbox(default="failed")
+        self.core.mailbox = fresh
         self.at(SEND_AT + timedelta(days=2))
 
         result = self.core.process_follow_up_automation(self.campaign["id"])
 
-        self.assertEqual(result["state"], "awaiting_mailbox")
-        self.assertEqual(len(result["confirmation_ids"]), 1)
-        self.assertEqual(result["attempt_ids"], [])
+        self.assertEqual(result["state"], "ready_pool")
+        self.assertEqual(len(result["ready_preparation_ids"]), 1)
         self.assertEqual(
             self.core.get_follow_up_action(result["created_action_ids"][0])["status"],
-            "authorized")
+            "prepared")
+        self.assertEqual(fresh.requests, [])
         self.assertEqual(len(self.core.list_execution_attempts(self.campaign["id"])), 1)
 
     def test_ordinary_reply_prevents_automatic_preparation_and_execution(self):
@@ -500,7 +500,7 @@ class FollowUpAutomationTests(FollowUpTestCase):
 
         self.assertEqual(result["state"], "idle")
         self.assertEqual(result["created_action_ids"], [])
-        self.assertEqual(result["confirmation_ids"], [])
+        self.assertEqual(result["ready_preparation_ids"], [])
         self.assertEqual(self.state_for(preparation["task_id"])["state"],
                          "ordinary_reply_received")
 

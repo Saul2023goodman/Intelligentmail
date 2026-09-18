@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { AppShell, Topbar } from "../../app/shell";
 import { PageHeader } from "../../app/page-header";
 import { navigate } from "../../app/routes";
@@ -18,7 +18,7 @@ const STATE_LABEL: Record<string, string> = {
   no_initial_send: "等待首封",
   ordinary_reply_received: "已有普通回复",
   reply_review_required: "回复待核对",
-  follow_up_open: "已进入执行",
+  follow_up_open: "已进入 Ready Pool",
   maximum_reached: "已达上限",
   due: "触发到期",
   waiting: "等待触发",
@@ -57,6 +57,22 @@ function StatusRow({ item }: { item: FollowUpStatus }) {
   );
 }
 
+function ConfigDialog({ close, children }: { close: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = ref.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return (
+    <dialog className="mm-config-dialog" ref={ref} onCancel={close} onClick={(event) => {
+      if (event.target === event.currentTarget) close();
+    }}>
+      {children}
+    </dialog>
+  );
+}
+
 export default function MailboxPage() {
   const { scope } = useWorkspaceScope();
   const campaignId = scope?.campaignId ?? "";
@@ -92,6 +108,7 @@ export default function MailboxPage() {
   const [hydratedRevision, setHydratedRevision] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
 
@@ -137,14 +154,15 @@ export default function MailboxPage() {
         const processed = await core("followup_process", { campaign_id: campaignId });
         query.setData(processed.workspace);
         setNotice(
-          processed.state === "awaiting_mailbox"
-            ? "配置已确认；已到期动作已进入队列，等待邮箱执行能力。"
-            : "配置已确认，系统已完成一次触发检查。",
+          processed.state === "ready_pool"
+            ? `触发策略已确认；${processed.ready_preparation_ids.length} 个动作已进入 Batch execution 的 Ready Pool。`
+            : "触发策略已确认，系统已完成一次到期检查。",
         );
       } else {
         query.setData(configured.workspace);
         setNotice("自动 Follow-up 已停用；不会派生新的动作。 ");
       }
+      setConfigOpen(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -176,165 +194,108 @@ export default function MailboxPage() {
   const queryError = query.error?.message || workspaceQuery.error?.message || mailboxQuery.error?.message || "";
   const displayError = error || queryError;
 
+  const openActions = (data?.actions ?? []).filter((action) => action.status !== "sent");
   return (
     <AppShell className="followup-page mailbox-monitor-page" activeRoute="mailbox">
       <div className="workspace">
-        <Topbar breadcrumb="Mailbox monitoring" homeHref="#workflow">
-          <span className={`fu-live ${rule?.enabled ? "is-on" : ""}`}>
-            <i /> {observation ? `Observed ${formatTime(observation.observed_at)}` : "No observation"}
+        <Topbar breadcrumb="Mailbox monitor" homeHref="#workflow">
+          <span className={`fu-live ${observation ? "is-on" : ""}`}>
+            <i /> {observation ? `Observed ${formatTime(observation.observed_at)}` : "Awaiting mailbox evidence"}
           </span>
         </Topbar>
         <PageHeader
-          eyebrow="Mailbox monitoring"
-          title="Mailbox & Follow-up"
-          subtitle="Observe replies, evaluate triggers, and hand confirmed actions to Execution."
-          badge={rule?.enabled ? `Automation v${rule.revision}` : "Automation off"}
-          actions={
-            <>
-              <button className="fu-button" onClick={() => navigate("records")}>
-                <Icon name="book" size={15} /> 对账与历史证据
-              </button>
-              <button
-                className="fu-button fu-primary"
-                disabled={loading || busy || refreshing || !canRead}
-                onClick={refreshMailbox}
-              >
-                <Icon name="refresh" size={15} /> {refreshing ? "正在监测…" : "刷新邮箱监测"}
-              </button>
-            </>
-          }
+          eyebrow="Signal monitoring"
+          title="Mailbox monitor"
+          subtitle="Mailbox evidence drives one Follow-up trigger; Batch execution owns every send."
+          badge={rule?.enabled ? `Trigger v${rule.revision}` : "Trigger off"}
+          actions={<>
+            <button className="fu-button" onClick={() => setConfigOpen(true)}><Icon name="filter" size={15} /> 配置 Follow-up 触发</button>
+            <button className="fu-button" onClick={() => navigate("records")}><Icon name="book" size={15} /> 历史证据</button>
+            <button className="fu-button fu-primary" disabled={loading || refreshing || !canRead} onClick={refreshMailbox}>
+              <Icon name="refresh" size={15} /> {refreshing ? "监测中…" : "刷新邮箱"}
+            </button>
+          </>}
         />
         {(displayError || notice) && (
           <div className={`fu-banner ${displayError ? "is-error" : ""}`} role={displayError ? "alert" : "status"}>
             <span>{displayError || notice}</span>
-            <button aria-label="Dismiss" onClick={() => { setError(""); setNotice(""); }}>
-              <Icon name="close" size={14} />
-            </button>
+            <button aria-label="Dismiss" onClick={() => { setError(""); setNotice(""); }}><Icon name="close" size={14} /></button>
           </div>
         )}
-        <main className="fu-main" aria-busy={loading || busy}>
-          <form className="fu-panel fu-config" onSubmit={save}>
-            <header className="fu-panel-head">
-              <span><Icon name="shield" size={17} /></span>
-              <div>
-                <h2>触发与授权配置</h2>
-                <p>保存并启用即构成持续 Confirmation</p>
-              </div>
-              <label className="fu-switch">
-                <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-                <span />
-                {enabled ? "启用" : "停用"}
-              </label>
-            </header>
-            <div className="fu-config-scroll">
-              <section className="fu-section">
-                <h3>触发条件</h3>
-                <div className="fu-fixed-rules">
-                  <span><Icon name="check" size={13} /> 无普通回复</span>
-                  <span><Icon name="check" size={13} /> 自动回复不阻断</span>
-                  <span><Icon name="check" size={13} /> 歧义回复暂停</span>
-                </div>
-                <div className="fu-fields two">
-                  <label>首次 / 上次发送后
-                    <span className="fu-suffix"><input type="number" min="0" required value={delay} onChange={(e) => setDelay(e.target.value)} /> 天</span>
-                  </label>
-                  <label>最多 Follow-up
-                    <span className="fu-suffix"><input type="number" min="1" required value={maximum} onChange={(e) => setMaximum(e.target.value)} /> 次</span>
-                  </label>
-                </div>
-              </section>
-              <section className="fu-section">
-                <h3>执行时间</h3>
-                <div className="fu-fields two">
-                  <label>本地时间<input type="time" required value={sendTime} onChange={(e) => setSendTime(e.target.value)} /></label>
-                  <label>时区
-                    <select value={timezone} onChange={(e) => setTimezone(e.target.value)}>
-                      {ZONES.map((zone) => <option key={zone}>{zone}</option>)}
-                    </select>
-                  </label>
-                </div>
-              </section>
-              <section className="fu-section fu-template">
-                <h3>确定性内容模板</h3>
-                <p>允许字段：supervisor_name、student_name、institution、original_subject</p>
-                <label>主题模板<input required={enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Re: {original_subject}" /></label>
-                <label>正文模板<textarea required={enabled} rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Dear {supervisor_name}, …" /></label>
-              </section>
-            </div>
-            <footer className="fu-config-foot">
-              <span><Icon name="shield" size={13} /> 内容或时间变更会生成新授权版本</span>
-              <button className="fu-button fu-primary" disabled={busy || !campaignId}>
-                {busy ? "正在保存…" : enabled ? "保存并确认自动跟进" : "保存停用状态"}
-              </button>
-            </footer>
-          </form>
+        <main className="mm-main" aria-busy={loading || busy}>
+          <section className="mm-flow" aria-label="Mailbox to execution flow">
+            <article className="is-current"><span>01</span><Icon name="mail" size={18} /><div><strong>Mailbox signal</strong><small>read-only observation</small></div></article>
+            <i><Icon name="arrow" size={14} /></i>
+            <article className={rule?.enabled ? "is-current" : ""}><span>02</span><Icon name="reply" size={18} /><div><strong>Follow-up trigger</strong><small>evaluate and prepare once</small></div></article>
+            <i><Icon name="arrow" size={14} /></i>
+            <article><span>03</span><Icon name="database" size={18} /><div><strong>Global Ready Pool</strong><small>owned by Batch execution</small></div></article>
+          </section>
 
-          <section className="fu-operations">
-            <div className="fu-overview">
-              <div className="fu-metrics">
-                <article><span>监测批次</span><strong>{mailboxSummary?.observation_count ?? 0}</strong><small>保留在 Records</small></article>
-                <article><span>观察邮件</span><strong>{mailboxSummary?.message_count ?? 0}</strong><small>只读邮箱证据</small></article>
-                <article><span>等待触发</span><strong>{data?.summary.waiting ?? 0}</strong><small>按已确认时间计算</small></article>
-                <article><span>开放动作</span><strong>{data?.summary.open_actions ?? 0}</strong><small>已交给 Execution</small></article>
+          <section className="mm-dashboard">
+            <section className="mm-card mm-monitor">
+              <header><span><Icon name="mail" size={18} /></span><div><h2>Current mailbox signal</h2><p>{scope?.mailbox || "No Student mailbox selected"}</p></div><b className={canRead ? "is-on" : ""}>{canRead ? "READABLE" : "OFFLINE"}</b></header>
+              <div className="mm-monitor-body">
+                <div className="mm-signal">
+                  <span className={observation?.status === "complete" ? "is-complete" : ""}><Icon name="refresh" size={21} /></span>
+                  <div><strong>{observation ? human(observation.status) : "No observation"}</strong><small>{observation ? formatTime(observation.observed_at) : "Connect the dedicated extension"}</small></div>
+                </div>
+                <dl className="mm-facts">
+                  <div><dt>Monitoring runs</dt><dd>{mailboxSummary?.observation_count ?? 0}</dd></div>
+                  <div><dt>Observed messages</dt><dd>{mailboxSummary?.message_count ?? 0}</dd></div>
+                  <div><dt>Latest batch</dt><dd>{observation?.messages.length ?? 0}</dd></div>
+                  <div><dt>Coverage</dt><dd>{observation ? observation.evidence_coverage.complete ? "reported scope complete" : "limited" : "none"}</dd></div>
+                </dl>
+                <p className="mm-boundary"><Icon name="shield" size={13} /> Observation changes eligibility only. It never sends and never grants sending authority.</p>
               </div>
-              <div className={`fu-mailbox-strip ${canRead ? "is-ready" : ""}`}>
-                <span className="fu-mailbox-icon"><Icon name="mail" size={17} /></span>
-                <span>
-                  <strong>{scope?.mailbox || "未选择学生邮箱"}</strong>
-                  <small>
-                    {observation
-                      ? `${human(observation.status)} · ${observation.messages.length} messages · coverage ${observation.evidence_coverage.complete ? "complete in reported scope" : "limited"}`
-                      : canRead ? "网关可读，尚无保留监测批次" : "连接当前学生的 163 邮箱扩展后才能刷新"}
-                  </small>
-                </span>
-                <button onClick={() => navigate("records")}>查看证据链 <Icon name="arrow" size={12} /></button>
-              </div>
-            </div>
-
-            <section className="fu-panel fu-status-panel">
-              <header className="fu-panel-head">
-                <span><Icon name="clock" size={17} /></span>
-                <div><h2>邮箱驱动的触发监视</h2><p>{data?.summary.tasks ?? 0} 个 Outreach Task · 普通回复会停止 Follow-up</p></div>
-                <span className={`fu-capability ${data?.availability.available ? "is-ready" : ""}`}>
-                  {data?.flow.state === "paused" ? "执行已暂停" : data?.availability.available ? "邮箱可执行" : "等待邮箱"}
-                </span>
-              </header>
-              <div className="fu-list">
-                {sortedStatuses.map((item) => <StatusRow key={item.task_id} item={item} />)}
-                {!sortedStatuses.length && <div className="fu-empty"><Icon name="reply" /> 当前 Campaign 尚无 Outreach Task</div>}
-              </div>
+              <footer><button onClick={() => navigate("records")}>Inspect observations & reconciliation <Icon name="arrow" size={12} /></button></footer>
             </section>
 
-            <section className="fu-panel fu-audit-panel">
-              <header className="fu-panel-head">
-                <span><Icon name="book" size={17} /></span>
-                <div><h2>进入 Execution</h2><p>策略 Confirmation → 精确 Confirmation → Attempt；完整证据在 Records</p></div>
-              </header>
-              <div className="fu-audit-list">
-                {(data?.actions ?? []).slice().reverse().map((action) => (
-                  <article key={action.id}>
-                    <span className={`fu-state-dot is-${action.status === "sent" ? "green" : action.attempt ? "amber" : "violet"}`} />
-                    <div>
-                      <strong>Follow-up #{action.sequence} · {human(action.status)}</strong>
-                      <small>{action.preparation?.subject || action.detail || "等待生成确定内容"}</small>
-                    </div>
-                    <dl>
-                      <dt>触发</dt><dd>{formatTime(action.due_at)}</dd>
-                      <dt>授权</dt><dd>{action.confirmation ? `v${action.rule_revision}` : "—"}</dd>
-                      <dt>结果</dt><dd>{action.attempt ? human(action.attempt.state) : "未尝试"}</dd>
-                    </dl>
-                  </article>
-                ))}
-                {!data?.actions.length && <div className="fu-empty"><Icon name="book" /> 尚未触发 Follow-up Action</div>}
+            <section className="mm-card mm-trigger">
+              <header><span><Icon name="reply" size={18} /></span><div><h2>Follow-up trigger</h2><p>One due Task creates one Ready Preparation</p></div><b className={rule?.enabled ? "is-on" : ""}>{rule?.enabled ? "ACTIVE" : "OFF"}</b></header>
+              <div className="mm-policy">
+                <div><span>Delay</span><strong>{rule ? `${rule.delay_days} days` : "—"}</strong></div>
+                <div><span>Trigger time</span><strong>{rule?.send_time || "—"}</strong></div>
+                <div><span>Maximum</span><strong>{rule ? rule.maximum_count : "—"}</strong></div>
+                <div><span>Waiting</span><strong>{data?.summary.waiting ?? 0}</strong></div>
+                <button onClick={() => setConfigOpen(true)}>Edit trigger policy</button>
+              </div>
+              <div className="mm-trigger-list">
+                {sortedStatuses.map((item) => <StatusRow key={item.task_id} item={item} />)}
+                {!sortedStatuses.length && <div className="fu-empty"><Icon name="reply" /> No Outreach Tasks in this Campaign</div>}
               </div>
             </section>
           </section>
+
+          <section className="mm-ready">
+            <header><span><Icon name="database" size={16} /></span><div><h2>Ready Pool handoff</h2><p>Follow-up stops here. Selection, scheduling, exact Confirmation and send live in Batch execution.</p></div><b>{openActions.filter((action) => action.preparation?.ready).length} ready</b><button className="fu-button fu-primary" onClick={() => navigate("execution")}>Open Batch execution <Icon name="arrow" size={13} /></button></header>
+            <div className="mm-ready-list">
+              {openActions.slice().reverse().map((action) => (
+                <article key={action.id}>
+                  <span className={`fu-state-dot is-${action.preparation?.ready ? "green" : "amber"}`} />
+                  <div><strong>{action.preparation?.subject || `Follow-up #${action.sequence}`}</strong><small>{formatTime(action.due_at)} · trigger policy v{action.rule_revision}</small></div>
+                  <em>{action.preparation?.ready ? "READY POOL" : "PREPARATION REQUIRED"}</em>
+                </article>
+              ))}
+              {!openActions.length && <p>No triggered Follow-up Action is waiting in the Ready Pool.</p>}
+            </div>
+          </section>
         </main>
-        <footer className="fu-footer">
-          <span><Icon name="shield" size={13} /> Mailbox only observes and triggers; every external action still uses the Execution Flow</span>
-          <span>{rule?.confirmed_at ? `Automation confirmed ${formatTime(rule.confirmed_at)}` : "No standing Confirmation"}</span>
-        </footer>
+        <footer className="fu-footer"><span><Icon name="shield" size={13} /> One module, one transition: Mailbox observes · Follow-up triggers · Batch execution confirms and sends</span><span>{rule?.confirmed_at ? `Trigger confirmed ${formatTime(rule.confirmed_at)}` : "No trigger policy"}</span></footer>
       </div>
+
+      {configOpen && (
+        <ConfigDialog close={() => !busy && setConfigOpen(false)}>
+          <form className="fu-config" onSubmit={save}>
+            <header className="mm-dialog-head"><div><span>FOLLOW-UP TRIGGER</span><h2>Configure deterministic handoff</h2><p>Saving confirms trigger creation only; it never confirms a send.</p></div><button type="button" aria-label="Close trigger configuration" onClick={() => setConfigOpen(false)}><Icon name="close" /></button></header>
+            <div className="fu-config-scroll">
+              <section className="fu-section mm-enable-row"><div><h3>Trigger automation</h3><p>Evaluate on mailbox refresh and background scheduler ticks.</p></div><label className="fu-switch"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span />{enabled ? "启用" : "停用"}</label></section>
+              <section className="fu-section"><h3>Eligibility and timing</h3><div className="fu-fixed-rules"><span><Icon name="check" size={13} /> 无普通回复</span><span><Icon name="check" size={13} /> 自动回复不阻断</span><span><Icon name="check" size={13} /> 歧义回复暂停</span></div><div className="fu-fields two"><label>上次发送后<span className="fu-suffix"><input type="number" min="0" required value={delay} onChange={(e) => setDelay(e.target.value)} /> 天</span></label><label>最多 Follow-up<span className="fu-suffix"><input type="number" min="1" required value={maximum} onChange={(e) => setMaximum(e.target.value)} /> 次</span></label><label>触发时间<input type="time" required value={sendTime} onChange={(e) => setSendTime(e.target.value)} /></label><label>时区<select value={timezone} onChange={(e) => setTimezone(e.target.value)}>{ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></label></div></section>
+              <section className="fu-section fu-template"><h3>Ready Preparation template</h3><p>允许字段：supervisor_name、student_name、institution、original_subject</p><label>主题模板<input required={enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Re: {original_subject}" /></label><label>正文模板<textarea required={enabled} rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Dear {supervisor_name}, …" /></label></section>
+            </div>
+            <footer className="fu-config-foot"><span><Icon name="database" size={13} /> Triggered content enters Batch execution as Ready, never directly Sent</span><button className="fu-button fu-primary" disabled={busy || !campaignId}>{busy ? "保存中…" : enabled ? "保存并确认触发策略" : "保存停用状态"}</button></footer>
+          </form>
+        </ConfigDialog>
+      )}
     </AppShell>
   );
 }
