@@ -315,6 +315,47 @@ class PreparationOperations:
             self._correct_field(preparation_id, "subject", subject)
         return self.get_preparation(preparation_id)
 
+    def update_preparation_subjects(self, updates: list[dict]) -> dict:
+        """Record operator subjects for several Preparations as one reviewed batch.
+
+        The batch is only a convenience around the same per-Preparation correction
+        rules: subjects stay operator-supplied, readiness is recomputed per
+        Preparation, and a changed subject invalidates that Preparation's active
+        Confirmation. The whole batch is validated before any write and shares one
+        transaction, so a rejected entry leaves every Preparation untouched.
+        """
+        if not isinstance(updates, list) or not updates:
+            raise SmartMailError("Select at least one Preparation to correct")
+        entries: list[tuple[str, str]] = []
+        for entry in updates:
+            if not isinstance(entry, dict):
+                raise SmartMailError("Each batch entry must name a Preparation and a subject")
+            preparation_id = entry.get("preparation_id")
+            subject = entry.get("subject")
+            if not isinstance(preparation_id, str) or not isinstance(subject, str) \
+                    or not subject.strip():
+                raise SmartMailError(
+                    "A non-blank subject is required; SmartMail never invents one")
+            entries.append((preparation_id, subject.strip()))
+        if len({preparation_id for preparation_id, _ in entries}) != len(entries):
+            raise SmartMailError("A Preparation may appear only once in a subject batch")
+        # Validate the whole batch first: an unusable entry must not leave an
+        # earlier Preparation corrected.
+        for preparation_id, _ in entries:
+            self._require_local_preparation(preparation_id)
+        with self._db:
+            self._db.execute("BEGIN IMMEDIATE")
+            for preparation_id, subject in entries:
+                if self._db.execute("SELECT subject FROM preparations WHERE id = ?",
+                                    (preparation_id,)).fetchone()["subject"] == subject:
+                    continue
+                self._correct_field(preparation_id, "subject", subject)
+                self._db.execute(
+                    "UPDATE confirmations SET status = 'invalidated', invalidated_reason = 'content_changed' "
+                    "WHERE preparation_id = ? AND status = 'active'", (preparation_id,))
+        return {"count": len(entries), "preparations": [
+            self.get_preparation(preparation_id) for preparation_id, _ in entries]}
+
     def update_preparation_fields(self, preparation_id: str, subject: str, recipient: str) -> dict:
         """Atomically correct a local draft using existing correction/readiness rules.
 

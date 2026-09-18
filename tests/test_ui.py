@@ -154,6 +154,22 @@ class UiBridgeTests(ExecutionTestCase):
         self.assertEqual(len(result['corrections']), len(preparation['corrections']) + 2)
         self.assertEqual(self.mailbox.requests, [])
 
+    def test_batch_subject_command_records_operator_subjects_and_revalidates(self):
+        preparation, _ = self.ready_preparation(subject=None, attach=False)
+        result = dispatch(self.core, {"command": "update_preparation_subjects",
+                                      "updates": [{"preparation_id": preparation["id"],
+                                                   "subject": "PhD supervision enquiry"}]})
+        self.assertEqual(result["count"], 1)
+        self.assertTrue(result["preparations"][0]["ready"])
+        self.assertEqual(self.core.get_preparation(preparation["id"])["subject"],
+                         "PhD supervision enquiry")
+        for updates in ("not a list", [], [{"preparation_id": preparation["id"], "subject": " "}]):
+            with self.assertRaises(SmartMailError):
+                dispatch(self.core, {"command": "update_preparation_subjects", "updates": updates})
+        self.assertEqual(self.core.get_preparation(preparation["id"])["subject"],
+                         "PhD supervision enquiry")
+        self.assertEqual(self.mailbox.requests, [])
+
     def test_source_rewrite_preserves_history_and_drops_authorization(self):
         preparation, _ = self.ready_preparation()
         confirmation = self.core.confirm(preparation['id'])

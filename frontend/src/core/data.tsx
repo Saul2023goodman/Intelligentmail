@@ -22,6 +22,7 @@ const MUTATION_IMPACTS: Record<string, string[]> = {
   resolve_review_exception: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
   check_duplicate: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
   update_preparation: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
+  update_preparation_subjects: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
   rewrite: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
   refresh_mailbox: ["workspace", "mailbox_workspace", "records_workspace", "records_task"],
   execution_configure: ["execution_workspace", "records_workspace"],

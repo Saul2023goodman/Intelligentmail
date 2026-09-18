@@ -140,6 +140,10 @@ export type Commands = {
     args: { preparation_id: string; subject: string; recipient: string };
     result: unknown;
   };
+  update_preparation_subjects: {
+    args: { updates: { preparation_id: string; subject: string }[] };
+    result: { count: number; preparations: import("./records-types").FullPreparation[] };
+  };
   rewrite: {
     args: { preparation_id: string; source_id: string };
     result: unknown;
@@ -191,6 +195,7 @@ const MUTATING_COMMANDS = new Set<CommandName>([
   "check_duplicate",
   "refresh_mailbox",
   "update_preparation",
+  "update_preparation_subjects",
   "rewrite",
 ]);
 

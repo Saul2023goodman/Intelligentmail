@@ -27,6 +27,24 @@ function initials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(-2).map((part) => part[0]).join("").toUpperCase();
 }
 
+/** Subjects are operator corrections; placeholders only copy retained Task evidence. */
+const PLACEHOLDERS = ["{supervisor}", "{institution}", "{student}"] as const;
+
+function fillTemplate(row: ReviewRow, value: string) {
+  return value.replaceAll("{supervisor}", row.task.supervisor.name)
+    .replaceAll("{institution}", row.task.institution.name)
+    .replaceAll("{student}", row.task.student.name);
+}
+
+function lacksSubject(row: ReviewRow) {
+  return row.preparation.readiness_findings.some(
+    (finding) => finding.code === "missing_subject" && finding.blocking);
+}
+
+function paragraphsOf(body: string) {
+  return body.split(/\n{2,}/).map((paragraph) => paragraph.trim()).filter(Boolean);
+}
+
 function Signal({ tone, children }: { tone: Tone; children?: React.ReactNode }) {
   return <span className={`rv-signal ${tone}`}><Icon name={tone === "ready" ? "check" : tone === "blocked" ? "stop" : "warning"} size={13} />{children}</span>;
 }
@@ -44,6 +62,10 @@ export default function ReviewPage() {
   const [mobile, setMobile] = useState("message");
   const [reviewed, setReviewed] = useState<string[]>([]);
   const [subject, setSubject] = useState("");
+  const [batch, setBatch] = useState(false);
+  const [picked, setPicked] = useState<string[]>([]);
+  const [template, setTemplate] = useState("");
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -74,6 +96,14 @@ export default function ReviewPage() {
   const slot = row?.preparation.attachment_slots.find((item) => !item.attachment)
     ?? row?.preparation.attachment_slots[0] ?? null;
   const recordedRecipient = row?.task.supervisor.addresses[0] ?? "";
+  const selectedRows = useMemo(
+    () => (data?.rows ?? []).filter((item) => picked.includes(item.preparation.id)),
+    [data, picked]);
+  const subjectOf = (item: ReviewRow) =>
+    overrides[item.preparation.id] ?? fillTemplate(item, template);
+  const blankCount = selectedRows.filter((item) => !subjectOf(item).trim()).length;
+  const paragraphs = row ? paragraphsOf(row.preparation.body) : [];
+  const missingSubjectCount = (data?.rows ?? []).filter(lacksSubject).length;
 
   async function mutate(action: () => Promise<unknown>, message: string) {
     setBusy(true); setError(""); setNotice("");
@@ -92,6 +122,41 @@ export default function ReviewPage() {
       : first === "missing_subject" ? "subject"
         : item.preparation.attachment_slots.some((attachment) => !attachment.attachment) ? "attachment" : "source");
     setNotice("");
+  }
+
+  function toggleBatch() {
+    const next = !batch;
+    setBatch(next);
+    setError(""); setNotice("");
+    if (next) {
+      // The batch exists for the common case: several Preparations still lack a subject.
+      setPicked((data?.rows ?? []).filter(lacksSubject).map((item) => item.preparation.id));
+      setPanel("batch");
+    } else {
+      setPicked([]); setOverrides({}); setPanel("message");
+    }
+  }
+
+  function togglePicked(id: string) {
+    setPicked((items) => items.includes(id) ? items.filter((item) => item !== id) : [...items, id]);
+    setOverrides((current) => {
+      const next = { ...current };
+      delete next[id];
+      return next;
+    });
+  }
+
+  async function applySubjects() {
+    const updates = selectedRows.map(
+      (item) => ({ preparation_id: item.preparation.id, subject: subjectOf(item).trim() }));
+    if (!updates.length || updates.some((update) => !update.subject)) {
+      setError("Every selected Preparation needs a non-blank subject.");
+      return;
+    }
+    await mutate(() => core("update_preparation_subjects", { updates }),
+      `${updates.length} subject${updates.length === 1 ? "" : "s"} recorded as operator corrections; `
+      + "readiness recomputed and any affected Confirmation invalidated.");
+    setBatch(false); setPicked([]); setOverrides({}); setPanel("message");
   }
 
   return <AppShell className="review-page" activeRoute="review">
@@ -113,9 +178,12 @@ export default function ReviewPage() {
           <section className="rv-card rv-queue"><div className="rv-section-title"><h2>Review queue</h2><span className="rv-counter">{String(data?.rows.length ?? 0).padStart(2, "0")}</span></div>
             <div className="rv-search"><Icon name="search" size={16} /><input aria-label="Search preparations" placeholder="Find a supervisor…" value={query} onChange={(event) => setQuery(event.target.value)} /></div>
             <div className="rv-filters">{["all", "blocked", "attention"].map((value) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{value === "all" ? `All ${data?.rows.length ?? 0}` : value === "blocked" ? "Blocked" : "Needs review"}</button>)}</div>
-            <div className="rv-queue-list">{entries.map((item) => { const itemTone = toneOf(item); return <button className={`rv-task ${effectiveSelectedId === item.preparation.id ? "selected" : ""}`} key={item.preparation.id} onClick={() => choose(item)}>
-              <div className={`rv-initials ${itemTone}`}>{initials(item.task.supervisor.name)}</div><div><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name}</small><span className={`rv-task-note ${itemTone}`}><Signal tone={itemTone} />{reviewed.includes(item.preparation.id) ? "Review complete" : itemTone === "ready" ? "Checks passed" : itemTone === "blocked" ? "Blocking finding" : "Attachment to review"}</span></div>{effectiveSelectedId === item.preparation.id && <span className="rv-selection-dot" />}
-            </button>; })}{!loading && entries.length === 0 && <p className="rv-empty">{data?.rows.length ? "No preparations match your filters." : "Import and prepare supported source materials first."}</p>}</div>
+            {batch && <div className="rv-batch-pick"><button className="rv-secondary" onClick={() => setPicked((data?.rows ?? []).filter(lacksSubject).map((item) => item.preparation.id))}><Icon name="filter" size={13} />{missingSubjectCount} without subject</button><button className="rv-secondary" onClick={() => setPicked((data?.rows ?? []).map((item) => item.preparation.id))}>All</button><button className="rv-secondary" onClick={() => { setPicked([]); setOverrides({}); }}>Clear</button></div>}
+            <div className="rv-queue-list">{entries.map((item) => { const itemTone = toneOf(item); return <div className={`rv-task-row${batch ? " picking" : ""}${picked.includes(item.preparation.id) ? " picked" : ""}`} key={item.preparation.id}>
+              {batch && <input type="checkbox" aria-label={`Select ${item.task.supervisor.name}`} checked={picked.includes(item.preparation.id)} onChange={() => togglePicked(item.preparation.id)} />}
+              <button className={`rv-task ${effectiveSelectedId === item.preparation.id ? "selected" : ""}`} onClick={() => choose(item)}>
+                <div className={`rv-initials ${itemTone}`}>{initials(item.task.supervisor.name)}</div><div><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name}</small><span className={`rv-task-note ${itemTone}`}><Signal tone={itemTone} />{reviewed.includes(item.preparation.id) ? "Review complete" : itemTone === "ready" ? "Checks passed" : itemTone === "blocked" ? "Blocking finding" : "Attachment to review"}</span></div>{effectiveSelectedId === item.preparation.id && <span className="rv-selection-dot" />}
+              </button></div>; })}{!loading && entries.length === 0 && <p className="rv-empty">{data?.rows.length ? "No preparations match your filters." : "Import and prepare supported source materials first."}</p>}</div>
             <div className="rv-queue-foot"><Icon name="user" size={14} />{row ? <>Student: <strong>{row.task.student.name}</strong></> : "No preparation selected"}</div>
           </section>
           <section className="rv-card rv-sources"><div className="rv-section-title"><h2>Source materials</h2><span className="rv-counter">{row?.sources.length ?? 0}</span></div>
@@ -125,12 +193,17 @@ export default function ReviewPage() {
         </aside>
 
         <section className="rv-center" aria-label="Preparation preview">
-          <div className="rv-preview-toolbar"><div className="rv-view-tabs"><button className={panel === "message" ? "active" : ""} onClick={() => setPanel("message")}><Icon name="mail" size={15} />Message preview</button><button className={panel === "evidence" ? "active" : ""} onClick={() => setPanel("evidence")}>Source evidence</button></div><span>{row ? row.preparation.id.slice(0, 12) : "NO PREPARATION"}</span></div>
+          <div className="rv-preview-toolbar"><div className="rv-view-tabs"><button className={panel === "message" ? "active" : ""} onClick={() => setPanel("message")}><Icon name="mail" size={15} />Message preview</button><button className={panel === "evidence" ? "active" : ""} onClick={() => setPanel("evidence")}>Source evidence</button>{batch && <button className={panel === "batch" ? "active" : ""} onClick={() => setPanel("batch")}>Batch subjects<em>{picked.length}</em></button>}</div><div className="rv-toolbar-actions"><button className={`rv-chip${batch ? " active" : ""}`} onClick={toggleBatch}><Icon name={batch ? "close" : "plus"} size={13} />{batch ? "Exit batch" : "Batch subjects"}</button><span>{row ? row.preparation.id.slice(0, 12) : "NO PREPARATION"}</span></div></div>
           <div className="rv-document-scroll">{row ? <>
-            <div className={`rv-status-banner ${tone}`}><Signal tone={tone} /><div><strong>{tone === "blocked" ? "Hold for review — Core reports a blocker" : tone === "attention" ? "Attachment association needs attention" : "Preparation checks passed"}</strong><p>{tone === "ready" ? "No unresolved blockers. Sending still requires separate Confirmation." : blocking[0]?.detail || taskBlocking[0]?.detail || "Review the advisory attachment association."}</p></div></div>
-            {panel === "message" ? <article className="rv-paper"><div className="rv-paper-heading"><span className="rv-mail-icon"><Icon name="mail" size={24} /></span><div><span className="rv-eyebrow">{human(row.preparation.action_kind).toUpperCase()}</span><h2>{row.preparation.subject || "Subject required"}</h2></div><span className="rv-local-label">LOCAL PREPARATION</span></div>
+            {panel !== "batch" && <div className={`rv-status-banner ${tone}`}><Signal tone={tone} /><div><strong>{tone === "blocked" ? "Hold for review — Core reports a blocker" : tone === "attention" ? "Attachment association needs attention" : "Preparation checks passed"}</strong><p>{tone === "ready" ? "No unresolved blockers. Sending still requires separate Confirmation." : blocking[0]?.detail || taskBlocking[0]?.detail || "Review the advisory attachment association."}</p></div></div>}
+            {panel === "batch" ? <article className="rv-paper rv-batch"><div className="rv-batch-head"><span className="rv-eyebrow">BATCH SUBJECT CORRECTION</span><h2>Subjects for {selectedRows.length} selected Preparation{selectedRows.length === 1 ? "" : "s"}</h2><p>A subject is an operator correction and becomes the field's Authoritative Source. SmartMail never invents one; placeholders copy retained Task evidence and every row stays editable before anything is recorded.</p></div>
+              <div className="rv-batch-template"><label htmlFor="rv-subject-template">Subject template</label><input id="rv-subject-template" placeholder="PhD supervision enquiry — {supervisor}, {institution}" value={template} onChange={(event) => setTemplate(event.target.value)} /><div className="rv-placeholders">{PLACEHOLDERS.map((token) => <button className="rv-token" key={token} onClick={() => setTemplate((value) => value + token)}>{token}</button>)}<button className="rv-secondary" onClick={() => setOverrides({})}>Reset rows to template</button></div></div>
+              <div className="rv-batch-list">{selectedRows.length ? selectedRows.map((item) => { const value = subjectOf(item); return <div className="rv-batch-row" key={item.preparation.id}><div className="rv-batch-who"><strong>{item.task.supervisor.name}</strong><small>{item.task.institution.name} · {item.preparation.recipient}</small></div><input aria-label={`Subject for ${item.task.supervisor.name}`} className={value.trim() ? "" : "invalid"} value={value} onChange={(event) => setOverrides((current) => ({ ...current, [item.preparation.id]: event.target.value }))} /><button className="rv-secondary" onClick={() => togglePicked(item.preparation.id)}><Icon name="close" size={13} />Remove</button></div>; }) : <p className="rv-empty">Select Preparations in the review queue, then fill a subject for each row here.</p>}</div>
+              <div className="rv-batch-foot"><span>{blankCount ? `${blankCount} row${blankCount === 1 ? "" : "s"} still need a subject` : `${selectedRows.length} subject${selectedRows.length === 1 ? "" : "s"} ready to record`}</span><button className="rv-primary" disabled={busy || !selectedRows.length || blankCount > 0} onClick={() => void applySubjects()}><Icon name="check" size={16} />Record {selectedRows.length} subject{selectedRows.length === 1 ? "" : "s"}</button></div>
+            </article> : panel === "message" ? <article className="rv-paper"><div className="rv-paper-heading"><span className="rv-mail-icon"><Icon name="mail" size={24} /></span><div><span className="rv-eyebrow">{human(row.preparation.action_kind).toUpperCase()}</span><h2>{row.preparation.subject || "Subject required"}</h2></div><span className="rv-local-label">LOCAL PREPARATION</span></div>
               <dl className="rv-envelope"><div><dt>From</dt><dd>{row.task.student.name} <span>&lt;{row.preparation.sender}&gt;</span></dd></div><div><dt>To</dt><dd><button className={`rv-highlight ${blocking.some((item) => item.code.includes("recipient")) ? "blocked" : "ready"} ${focus === "recipient" ? "focused" : ""}`} onClick={() => { setFocus("recipient"); setMobile("checks"); }}>{row.preparation.recipient}<Icon name={blocking.some((item) => item.code.includes("recipient")) ? "warning" : "check"} size={14} /></button></dd></div><div><dt>Subject</dt><dd><button className={`rv-inline ${row.preparation.subject ? "blue" : "attention"}`} onClick={() => { setFocus("subject"); setMobile("checks"); }}>{row.preparation.subject || "Add an authoritative subject"}</button></dd></div></dl>
-              <div className="rv-message-body">{row.preparation.body.split(/\n{2,}/).map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
+              <div className="rv-message-body">{paragraphs.map((paragraph, index) => <p key={index}>{paragraph}</p>)}</div>
+              <div className="rv-body-meta"><Icon name="fit" size={12} />Full body shown · {paragraphs.length} paragraph{paragraphs.length === 1 ? "" : "s"} · {row.preparation.body.trim().length} characters</div>
               {row.preparation.attachment_slots.map((attachment) => <button className="rv-attachment" key={attachment.id} onClick={() => { setFocus("attachment"); setMobile("checks"); }}><span className="rv-file-icon purple"><Icon name="file" size={19} /></span><span><strong>{attachment.attachment?.name || attachment.candidates?.[0]?.name || attachment.label}</strong><small>{attachment.attachment ? `${attachment.attachment.size} bytes · confirmed snapshot` : "Advisory association — operator confirmation required"}</small></span><Signal tone={attachment.attachment ? "ready" : "attention"} /></button>)}
               <div className="rv-paper-foot"><Icon name="shield" size={13} />This is retained local content; no external mailbox draft was created.</div>
             </article> : <article className="rv-paper rv-evidence"><div className="rv-eyebrow">RETAINED SOURCE EVIDENCE</div><h2>{row.preparation.source.name}</h2><p>Associated with {row.task.supervisor.name} · {row.task.student.name}</p><dl><dt>Institution</dt><dd>{row.task.institution.name}</dd><dt>Recorded recipient</dt><dd>{recordedRecipient || "No usable address recorded"}</dd><dt>Source digest</dt><dd>{row.preparation.source.sha256}</dd><dt>Association</dt><dd><pre>{JSON.stringify(row.preparation.association, null, 2)}</pre></dd></dl><button className="rv-secondary" onClick={() => setPanel("message")}><Icon name="reply" size={15} />Back to message</button></article>}
@@ -156,7 +229,7 @@ export default function ReviewPage() {
             { label: "Attachments", detail: slot?.attachment ? "Snapshot confirmed" : slot ? "Association needs review" : "None declared", field: "attachment" as Focus, tone: slot && !slot.attachment ? "attention" as Tone : "ready" as Tone },
             { label: "Duplicate check", detail: row.duplicate_check ? human(row.duplicate_check.finding) : "Not checked", field: "duplicate" as Focus, tone: !row.duplicate_check || row.duplicate_check.review_required ? "attention" as Tone : "ready" as Tone },
           ].map((check) => <button className={`rv-check ${check.tone} ${focus === check.field ? "focused" : ""}`} key={check.label} onClick={() => setFocus(check.field)}><Signal tone={check.tone} /><span><strong>{check.label}</strong><small>{check.detail}</small></span><Icon name="chevron" size={13} /></button>)}</section>
-          <div className="rv-guidance"><Icon name="book" size={19} /><div><strong>Core-grounded operator review</strong><p>Every mutation is revalidated and remains separate from external authority.</p></div></div>
+          <details className="rv-guidance"><summary><Icon name="book" size={15} /><strong>Core-grounded operator review</strong></summary><p>Every mutation is revalidated and remains separate from external authority.</p></details>
         </aside>
       </main>
       <footer className="rv-footer"><span><i />Persisted Core data · no sample records</span><span role="status">{notice || "Review only · no external actions"}</span><button className="rv-secondary" disabled={!ready} onClick={() => navigate("execution")}>Continue to execution</button></footer>

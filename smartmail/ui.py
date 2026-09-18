@@ -99,6 +99,11 @@ def dispatch(core, request):
         return core.refresh_mailbox(request["student_id"])
     if command == "update_preparation":
         return core.update_preparation_fields(request["preparation_id"], request["subject"], request["recipient"])
+    if command == "update_preparation_subjects":
+        updates = request.get("updates")
+        if not isinstance(updates, list):
+            raise SmartMailError("A subject batch needs a list of Preparation updates")
+        return core.update_preparation_subjects(updates)
     if command == "rewrite":
         preparation = core.get_preparation(request["preparation_id"])
         if request["source_id"] not in {source["id"] for source in rewrite_sources(core, preparation["task_id"])}:

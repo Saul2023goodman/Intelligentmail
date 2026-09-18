@@ -373,7 +373,8 @@ class PlanningOperations:
         for entry in plannable:
             key = self._plan_institution(entry["preparation"]["task_id"])
             per_institution[key] = per_institution.get(key, 0) + 1
-        if not per_institution:
+        # With no session at all the binding constraint is the windows themselves.
+        if not sessions or not per_institution:
             return None
         if max(per_institution.values()) > len(sessions) * configuration["institution_limit"]:
             return "institution_pace"

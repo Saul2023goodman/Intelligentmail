@@ -292,13 +292,14 @@ class PacingTests(PlanTestCase):
 
         plan = self.core.propose_plan(self.campaign["id"])
 
-        # Session 1 is Monday: one River advisor and one Hill advisor, side by side.
+        # Proposals keep the Task order: River's three, then Hill's two. Monday
+        # holds one River advisor and one Hill advisor, side by side.
         self.assertEqual(self.times(plan), [
             "2026-09-14T09:00:00+08:00",
-            "2026-09-14T09:15:00+08:00",
             "2026-09-15T09:00:00+08:00",
-            "2026-09-15T09:15:00+08:00",
             "2026-09-16T09:00:00+08:00",
+            "2026-09-14T09:15:00+08:00",
+            "2026-09-15T09:15:00+08:00",
         ])
         per_day: dict = {}
         for proposal in plan["proposals"]:
@@ -835,10 +836,11 @@ class TerminalPlanTests(unittest.TestCase):
         configured = json.loads(self.run_cli(
             "plan", "configure", "--campaign", campaign["id"], "--timezone", SHANGHAI,
             "--window", "MON-FRI 09:00-10:00", "--spacing", "30", "--daily-limit", "2",
-            "--horizon-days", "3").stdout)
+            "--horizon-days", "3", "--institution-limit", str(UNPACED)).stdout)
         self.assertEqual(configured["timezone"], SHANGHAI)
         self.assertEqual(configured["windows"],
                          [{"days": WEEKDAYS, "start": "09:00", "end": "10:00"}])
+        self.assertEqual(configured["institution_limit"], UNPACED)
         self.assertEqual(json.loads(self.run_cli(
             "plan", "configure", "--campaign", campaign["id"]).stdout), configured)
 

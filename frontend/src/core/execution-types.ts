@@ -4,6 +4,8 @@ export type PlanConfiguration = {
   spacing_minutes: number;
   daily_limit: number;
   horizon_days: number;
+  /** Advisors of one institution allowed per session; one is the safe default. */
+  institution_limit: number;
 };
 export type ExecutionDetails = {
   kind: string;
@@ -46,6 +48,9 @@ export type Proposal = Omit<
   reason: string;
   detail: string;
   constraint: string;
+  /** The institution the Outreach Task belongs to; planning paces per institution. */
+  institution_name: string;
+  supervisor_name: string;
 };
 export type SendingPlan = {
   id: string;

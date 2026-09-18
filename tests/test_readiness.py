@@ -154,6 +154,75 @@ class SubjectCorrectionTests(ReadinessTestCase):
         self.assertIn("missing_subject", self.blocking_codes(self.core.get_preparation(preparation_id)))
 
 
+class BatchSubjectCorrectionTests(ReadinessTestCase):
+    def prepare_two(self):
+        imported = self.import_bundle(
+            [["Example University", "Dr Alex Green", "alex@example.edu", ""],
+             ["Other University", "Dr Beth Blue", "beth@example.edu", ""]],
+            [("Example University_Dr Alex Green.docx", draft_paragraphs(
+                "alex@example.edu", "Dear Dr Green,", ["Hello."],
+            )),
+             ("Other University_Dr Beth Blue.docx", draft_paragraphs(
+                 "beth@example.edu", "Dear Dr Blue,", ["Hello."],
+             ))],
+        )
+        return self.core.prepare_from_documents(imported["id"])["preparation_ids"]
+
+    def test_a_batch_records_each_operator_subject_and_revalidates(self):
+        first, second = self.prepare_two()
+        result = self.core.update_preparation_subjects([
+            {"preparation_id": first, "subject": "  PhD supervision enquiry  "},
+            {"preparation_id": second, "subject": "PhD supervision enquiry — Beth Blue"},
+        ])
+        self.assertEqual(result["count"], 2)
+        self.assertEqual(self.core.get_preparation(first)["subject"], "PhD supervision enquiry")
+        self.assertTrue(self.core.get_preparation(first)["ready"])
+        self.assertEqual(self.core.get_preparation(second)["corrections"],
+                         [{"field": "subject", "value": "PhD supervision enquiry — Beth Blue", "prior": ""}])
+        self.assertEqual(self.blocking_codes(self.core.get_preparation(second)), set())
+
+    def test_a_rejected_entry_leaves_the_whole_batch_unapplied(self):
+        first, second = self.prepare_two()
+        for updates in (
+            [],
+            [{"preparation_id": first, "subject": "   "}],
+            [{"preparation_id": first, "subject": "Twice"},
+             {"preparation_id": first, "subject": "Twice again"}],
+            [{"preparation_id": first, "subject": "Good"},
+             {"preparation_id": second, "subject": ""}],
+        ):
+            with self.assertRaises(SmartMailError):
+                self.core.update_preparation_subjects(updates)
+        self.assertEqual(self.core.get_preparation(first)["subject"], "")
+        self.assertEqual(self.core.get_preparation(second)["subject"], "")
+
+    def test_a_superseded_preparation_stops_the_batch_without_partial_writes(self):
+        first, second = self.prepare_two()
+        self.core.rewrite_local_preparation(
+            first, self.core.get_preparation(first)["source"]["id"])
+        with self.assertRaises(SmartMailError):
+            self.core.update_preparation_subjects([
+                {"preparation_id": first, "subject": "History"},
+                {"preparation_id": second, "subject": "Fresh subject"}])
+        self.assertEqual(self.core.get_preparation(second)["subject"], "")
+        self.assertIn("missing_subject", self.blocking_codes(self.core.get_preparation(second)))
+
+    def test_a_changed_subject_invalidates_only_its_own_confirmation(self):
+        first, second = self.prepare_two()
+        self.core.update_preparation_subjects([
+            {"preparation_id": first, "subject": "First subject"},
+            {"preparation_id": second, "subject": "Second subject"}])
+        kept = self.core.confirm(first)
+        changed = self.core.confirm(second)
+        self.core.update_preparation_subjects([
+            {"preparation_id": first, "subject": "First subject"},
+            {"preparation_id": second, "subject": "Rewritten subject"}])
+        self.assertEqual(self.core.get_confirmation(kept["id"])["status"], "active")
+        self.assertEqual(self.core.get_confirmation(changed["id"])["status"], "invalidated")
+        self.assertEqual(self.core.get_preparation(second)["corrections"][-1]["prior"],
+                         "Second subject")
+
+
 class RecipientCorrectionTests(ReadinessTestCase):
     def prepare(self, recorded, declared):
         imported = self.import_bundle(
