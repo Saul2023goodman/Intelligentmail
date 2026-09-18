@@ -39,7 +39,8 @@ await page.evaluate((scope) => {
   campaignId: campaign.id,
   campaignName: campaign.name,
 });
-await page.goto(`${ORIGIN}/#execution`, { waitUntil: "networkidle" });
+await page.reload({ waitUntil: "networkidle" });
+await page.evaluate(() => { window.location.hash = "#execution"; });
 await page.waitForTimeout(1500);
 
 console.log(JSON.stringify(await page.evaluate(() => ({
