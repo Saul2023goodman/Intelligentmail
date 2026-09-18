@@ -14,17 +14,15 @@ async function core(command, args = {}) {
   return value.result;
 }
 
-// Adopt an existing Student that already owns a Campaign, so Core has a report.
 const workspace = await core("workspace");
-const student = workspace.mailboxes.find((m) => m.campaign_id)
-  ?? workspace.mailboxes[0];
-const campaign = workspace.campaigns.find((c) => c.id === student.campaign_id)
-  ?? workspace.campaigns[0];
+const student = workspace.mailboxes.find((m) => m.student_name === "Pacing Demo")
+  ?? workspace.mailboxes.find((m) => m.campaign_id);
+const campaign = workspace.campaigns.find((c) => c.id === student.campaign_id);
 
 const browser = await chromium.launch({
   executablePath: "C:/Users/Zeng/AppData/Local/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-win64/chrome-headless-shell.exe",
 });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });
 const problems = [];
 page.on("pageerror", (e) => problems.push(`pageerror: ${e.message}`));
 page.on("console", (m) => { if (m.type() === "error") problems.push(`console: ${m.text()}`); });
@@ -33,45 +31,47 @@ await page.goto(`${ORIGIN}/#workflow`, { waitUntil: "networkidle" });
 await page.evaluate((scope) => {
   window.localStorage.setItem("smartmail.workspaceScope", JSON.stringify(scope));
 }, {
-  studentId: student.student_id ?? student.id,
-  studentName: student.student_name ?? "Smoke Student",
-  mailbox: student.address ?? "smoke@163.com",
-  campaignId: campaign.id,
-  campaignName: campaign.name,
+  studentId: student.student_id, studentName: student.student_name,
+  mailbox: student.address, campaignId: campaign.id, campaignName: campaign.name,
 });
 await page.reload({ waitUntil: "networkidle" });
 await page.evaluate(() => { window.location.hash = "#execution"; });
 await page.waitForTimeout(1500);
 
-console.log(JSON.stringify(await page.evaluate(() => ({
-  headings: [...document.querySelectorAll(".ex-panel-heading h2")].map((h) => h.textContent),
-  overflowY: document.documentElement.scrollHeight - window.innerHeight,
-  overflowX: document.documentElement.scrollWidth - window.innerWidth,
-  settingsEnabled: !document.querySelector(".ex-toolbar .ex-button:nth-of-type(1)")?.disabled,
-})), null, 2));
-
-const rules = page.getByRole("button", { name: /排期设置/ });
-if (await rules.count() && await rules.first().isEnabled()) {
-  await rules.first().click();
-  await page.waitForTimeout(600);
-  console.log(JSON.stringify(await page.evaluate(() => {
-    const el = document.querySelector(".ex-dialog[open]");
-    if (!el) return null;
-    return {
-      title: el.querySelector("h2")?.textContent,
-      windows: el.querySelectorAll(".ex-window").length,
-      days: el.querySelectorAll(".ex-day").length,
-      projection: [...el.querySelectorAll(".ex-projection dd")].map((d) => d.textContent),
-      miniCells: el.querySelectorAll(".ex-mini-cell").length,
-      banner: el.querySelector(".ex-settings-preview .ex-banner")?.textContent?.trim().slice(0, 100),
-      pace: el.querySelector(".ex-pace-row select")?.value,
-      fitsHeight: el.scrollHeight <= el.clientHeight + 2,
-    };
-  }), null, 2));
-  await page.screenshot({ path: ".scratch/execution-settings.png" });
-  await page.keyboard.press("Escape");
-}
+const grid = await page.evaluate(() => {
+  const cells = [...document.querySelectorAll(".ex-grid tbody tr")].map((tr) => ({
+    institution: tr.querySelector(".ex-row-name")?.textContent,
+    slots: [...tr.querySelectorAll(".ex-slot")].map((s) => ({
+      time: s.querySelector(".ex-slot-time")?.textContent,
+      name: s.querySelector(".ex-slot-name")?.textContent,
+      state: s.querySelector(".ex-slot-state")?.textContent,
+    })),
+    empties: tr.querySelectorAll(".ex-cell-empty").length,
+  }));
+  return {
+    columns: [...document.querySelectorAll(".ex-colhead .ex-col-date")].map((t) => t.textContent),
+    corner: document.querySelector(".ex-grid-corner")?.textContent,
+    cells,
+    excluded: [...document.querySelectorAll(".ex-excluded .ex-card")].map((c) => c.textContent),
+    overflowY: document.documentElement.scrollHeight - window.innerHeight,
+    overflowX: document.documentElement.scrollWidth - window.innerWidth,
+    tabLabels: [...document.querySelectorAll(".ex-tabs button")].map((b) => b.textContent),
+  };
+});
+console.log(JSON.stringify(grid, null, 2));
 await page.screenshot({ path: ".scratch/execution-page.png" });
+
+// Narrow window: the three regions become reachable tabs, still no page overflow.
+await page.setViewportSize({ width: 900, height: 600 });
+await page.waitForTimeout(400);
+console.log(JSON.stringify(await page.evaluate(() => ({
+  tabsVisible: getComputedStyle(document.querySelector(".ex-tabs")).display !== "none",
+  overflows: [...document.querySelectorAll(".ex-tabs button")].map((b, i) => {
+    b.click();
+    return document.documentElement.scrollHeight - window.innerHeight
+      + (document.documentElement.scrollWidth - window.innerWidth);
+  }),
+})), null, 2));
 
 console.log(problems.length ? `PROBLEMS:\n${problems.join("\n")}` : "no console/page errors");
 await browser.close();
