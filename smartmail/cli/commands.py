@@ -228,7 +228,8 @@ def dispatch(core, args):
             result = core.configure_plan(
                 args.campaign, timezone=args.timezone, windows=args.windows,
                 spacing_minutes=args.spacing_minutes, daily_limit=args.daily_limit,
-                horizon_days=args.horizon_days)
+                horizon_days=args.horizon_days,
+                institution_limit=args.institution_limit)
         elif args.action == "propose":
             result = core.propose_plan(args.campaign)
         elif args.action == "list":

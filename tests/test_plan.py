@@ -21,6 +21,9 @@ DECLARATION = "I have attached my CV and would welcome the opportunity to discus
 SUBJECT = "PhD supervision enquiry"
 DAYS = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"]
 WEEKDAYS = DAYS[:5]
+# High enough that institution pacing never binds where a case is about windows,
+# spacing or the daily limit; pacing has its own tests with a limit of one.
+UNPACED = 99
 # Monday 14 September 2026, 08:00 in Asia/Shanghai: before that day's 09:00 window.
 NOW = datetime(2026, 9, 14, 0, 0, tzinfo=timezone.utc)
 SHANGHAI = "Asia/Shanghai"
@@ -101,6 +104,9 @@ class PlanTestCase(unittest.TestCase):
             "spacing_minutes": 30,
             "daily_limit": 2,
             "horizon_days": 3,
+            # These cases exercise windows, spacing and limits. Institution pacing
+            # is a separate dimension and is tested on its own in PacingTests.
+            "institution_limit": UNPACED,
         }
         settings.update(overrides)
         return self.core.configure_plan(self.campaign["id"], **settings)
@@ -126,16 +132,18 @@ class PlanTestCase(unittest.TestCase):
         source = bundle(self.directory / "bundle.zip", members)
         return self.core.import_master(self.campaign["id"], self.student["id"], source)
 
-    def ready_preparations(self, count=1, subject=SUBJECT, attach=True):
+    def ready_preparations(self, count=1, subject=SUBJECT, attach=True, institutions=None):
         """Ready Preparations in a fixed order, one per Supervisor, with a confirmed CV."""
         supervisors = SUPERVISORS[:count]
-        rows = [["Example University", name, address, ""] for name, address in supervisors]
+        schools = institutions or ["Example University"] * len(supervisors)
+        rows = [[school, name, address, ""]
+                for school, (name, address) in zip(schools, supervisors)]
         cv_path = document(self.directory / "cv.docx", ["Test Student", "E-mail: student@163.com"])
         self.cv_content = cv_path.read_bytes()
         documents = [
-            (f"Example University_{name}.docx",
+            (f"{school}_{name}.docx",
              draft_paragraphs(address, "Dear Dr,", [DECLARATION]))
-            for name, address in supervisors
+            for school, (name, address) in zip(schools, supervisors)
         ]
         imported = self.import_bundle(documents, rows, extra=[("Test Student - CV.docx", cv_path)])
         preparation_ids = self.core.prepare_from_documents(imported["id"])["preparation_ids"]
@@ -268,6 +276,104 @@ class ProposalTests(PlanTestCase):
             self.core.get_plan("unknown")
         with self.assertRaises(SmartMailError):
             self.core.list_plans("unknown")
+
+
+class PacingTests(PlanTestCase):
+    """One institution per session: institutions run in parallel, one institution serializes."""
+
+    def test_institutions_share_a_session_while_one_institution_is_spread(self):
+        # River has three advisors, Hill has two: they must not be interleaved
+        # as one global queue, but paced session by session.
+        self.ready_preparations(
+            5, institutions=["River University", "River University", "River University",
+                             "Hill College", "Hill College"])
+        self.configure(windows=["MON-FRI 09:00-10:00"], spacing_minutes=15,
+                       daily_limit=9, horizon_days=4, institution_limit=1)
+
+        plan = self.core.propose_plan(self.campaign["id"])
+
+        # Session 1 is Monday: one River advisor and one Hill advisor, side by side.
+        self.assertEqual(self.times(plan), [
+            "2026-09-14T09:00:00+08:00",
+            "2026-09-14T09:15:00+08:00",
+            "2026-09-15T09:00:00+08:00",
+            "2026-09-15T09:15:00+08:00",
+            "2026-09-16T09:00:00+08:00",
+        ])
+        per_day: dict = {}
+        for proposal in plan["proposals"]:
+            day = datetime.fromisoformat(proposal["scheduled_at"]).astimezone(
+                ZoneInfo(SHANGHAI)).date()
+            per_day.setdefault(day, []).append(proposal["institution_name"])
+        # Never two advisors of one institution on one day.
+        for day, schools in per_day.items():
+            self.assertEqual(len(schools), len(set(schools)), day)
+        self.assertEqual(
+            {proposal["institution_name"] for proposal in plan["proposals"]},
+            {"River University", "Hill College"})
+
+    def test_a_single_institution_sends_one_advisor_per_session(self):
+        self.ready_preparations(3)
+        self.configure(windows=["MON-FRI 09:00-10:00"], spacing_minutes=30,
+                       daily_limit=9, horizon_days=4, institution_limit=1)
+
+        plan = self.core.propose_plan(self.campaign["id"])
+
+        self.assertEqual(self.times(plan), [
+            "2026-09-14T09:00:00+08:00",
+            "2026-09-15T09:00:00+08:00",
+            "2026-09-16T09:00:00+08:00",
+        ])
+
+    def test_an_institution_with_more_advisors_than_sessions_is_surfaced(self):
+        self.ready_preparations(4)
+        self.configure(windows=["MON-FRI 09:00-10:00"], spacing_minutes=15,
+                       daily_limit=9, horizon_days=2, institution_limit=1)
+
+        plan = self.core.propose_plan(self.campaign["id"])
+
+        self.assertEqual(len(plan["proposals"]), 2)
+        self.assertEqual(len(plan["impossible"]), 2)
+        for entry in plan["impossible"]:
+            self.assertEqual(entry["reason"], "no_available_slot")
+            self.assertEqual(entry["constraint"], "institution_pace")
+            self.assertIn("2 session(s)", entry["detail"])
+
+    def test_a_second_advisor_of_one_institution_may_share_a_session_when_allowed(self):
+        self.ready_preparations(4)
+        self.configure(windows=["MON-FRI 09:00-10:00"], spacing_minutes=15,
+                       daily_limit=9, horizon_days=2, institution_limit=2)
+
+        plan = self.core.propose_plan(self.campaign["id"])
+
+        self.assertEqual(self.times(plan), [
+            "2026-09-14T09:00:00+08:00",
+            "2026-09-14T09:15:00+08:00",
+            "2026-09-15T09:00:00+08:00",
+            "2026-09-15T09:15:00+08:00",
+        ])
+        self.assertEqual(plan["impossible"], [])
+
+    def test_moving_an_action_into_a_session_its_institution_already_holds_is_refused(self):
+        preparation_ids = self.ready_preparations(
+            4, institutions=["River University", "River University",
+                             "Hill College", "Hill College"])
+        self.configure(windows=["MON-FRI 09:00-10:00"], spacing_minutes=15,
+                       daily_limit=9, horizon_days=3, institution_limit=1)
+        plan = self.core.propose_plan(self.campaign["id"])
+        held = next(proposal["preparation_id"] for proposal in plan["proposals"]
+                    if proposal["institution_name"] == "River University"
+                    and proposal["scheduled_at"].startswith("2026-09-14"))
+        elsewhere = next(proposal["preparation_id"] for proposal in plan["proposals"]
+                         if proposal["institution_name"] == "River University"
+                         and proposal["scheduled_at"].startswith("2026-09-15"))
+
+        with self.assertRaisesRegex(SmartMailError, "River University"):
+            self.core.adjust_plan(plan["id"], elsewhere, "2026-09-14T09:45")
+
+        # The plan is untouched by a refused adjustment.
+        self.assertEqual(self.times(self.core.get_plan(plan["id"])), self.times(plan))
+        self.assertTrue(preparation_ids)
 
 
 class PlanReviewTests(PlanTestCase):

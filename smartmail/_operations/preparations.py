@@ -1,6 +1,8 @@
 """Document association, Preparation, readiness corrections and Rewrite history."""
 
+import hashlib
 import json
+import re
 from uuid import uuid4
 
 from ..documents import DocumentError, association_key, parse_draft, read_paragraphs
@@ -465,3 +467,218 @@ class PreparationOperations:
             "SELECT id FROM preparations WHERE task_id = ? ORDER BY rowid DESC", (row["task_id"],))]
         active_id = next((version["id"] for version in versions if version["status"] == "active"), None)
         return {"task_id": row["task_id"], "active_id": active_id, "versions": versions}
+
+    # ------------------------------------------------------------------
+    # Observed mailbox drafts as Source Material
+    # ------------------------------------------------------------------
+
+    def draft_material_candidates(self, campaign_id: str, student_id: str) -> list[dict]:
+        """Observed drafts this Student can promote, with what Core actually holds.
+
+        A draft observed in the Student's own drafts folder is Source Material:
+        Core captured its body during the observation, so it can be imported the
+        same way an upload is. Attachment *bytes* are never assumed — only a
+        descriptor the reader produced is reported, and its availability is stated.
+        """
+        campaign = self.get_campaign(campaign_id)
+        self.get_student(student_id)
+        rows = self._latest_draft_observations(student_id)
+        candidates = []
+        for row in rows:
+            material = self._observation_material(row)
+            body = self._draft_body(material)
+            recipients = self._draft_recipients(material, row)
+            recipient = recipients[0] if recipients else ""
+            task = self._task_for_address(campaign_id, student_id, recipient) if recipient else None
+            attachments = material.get("attachments") or []
+            candidates.append({
+                "observation_id": row["id"],
+                "subject": row["subject"],
+                "recipient": recipient,
+                "recipients": recipients,
+                "observed_time": row["observed_time"],
+                "status": row["status"],
+                "scheduled": bool((material.get("compose") or {}).get("scheduled_draft")),
+                "body_chars": len(body),
+                "body_available": bool(body.strip()),
+                "attachment_count": len(attachments),
+                "attachments_available": sum(1 for entry in attachments if entry.get("available")),
+                "task_id": task["task_id"] if task else "",
+                "supervisor": task["supervisor_name"] if task else "",
+                "campaign_id": campaign["id"],
+            })
+        return candidates
+
+    def import_mailbox_drafts(self, campaign_id: str, student_id: str,
+                              observation_ids: list[str]) -> dict:
+        """Promote observed drafts into Source Material and their Preparations.
+
+        The draft's own mailbox is the evidence of its type: a message the
+        Student composed, addressed to a Supervisor, is an outreach draft. No
+        structural recognition is needed and none is invented. Imports are
+        idempotent by content hash, so re-importing an unchanged draft reuses
+        the Source Material instead of duplicating it.
+        """
+        self.get_campaign(campaign_id)
+        self.get_student(student_id)
+        wanted = [str(entry) for entry in (observation_ids or [])]
+        if not wanted:
+            raise SmartMailError("Select at least one observed draft to import")
+        rows = {row["id"]: row for row in self._latest_draft_observations(student_id)}
+        sender = self._db.execute(
+            "SELECT address FROM mailboxes WHERE student_id = ?", (student_id,)).fetchone()
+        if sender is None:
+            raise SmartMailError("No Mailbox is recorded for this Student")
+        sender = sender["address"]
+        import_id = str(uuid4())
+        imported = []
+        skipped = []
+        with self._db:
+            self._db.execute("INSERT INTO imports VALUES (?, ?, ?)", (import_id, campaign_id, student_id))
+            for observation_id in wanted:
+                row = rows.get(observation_id)
+                if row is None:
+                    skipped.append({"observation_id": observation_id, "subject": "",
+                                    "reason": "No observed draft in the latest observation"})
+                    continue
+                material = self._observation_material(row)
+                body = self._draft_body(material)
+                recipients = self._draft_recipients(material, row)
+                recipient = recipients[0] if recipients else ""
+                if not recipient:
+                    skipped.append({"observation_id": observation_id, "subject": row["subject"],
+                                    "reason": "The draft has no usable recipient address"})
+                    continue
+                task = self._task_for_address(campaign_id, student_id, recipient)
+                if task is None:
+                    skipped.append({"observation_id": observation_id, "subject": row["subject"],
+                                    "reason": f"No Outreach Task recorded for {recipient}"})
+                    continue
+                if not body.strip():
+                    skipped.append({"observation_id": observation_id, "subject": row["subject"],
+                                    "reason": "The draft body was not captured in the observation"})
+                    continue
+                payload = _draft_source_bytes(row, recipients, body)
+                sha = hashlib.sha256(payload).hexdigest()
+                existing = self._db.execute(
+                    "SELECT id FROM sources WHERE sha256 = ?", (sha,)).fetchone()
+                if existing is not None:
+                    skipped.append({"observation_id": observation_id, "subject": row["subject"],
+                                    "reason": "This draft is already imported as Source Material"})
+                    continue
+                source_id = str(uuid4())
+                self._db.execute(
+                    "INSERT INTO sources VALUES (?, ?, ?, ?, ?)",
+                    (source_id, import_id, _draft_source_name(row), payload, sha))
+                self._persist_draft_recognition(source_id, row)
+                self._db.execute(
+                    "INSERT INTO source_associations (task_id, source_id, sheet, row, evidence) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (task["task_id"], source_id, "drafts", 0, json.dumps(
+                        {"observation_id": row["id"], "observed_time": row["observed_time"]},
+                        ensure_ascii=False)))
+                preparation_id = self._insert_preparation(
+                    task, {"id": source_id, "name": _draft_source_name(row)},
+                    {"recipient": recipient, "body": body, "internal_note": "",
+                     "note_separated": False}, sender,
+                    (task["institution_name"], task["supervisor_name"]),
+                    subject=row["subject"])
+                self._record_transformation(
+                    preparation_id, "draft_imported",
+                    f"Body and recipients taken from the observed draft in {row['folder']}; "
+                    "the Student's own mailbox is the authoritative source")
+                attachments = material.get("attachments") or []
+                if attachments:
+                    missing = [entry["name"] for entry in attachments if not entry.get("available")]
+                    detail = f"{len(attachments)} attachment(s) observed in the draft"
+                    if missing:
+                        detail += "; bytes not captured, so they are not imported: " + ", ".join(missing)
+                    self._record_transformation(preparation_id, "draft_attachments_observed", detail)
+                imported.append({"observation_id": observation_id, "subject": row["subject"],
+                                 "recipient": recipient, "task_id": task["task_id"],
+                                 "source_id": source_id, "preparation_id": preparation_id})
+        return {"import": {"id": import_id, "campaign_id": campaign_id, "student_id": student_id},
+                "imported": imported, "skipped": skipped}
+
+    def _latest_draft_observations(self, student_id: str) -> list[dict]:
+        mailbox = self._db.execute(
+            "SELECT id FROM mailboxes WHERE student_id = ?", (student_id,)).fetchone()
+        if mailbox is None:
+            return []
+        run = self._db.execute(
+            "SELECT id FROM mailbox_observation_runs WHERE mailbox_id = ? "
+            "ORDER BY observed_at DESC, rowid DESC LIMIT 1", (mailbox["id"],)).fetchone()
+        if run is None:
+            return []
+        return [dict(row) for row in self._db.execute(
+            "SELECT * FROM mailbox_message_observations WHERE run_id = ? AND folder = 'drafts' "
+            "ORDER BY rowid", (run["id"],))]
+
+    @staticmethod
+    def _observation_material(row: dict) -> dict:
+        try:
+            evidence = json.loads(row["evidence"] or "{}")
+        except (ValueError, TypeError):
+            return {}
+        material = evidence.get("material") if isinstance(evidence, dict) else None
+        return material if isinstance(material, dict) else {}
+
+    @staticmethod
+    def _draft_body(material: dict) -> str:
+        compose = material.get("compose") or {}
+        body = str(compose.get("body_text") or "").strip()
+        if body:
+            return body
+        return str((material.get("content") or {}).get("text") or "").strip()
+
+    @staticmethod
+    def _draft_recipients(material: dict, row: dict) -> list[str]:
+        compose = material.get("compose") or {}
+        addresses = [entry for entry in (compose.get("to") or []) if entry]
+        if not addresses:
+            counterpart = email_address(str(row["counterpart"] or ""))
+            addresses = [counterpart] if counterpart else []
+        return addresses
+
+    def _task_for_address(self, campaign_id: str, student_id: str, address: str):
+        return self._db.execute(
+            "SELECT t.id AS task_id, t.supervisor_id, s.name AS supervisor_name, "
+            "i.name AS institution_name "
+            "FROM tasks t JOIN supervisors s ON s.id = t.supervisor_id "
+            "JOIN institutions i ON i.id = s.institution_id "
+            "JOIN supervisor_addresses a ON a.supervisor_id = t.supervisor_id "
+            "WHERE t.campaign_id = ? AND t.student_id = ? AND a.address = ?",
+            (campaign_id, student_id, address)).fetchone()
+
+    def _persist_draft_recognition(self, source_id: str, row: dict) -> None:
+        """The mailbox is the evidence of type: no structural recognition is invented."""
+        self._db.execute(
+            "INSERT INTO source_recognition "
+            "(source_id, recognized_type, effective_type, confidence, revised, reasons, cautions, detail) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(source_id) DO UPDATE SET "
+            "recognized_type = excluded.recognized_type, effective_type = excluded.effective_type, "
+            "confidence = excluded.confidence, revised = excluded.revised, "
+            "reasons = excluded.reasons, cautions = excluded.cautions, detail = excluded.detail",
+            (source_id, "outreach_draft", "outreach_draft", "high", 0,
+             json.dumps([f"Observed as a draft in the Student's own {row['folder']} folder",
+                         f"Addressed to {row['counterpart'] or 'a recorded recipient'}"],
+                        ensure_ascii=False),
+             json.dumps([] if (row["status"] == "draft") else
+                        [f"Observed status is {row['status']}, not a plain draft"], ensure_ascii=False),
+             json.dumps({"label": "Outreach draft", "actionable": True, "identities": {
+                 "subject": row["subject"], "addressee": {"email": row["counterpart"]}}},
+                        ensure_ascii=False)))
+
+
+def _draft_source_name(row: dict) -> str:
+    """A stable Source Material name for an observed draft."""
+    subject = re.sub(r"[^A-Za-z0-9一-鿿._-]+", "_", str(row["subject"] or "").strip()).strip("._")
+    return f"{subject or 'draft'}-{row['id'][:8]}.eml"
+
+
+def _draft_source_bytes(row: dict, recipients: list[str], body: str) -> bytes:
+    headers = [f"Subject: {row['subject']}", f"To: {', '.join(recipients)}",
+               f"Date: {row['observed_time']}", f"X-SmartMail-Observation: {row['id']}",
+               f"X-SmartMail-Folder: {row['folder']}", ""]
+    return ("\n".join(headers) + "\n" + body).encode("utf-8")

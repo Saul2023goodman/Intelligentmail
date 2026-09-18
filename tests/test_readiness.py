@@ -484,9 +484,12 @@ class LocalOnlyTests(ReadinessTestCase):
         self.assertEqual(untouched, {path: path.stat().st_mtime_ns for path in self.directory.rglob("*")
                                      if path.is_file() and "state" not in path.parts})
         self.assertFalse(self.core.mailbox.enabled)
+        # The facade must expose no sending capability. "draft" used to stand in
+        # for it, but an observed draft is imported as local Source Material and
+        # never sent, so the words that actually denote sending are asserted.
         self.assertEqual(
             [name for name in dir(SmartMail)
-             if any(word in name.lower() for word in ("send", "draft", "browser", "smtp"))], [])
+             if any(word in name.lower() for word in ("send", "browser", "smtp", "deliver"))], [])
 
 
 class TerminalReadinessTests(unittest.TestCase):

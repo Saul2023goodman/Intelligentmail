@@ -259,6 +259,8 @@ def build_parser() -> argparse.ArgumentParser:
                                 help="Minimum minutes between two actions")
     plan_configure.add_argument("--daily-limit", type=int)
     plan_configure.add_argument("--horizon-days", type=int)
+    plan_configure.add_argument("--institution-limit", type=int,
+                                help="Advisors of one institution allowed per session")
     plan_propose = plan.add_parser(
         "propose", help="Propose sending times under the configured constraints")
     plan_propose.add_argument("--campaign", required=True)

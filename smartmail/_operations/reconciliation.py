@@ -8,6 +8,82 @@ from ..identity import email_address
 from ..mailbox import MailboxCapabilityError
 from ..errors import SmartMailError
 
+#: Cap on a preserved draft body. A draft is Source Material, but an observation
+#: run must stay bounded: oversized bodies keep their descriptor and a marker.
+MAX_MATERIAL_CHARS = 200_000
+
+
+def _bounded_text(value) -> tuple[str, bool]:
+    text = str(value or "")
+    if len(text) <= MAX_MATERIAL_CHARS:
+        return text, False
+    return text[:MAX_MATERIAL_CHARS], True
+
+
+def _message_material(message: dict) -> dict:
+    """Preserve the reader's captured draft material: body, attachments, compose.
+
+    Only descriptors Core itself captured are kept. Attachment *bytes* need a
+    browser-side fetch the extension does not expose yet, so a descriptor with
+    no ``bytes`` stays a descriptor and is reported as unavailable.
+    """
+    material: dict = {}
+    content = message.get("content")
+    if isinstance(content, dict):
+        text, truncated = _bounded_text(content.get("text"))
+        html, html_truncated = _bounded_text(content.get("html"))
+        material["content"] = {
+            "fetched": bool(content.get("fetched")),
+            "text": text,
+            "html": html,
+            "truncated": bool(content.get("truncated")) or truncated or html_truncated,
+            "charset": str(content.get("charset") or ""),
+            "sources": [str(entry) for entry in (content.get("sources") or [])],
+            "error": str(content.get("error") or ""),
+        }
+    attachments = message.get("attachments")
+    if isinstance(attachments, list):
+        described = []
+        for entry in attachments:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "")
+            if not name:
+                continue
+            described.append({
+                "name": name,
+                "size": int(entry.get("size") or 0),
+                "content_type": str(entry.get("content_type") or entry.get("type") or ""),
+                "part": str(entry.get("part") or ""),
+                "available": "bytes" in entry,
+            })
+        if described:
+            material["attachments"] = described
+    compose = message.get("compose")
+    if isinstance(compose, dict):
+        body, body_truncated = _bounded_text(compose.get("body_text"))
+        material["compose"] = {
+            "to": [_address(entry) for entry in (compose.get("to") or []) if _address(entry)],
+            "cc": [_address(entry) for entry in (compose.get("cc") or []) if _address(entry)],
+            "bcc": [_address(entry) for entry in (compose.get("bcc") or []) if _address(entry)],
+            "is_html": bool(compose.get("is_html")),
+            "body_text": body,
+            "truncated": body_truncated,
+            "scheduled_draft": bool(compose.get("scheduled_draft")),
+            "schedule_date": str(compose.get("schedule_date") or ""),
+            "attachments": [
+                {"name": str(entry.get("name") or ""), "size": int(entry.get("size") or 0)}
+                for entry in (compose.get("attachments") or []) if isinstance(entry, dict)
+                and str(entry.get("name") or "")],
+        }
+    return material
+
+
+def _address(entry) -> str:
+    if isinstance(entry, dict):
+        return email_address(str(entry.get("address") or "")) or ""
+    return email_address(str(entry or "")) or ""
+
 
 class ReconciliationOperations:
     """Read-only Mailbox observations and evidence-based Reconciliation."""
@@ -108,6 +184,15 @@ class ReconciliationOperations:
         if not isinstance(evidence, dict):
             evidence = {"raw": str(evidence)}
             ambiguity = ambiguity or "Evidence has an unsupported structure"
+        else:
+            evidence = dict(evidence)
+        # A draft observed in the Student's own mailbox is Source Material, not
+        # only reconciliation evidence: the reader captures the body, the
+        # attachment descriptors and the native Compose model, and all three
+        # are preserved so a draft can later be imported like an upload.
+        material = _message_material(message)
+        if material:
+            evidence["material"] = material
         observation_id = str(uuid4())
         self._db.execute(
             "INSERT INTO mailbox_message_observations VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",

@@ -41,20 +41,30 @@ async (page) => {
     }
   }
 
-  // Intake categories and Task details expose retained Core evidence in bounded dialogs.
+  // One candidate stream, one mapping column: uploads and mailbox drafts map
+  // inline and a task expands in place. No dialog is ever opened.
   await page.goto(`${origin}/#source-mapping`);
   await page.setViewportSize({ width: 1024, height: 600 });
-  await page.locator(".sm-category-main").first().click();
-  const evidenceDialog = page.getByRole("dialog", { name: "Source evidence inspector" });
-  await evidenceDialog.waitFor();
-  await evidenceDialog.getByRole("button", { name: "Done", exact: true }).click();
+  await page.locator(".sm-stages .sm-stage").first().waitFor();
+  const stageCount = await page.locator(".sm-stages .sm-stage").count();
+  if (stageCount !== 5) throw new Error(`Expected five pipeline stages, found ${stageCount}`);
+  const sourceCard = page.locator(".sm-source-card").first();
+  if (await sourceCard.count()) {
+    await sourceCard.click();
+    await page.locator(".sm-map-row.is-focused").first().waitFor();
+  }
+  const conflictFilter = page.locator(".sm-map-filters button").nth(2);
+  await conflictFilter.click();
+  await page.locator(".sm-map-filters button.is-on").waitFor();
+  await page.locator(".sm-map-filters button").first().click();
   const firstTask = page.locator(".sm-task-row").first();
   if (await firstTask.count()) {
     await firstTask.click();
-    const taskDialog = page.getByRole("dialog", { name: "Resolved task inspector" });
-    await taskDialog.waitFor();
+    await page.locator(".sm-task-detail").waitFor();
     await page.keyboard.press("Escape");
   }
+  const intakeDialogs = await page.locator("dialog[open]").count();
+  if (intakeDialogs) throw new Error("Intake must not open modal dialogs for mapping or evidence");
 
   // Short-window lists either fit or own their scrolling; page chrome never scrolls.
   await page.setViewportSize({ width: 900, height: 450 });
@@ -72,13 +82,13 @@ async (page) => {
     return {
       sources: read(".sm-source-list"),
       tasks: read(".sm-task-list"),
-      categories: read(".sm-category-list"),
+      mapping: read(".sm-mapping .sm-flow"),
       pageScrolled: [document.documentElement, document.body, document.querySelector(".workspace")]
         .filter(Boolean).some((element) => element.scrollTop !== 0 || element.scrollLeft !== 0),
     };
   });
   if (!intakeRegions.sources.reachable || !intakeRegions.tasks.reachable
-      || !intakeRegions.categories.reachable || intakeRegions.pageScrolled) {
+      || !intakeRegions.mapping.reachable || intakeRegions.pageScrolled) {
     throw new Error(`Intake regions must remain internally reachable: ${JSON.stringify(intakeRegions)}`);
   }
 
@@ -92,17 +102,14 @@ async (page) => {
     if (!selected) throw new Error(`Review tab did not become active: ${name}`);
   }
 
-  // The workflow guide remains reachable and scrolls inside the short window.
+  // The workflow stage stays bounded inside the short window.
   await page.goto(`${origin}/#workflow`);
   await page.setViewportSize({ width: 900, height: 450 });
-  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("button", { name: "Workflow guide" }).click();
-  await page.getByRole("dialog").waitFor();
-  const dialogFits = await page.getByRole("dialog").evaluate((element) => {
+  await page.locator(".workflow-stage").waitFor();
+  const stageFits = await page.locator(".workflow-stage").evaluate((element) => {
     const rect = element.getBoundingClientRect();
-    element.scrollTop = element.scrollHeight;
-    return rect.top >= 0 && rect.bottom <= innerHeight && element.scrollTop > 0;
+    return rect.top >= -1 && rect.bottom <= innerHeight + 1;
   });
-  if (!dialogFits) throw new Error("Short-window dialog must fit and scroll internally");
-  await page.keyboard.press("Escape");
+  if (!stageFits) throw new Error("Workflow stage must remain inside the short window");
   return { viewportChecks: results.length, interactionChecks: "passed" };
 }

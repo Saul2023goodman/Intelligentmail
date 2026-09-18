@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import SearchField from "../../shared/SearchField";
-import Icon from "../../shared/Icon";
+import Icon, { type IconName } from "../../shared/Icon";
 import { AppShell, Topbar } from "../../app/shell";
 import { useWorkspaceScope } from "../../app/scope";
 import { useCoreQuery } from "../../core/data";
+import { gatewayHealth } from "../../core/gateway";
 import {
+  core,
   human,
   importSources,
   recognizeSources,
@@ -15,7 +17,6 @@ import {
   type SourceRecognitionAnnotation,
 } from "../../core";
 import {
-  buildImportSelections,
   confidenceTone,
   identitySummary,
   isActionableType,
@@ -28,54 +29,104 @@ import {
 import "./SourceMapping.css";
 
 type TaskFilter = "all" | "active" | "incomplete";
+type MapFilter = "all" | "duplicate" | "conflict" | "unmatched";
 type SourceView = IntakeSource & { category: string; importId: string; finding?: string; recognition?: SourceRecognitionAnnotation };
 type ReviewRow = ReviewItem;
-const categories = [
-  { id: "master", title: "Supervisor records", detail: "Authoritative task identity rows", icon: "source" as const, color: "green" },
-  { id: "drafts", title: "Draft messages", detail: "Documents associated to Preparations", icon: "file" as const, color: "blue" },
-  { id: "profile", title: "Student profile", detail: "Explicit Student scope", icon: "user" as const, color: "purple" },
-  { id: "mailbox", title: "Mailbox identity", detail: "Registered sending mailbox", icon: "mail" as const, color: "blue" },
-  { id: "records", title: "Prior outreach records", detail: "Retained evidence outside preparation", icon: "database" as const, color: "amber" },
-  { id: "attachments", title: "Attachments", detail: "Preserved candidate source materials", icon: "clip" as const, color: "purple" },
-] as const;
+type ImportSummary = { rows: number; duplicate: number; conflicts: number; new_sources: number; created: number };
 
-function initials(name: string) {
-  return name.split(/\s+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join("").toUpperCase();
-}
+// One candidate stream: an uploaded Source Material and a draft observed in the
+// Student's own mailbox are both Source Material, so the board never switches
+// between two different interfaces — only the channel of a candidate differs.
+type Candidate = {
+  key: string;
+  channel: "upload" | "draft";
+  name: string;
+  group: string;
+  detail: string;
+  confidence: string;
+  included: boolean;
+  duplicate: boolean;
+  conflict: boolean;
+  unmatched: boolean;
+  source?: SourceView;
+  observation?: {
+    id: string; subject: string; recipient: string; taskId: string; supervisor: string;
+    attachmentCount: number; bodyAvailable: boolean; observedTime: string; scheduled: boolean;
+  };
+};
+
+const groups: { id: string; title: string; icon: IconName; color: string }[] = [
+  { id: "unresolved", title: "待判定", icon: "warning", color: "slate" },
+  { id: "master", title: "导师名单", icon: "source", color: "green" },
+  { id: "drafts", title: "外联草稿", icon: "file", color: "blue" },
+  { id: "attachments", title: "附件材料", icon: "clip", color: "purple" },
+  { id: "records", title: "既往外联记录", icon: "database", color: "amber" },
+  { id: "mailbox", title: "邮箱草稿箱", icon: "mail", color: "teal" },
+];
+const categoryType: Record<string, RecognitionTypeId> = {
+  master: "supervisor_master", drafts: "outreach_draft", attachments: "applicant_cv", records: "tracking_sheet",
+};
+const typeOfSource = (source: SourceView): RecognitionTypeId =>
+  source.recognition?.type ?? categoryType[source.category] ?? "unknown";
 
 export default function IntakePage() {
   const { scope } = useWorkspaceScope();
   const campaign = scope?.campaignId ?? "";
   const student = scope?.studentId ?? "";
-  const workspaceQuery = useCoreQuery("intake_workspace", { student_id: student }, { enabled: Boolean(student) });
-  const data: IntakeWorkspace | null = workspaceQuery.data;
+  const [expandedTaskId, setExpandedTaskId] = useState("");
   const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<TaskFilter>("all");
-  const [selectedSource, setSelectedSource] = useState<SourceView | null>(null);
-  const [selectedTaskId, setSelectedTaskId] = useState("");
-  const taskQuery = useCoreQuery("task", { task_id: selectedTaskId }, { enabled: Boolean(selectedTaskId) });
-  const selectedTask = taskQuery.data;
-  const [inspection, setInspection] = useState<{ title: string; detail: string; evidence: unknown } | null>(null);
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
+  const [mapFilter, setMapFilter] = useState<MapFilter>("all");
+  const [focused, setFocused] = useState("");
   const [busy, setBusy] = useState(false);
   const [recognizing, setRecognizing] = useState(false);
+  const [observing, setObserving] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [review, setReview] = useState<{ rows: ReviewRow[]; relations: RecognitionRelation[] } | null>(null);
+  const [selectedDrafts, setSelectedDrafts] = useState<string[]>([]);
+  const [lastImport, setLastImport] = useState<ImportSummary | null>(null);
+  const [heldFiles, setHeldFiles] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
-  const inspector = useRef<HTMLDialogElement>(null);
-  const taskDialog = useRef<HTMLDialogElement>(null);
-  const reviewDialog = useRef<HTMLDialogElement>(null);
   const dragDepth = useRef(0);
-  const loading = workspaceQuery.isLoading;
-  const displayError = error || workspaceQuery.error?.message || taskQuery.error?.message || "";
 
-  useEffect(() => { if (inspection) inspector.current?.showModal(); }, [inspection]);
-  useEffect(() => { if (selectedTaskId) taskDialog.current?.showModal(); }, [selectedTaskId]);
+  const ready = Boolean(campaign && student);
+  const intakeQuery = useCoreQuery("intake_workspace", { student_id: student }, { enabled: Boolean(student) });
+  const draftQuery = useCoreQuery("draft_material", { campaign_id: campaign, student_id: student }, { enabled: ready });
+  const mailboxQuery = useCoreQuery("mailbox_workspace", { campaign_id: campaign, student_id: student }, { enabled: ready });
+  const workspaceQuery = useCoreQuery("workspace", campaign ? { campaign_id: campaign } : {}, { enabled: Boolean(student) });
+  const gatewayQuery = useCoreQuery("gateway_status", {}, { maxAge: 1_000, refetchInterval: 3_000 });
+  // Task evidence is fetched only for the row the operator expands.
+  const taskQuery = useCoreQuery("task", { task_id: expandedTaskId }, { enabled: Boolean(expandedTaskId) });
+  const taskDetail = expandedTaskId ? taskQuery.data : null;
+
+  const data: IntakeWorkspace | null = intakeQuery.data;
+  const mailbox = mailboxQuery.data;
+  const draftCandidates = useMemo(() => draftQuery.data?.candidates ?? [], [draftQuery.data]);
+  const loading = intakeQuery.isLoading || draftQuery.isLoading || mailboxQuery.isLoading;
+  const displayError = error || intakeQuery.error?.message || draftQuery.error?.message || mailboxQuery.error?.message || "";
+
+  const studentMailbox = workspaceQuery.data?.mailboxes.find((item) => item.student_id === student) ?? null;
+  const gateway = gatewayHealth(gatewayQuery.data ?? workspaceQuery.data?.mailbox_capabilities.gateway, studentMailbox);
+
+  // Uploaded bytes stay in this session only: re-mapping a retained source
+  // re-imports the same bytes with a revised type, which Core treats as the
+  // same Source Material (idempotent, nothing duplicated).
+  const uploadedFiles = useRef<Map<string, File>>(new Map());
+  const reviewFiles = useRef<Map<string, File>>(new Map());
+
+  // Scope switches reset the transient pipeline state: a recognition batch and
+  // its held bytes describe one Student × Campaign only.
   useEffect(() => {
-    if (review) reviewDialog.current?.showModal();
-    else reviewDialog.current?.close();
-  }, [review]);
+    // oxlint-disable-next-line react/set-state-in-effect -- A scope switch invalidates the whole pipeline.
+    setReview(null);
+    setLastImport(null);
+    setFocused("");
+    setExpandedTaskId("");
+    setSelectedDrafts([]);
+    setHeldFiles([]);
+  }, [student, campaign]);
 
   const sources = useMemo<SourceView[]>(() => (data?.imports ?? []).flatMap((imported) =>
     imported.sources.map((source) => ({
@@ -85,14 +136,95 @@ export default function IntakePage() {
       finding: imported.findings.find((finding) => finding.source.id === source.id)?.detail,
       recognition: data?.source_recognition[source.id],
     }))), [data]);
-  const unresolved = sources.filter((source) => source.category === "unresolved"
-    && `${source.name} ${source.finding ?? ""}`.toLowerCase().includes(query.toLowerCase()));
+
+  const allFindings = useMemo(() => (data?.imports ?? []).flatMap((imported) => imported.findings.map((finding) => ({
+    code: finding.code, detail: finding.detail, blocking: finding.blocking, source: finding.source.name,
+  }))), [data]);
+  const duplicateFindings = allFindings.filter((finding) => finding.code.includes("duplicate"));
+  const blockingFindings = allFindings.filter((finding) => finding.blocking);
+  const findingsBySource = useMemo(() => new Map(
+    (data?.imports ?? []).flatMap((imported) => imported.findings.map((finding) =>
+      [finding.source.id, finding] as const))), [data]);
+
+  const comparisonRows = useMemo(() => mailbox?.rows ?? [], [mailbox]);
+  const observedByTask = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of comparisonRows) {
+      if (row.local?.task_id && row.observed) {
+        counts.set(row.local.task_id, (counts.get(row.local.task_id) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [comparisonRows]);
+
+  const needle = query.toLowerCase();
+  const candidates = useMemo<Candidate[]>(() => {
+    const uploaded: Candidate[] = sources.map((source) => {
+      const finding = findingsBySource.get(source.id);
+      return {
+        key: `source:${source.id}`,
+        channel: "upload",
+        name: source.name,
+        group: source.category,
+        detail: `${Math.max(1, Math.round(source.size / 1024))} KB · ${source.recognition?.label ?? human(source.category)}`,
+        confidence: source.recognition?.confidence ?? "",
+        included: true,
+        duplicate: Boolean(finding && finding.code.includes("duplicate")),
+        conflict: Boolean(finding?.blocking),
+        unmatched: source.category === "unresolved",
+        source,
+      };
+    });
+    const drafts: Candidate[] = draftCandidates.map((draft) => ({
+      key: `draft:${draft.observation_id}`,
+      channel: "draft",
+      name: draft.subject || "(no subject)",
+      group: "mailbox",
+      detail: draft.recipient
+        ? `${draft.recipient}${draft.attachment_count ? ` · ${draft.attachment_count} 附件` : ""}`
+        : "无可用收件人",
+      confidence: draft.task_id ? "high" : "low",
+      included: false,
+      duplicate: false,
+      conflict: false,
+      unmatched: !draft.task_id,
+      observation: {
+        id: draft.observation_id, subject: draft.subject, recipient: draft.recipient,
+        taskId: draft.task_id, supervisor: draft.supervisor,
+        attachmentCount: draft.attachment_count, bodyAvailable: draft.body_available,
+        observedTime: draft.observed_time, scheduled: draft.scheduled,
+      },
+    }));
+    return [...uploaded, ...drafts].filter((candidate) =>
+      `${candidate.name} ${candidate.detail}`.toLowerCase().includes(needle));
+  }, [sources, draftCandidates, findingsBySource, needle]);
+
+  const grouped = useMemo(() => groups
+    .map((group) => ({ ...group, items: candidates.filter((candidate) => candidate.group === group.id) }))
+    .filter((group) => group.items.length), [candidates]);
+
+  const reviewKeys = useMemo(() => new Set((review?.relations ?? []).flatMap((relation) => [relation.a, relation.b])), [review]);
+  const mappingRows = useMemo(() => candidates.filter((candidate) => {
+    if (mapFilter === "duplicate") return candidate.duplicate || reviewKeys.has(candidate.name);
+    if (mapFilter === "conflict") return candidate.conflict;
+    if (mapFilter === "unmatched") return candidate.unmatched;
+    return true;
+  }), [candidates, mapFilter, reviewKeys]);
+
+  const counts = {
+    acquired: candidates.length,
+    recognized: candidates.filter((candidate) => candidate.channel === "upload"
+      ? Boolean(candidate.source?.recognition) : Boolean(candidate.observation?.recipient)).length,
+    duplicates: duplicateFindings.length + (review?.relations.length ?? 0),
+    conflicts: blockingFindings.length + draftCandidates.filter((draft) => !draft.task_id).length,
+    resolved: data?.tasks.length ?? 0,
+  };
+
   const tasks = (data?.tasks ?? []).filter((item) => {
     const active = Boolean(item.recipient_addresses.length);
-    return (filter === "all" || (filter === "active" ? active : !active))
-      && `${item.supervisor_name} ${item.institution_name} ${item.recipient_addresses.join(" ")}`.toLowerCase().includes(query.toLowerCase());
+    return (taskFilter === "all" || (taskFilter === "active" ? active : !active))
+      && `${item.supervisor_name} ${item.institution_name} ${item.recipient_addresses.join(" ")}`.toLowerCase().includes(needle);
   });
-  const currentStudent = data?.students.find((item) => item.id === student) ?? null;
   const activeCount = data?.tasks.filter((item) => item.recipient_addresses.length).length ?? 0;
 
   const importability = useMemo(
@@ -100,24 +232,25 @@ export default function IntakePage() {
     [review],
   );
   const includedCount = review?.rows.filter((row) => row.included).length ?? 0;
-  const reviewFiles = useRef<Map<string, File>>(new Map());
+  const importableDrafts = selectedDrafts.filter((id) =>
+    draftCandidates.some((draft) => draft.observation_id === id && draft.task_id && draft.body_available));
 
   async function ingest(files: File[]) {
     if (!files.length || !campaign || !student) return;
     setRecognizing(true); setError(""); setNotice("");
     try {
-      // Stage one: deterministic structural recognition, never an import.
-      // Archives return their expanded members; there is no "mixed" row.
-      const collection = await recognizeSources(files);
       const fileMap = new Map(files.map((file) => [file.name, file]));
       reviewFiles.current = fileMap;
+      for (const file of files) uploadedFiles.current.set(file.name, file);
+      setHeldFiles((current) => [...new Set([...current, ...files.map((file) => file.name)])]);
+      const collection = await recognizeSources(files);
       const rows: ReviewRow[] = reviewItems(collection.sources).map((row) => {
-        const uploadName = row.container || row.name;
-        const file = fileMap.get(uploadName);
-        if (!file) throw new Error(`Core did not return recognition for ${uploadName}`);
+        const file = fileMap.get(row.container || row.name);
+        if (!file) throw new Error(`Core did not return recognition for ${row.container || row.name}`);
         return { ...row, size: file.size };
       });
       setReview({ rows, relations: collection.relations });
+      setFocused("");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Core could not recognize the selected source set");
     } finally { setRecognizing(false); }
@@ -139,134 +272,305 @@ export default function IntakePage() {
         : row),
     } : current);
   }
-
-  async function confirmReviewImport() {
-    if (!review || !importability.ok) return;
-    const selections = buildImportSelections(review.rows, reviewFiles.current);
+  async function runImport(selections: Parameters<typeof importSources>[2], summary: (rows: number, created: number) => string) {
     setBusy(true); setError(""); setNotice("");
     try {
-      // Stage two: import the operator-approved selection; zips are expanded
-      // server-side and revised types persist alongside Core's own recognition.
       const result = await importSources(campaign, student, selections);
-      workspaceQuery.setData(result.workspace);
-      setReview(null);
-      setSelectedSource(null);
-      const summary = result.import.summary;
-      const created = result.preparation.preparation_ids.length;
-      const createdText = created
-        ? `; ${created} local Preparation${created === 1 ? "" : "s"} created from letters`
-        : summary.rows
-          ? "; drafts will associate on the next preparation step"
-          : "; reference material retained";
-      setNotice(`Imported ${summary.rows} supervisor row${summary.rows === 1 ? "" : "s"}${createdText}.`);
+      intakeQuery.setData(result.workspace);
+      const imported = result.import.summary;
+      setLastImport({
+        rows: imported.rows, duplicate: imported.duplicate, conflicts: imported.conflicts,
+        new_sources: imported.new_sources, created: result.preparation.preparation_ids.length,
+      });
+      setNotice(summary(imported.rows, result.preparation.preparation_ids.length));
+      return result;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Core rejected the selected source set");
+      return null;
     } finally { setBusy(false); }
   }
+  async function confirmReviewImport() {
+    if (!review || !importability.ok) return;
+    const result = await runImport(buildSelections(review), (rows, created) => {
+      const createdText = created
+        ? `; ${created} 份 Preparation 已建立`
+        : rows ? "; 草稿将在下一步关联" : "; 参考材料已保留";
+      return `已导入 ${rows} 行${createdText}。`;
+    });
+    if (result) setReview(null);
+  }
+  function buildSelections(reviewSet: { rows: ReviewRow[] }) {
+    return reviewSet.rows
+      .map((row) => {
+        const file = reviewFiles.current.get(row.container || row.name);
+        return file ? { file, included: row.included, ...(row.type !== row.result.type ? { type: row.type } : {}) } : null;
+      })
+      .filter((item): item is { file: File; included: boolean; type?: RecognitionTypeId } => Boolean(item));
+  }
+  async function remapSource(source: SourceView, type: RecognitionTypeId) {
+    const file = uploadedFiles.current.get(source.name);
+    if (!file) {
+      setError(`映射需要原始文件：请重新拖入 ${source.name} 后再调整映射。`);
+      return;
+    }
+    await runImport([{ file, included: true, type }], () => `已重新映射 ${source.name} → ${typeOption(type).label}。`);
+  }
+  async function importDrafts() {
+    if (!importableDrafts.length) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      const result = await core("intake_import_drafts", {
+        campaign_id: campaign, student_id: student, observation_ids: importableDrafts,
+      });
+      intakeQuery.setData(result.workspace);
+      const skipped = result.skipped.length ? `；${result.skipped.length} 封跳过：${result.skipped[0].reason}` : "";
+      setNotice(`已导入 ${result.imported.length} 封草稿为来源材料${skipped}`);
+      setSelectedDrafts([]);
+      void draftQuery.refresh();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Core 无法导入所选草稿");
+    } finally { setBusy(false); }
+  }
+  async function observeMailbox() {
+    if (!student || !gateway.canObserve) return;
+    setObserving(true); setError(""); setNotice("");
+    try {
+      const result = await core("refresh_mailbox", { student_id: student });
+      await Promise.all([mailboxQuery.refresh(), draftQuery.refresh(), workspaceQuery.refresh()]);
+      setNotice(`邮箱证据已更新（${result.observation.status}，${result.observation.messages?.length ?? 0} 封观察）。`);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Mailbox observation failed");
+    } finally { setObserving(false); }
+  }
+
   const hasFiles = (event: DragEvent) => Array.from(event.dataTransfer?.types ?? []).includes("Files");
   const onDragEnter = (event: DragEvent) => { if (hasFiles(event)) { dragDepth.current += 1; setDragging(true); } };
   const onDragOver = (event: DragEvent) => { if (hasFiles(event)) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } };
   const onDragLeave = (event: DragEvent) => { if (hasFiles(event)) { dragDepth.current = Math.max(0, dragDepth.current - 1); if (!dragDepth.current) setDragging(false); } };
   const onDrop = (event: DragEvent) => { if (hasFiles(event)) { event.preventDefault(); dragDepth.current = 0; setDragging(false); void ingest(Array.from(event.dataTransfer.files)); } };
 
-  function inspectSource(source: SourceView) {
-    setInspection({ title: source.name, detail: `${Math.max(1, Math.round(source.size / 1024))} KB · ${human(source.category)}`, evidence: { source_id: source.id, sha256: source.sha256, import_id: source.importId, finding: source.finding || null } });
-  }
+  const stages: { icon: IconName; tone: string; title: string; value: string; sub: string; filter: MapFilter | null }[] = [
+    { icon: "folder", tone: "slate", title: "采集", value: String(counts.acquired), sub: `${sources.length} 上传 · ${draftCandidates.length} 草稿箱`, filter: null },
+    { icon: "branch", tone: "blue", title: "识别", value: String(counts.recognized), sub: "Core 按结构与来源判定类型", filter: null },
+    { icon: "filter", tone: "amber", title: "查重", value: String(counts.duplicates), sub: "与已存来源、批次内重复比对", filter: "duplicate" },
+    { icon: "database", tone: "rose", title: "冲突", value: String(counts.conflicts), sub: "既有外联记录与未匹配草稿", filter: "conflict" },
+    { icon: "source", tone: "green", title: "落库", value: String(counts.resolved), sub: `${activeCount} 已有邮箱`, filter: null },
+  ];
 
   return <AppShell className="sm-app" activeRoute="sources">
     <div className="workspace" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <Topbar className="sm-topbar" breadcrumb="Source mapping" homeHref="#workflow">
-        <SearchField label="Search source findings and tasks" value={query} onChange={setQuery} placeholder="Search source findings or resolved tasks…" iconSize={16} />
+        <SearchField label="Search candidates and tasks" value={query} onChange={setQuery} placeholder="搜索候选材料或已解析任务…" iconSize={16} />
       </Topbar>
+      <div className="sm-stages" role="list" aria-label="Intake pipeline">
+        {stages.map((stage, index) => <Fragment key={stage.title}>
+          {index > 0 && <span className="sm-stage-link" aria-hidden="true" />}
+          <button role="listitem" className={`sm-stage ${stage.filter && mapFilter === stage.filter ? "is-active" : ""}`}
+            onClick={() => setMapFilter(stage.filter && mapFilter === stage.filter ? "all" : stage.filter ?? "all")}
+            disabled={!stage.filter} title={stage.filter ? "筛选映射行" : stage.sub}>
+            <span className={`sm-stage-icon ${stage.tone}`}><Icon name={stage.icon} size={13} /></span>
+            <span className="sm-stage-copy"><b>{stage.title}</b><small>{stage.sub}</small></span>
+            <em>{stage.value}</em>
+          </button>
+        </Fragment>)}
+      </div>
       {(notice || displayError) && <div className="sm-notice" role={displayError ? "alert" : "status"}><Icon name={displayError ? "warning" : "check"} size={16} />{displayError || notice}<button aria-label="Dismiss notification" onClick={() => { setNotice(""); setError(""); }}><Icon name="close" size={15} /></button></div>}
+
       <main className="sm-board">
-        <section className="sm-sources"><div className="sm-column-heading"><Icon name="folder" size={16} /><h2>Unresolved raw sources</h2><span>{String(unresolved.length).padStart(2, "0")}</span></div><div className="sm-source-list">
-          {unresolved.map((source) => <button key={source.id} className={`sm-source-card ${selectedSource?.id === source.id ? "is-selected" : ""}`} aria-pressed={selectedSource?.id === source.id} onClick={() => setSelectedSource(selectedSource?.id === source.id ? null : source)} onDoubleClick={() => inspectSource(source)}><span className="sm-file-icon slate"><Icon name="file" size={20} /></span><span className="sm-source-copy"><strong>{source.name}</strong><small>{Math.max(1, Math.round(source.size / 1024))} KB</small><span className="sm-source-meta-line"><em>{source.recognition?.label ?? (source.finding || "Core could not associate this source")}</em>{source.recognition?.revised && <b className="sm-revised-tag">Revised</b>}</span></span><Icon name="chevron" size={13} /></button>)}
-          {!loading && !unresolved.length && <p className="sm-empty">{query ? "No matching unresolved sources." : "No unresolved Source Materials in this scope."}</p>}
-          <button className="sm-add-source" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} />{recognizing ? "Recognizing source set…" : "Drag & drop a supported source set"}<span>{recognizing ? "Please wait" : "Browse files"}</span></button>
-          {selectedSource && <div className="sm-selection"><span>Inspecting <strong>{selectedSource.name}</strong></span><button onClick={() => inspectSource(selectedSource)}>Inspect evidence <Icon name="arrow" size={13} /></button><button onClick={() => setSelectedSource(null)}>Clear selection</button></div>}
-        </div></section>
+        <section className="sm-sources">
+          <div className="sm-column-heading"><Icon name="folder" size={16} /><h2>候选集</h2><span>{candidates.length}</span></div>
+          <div className="sm-observe">
+            <button className="primary full" disabled={!gateway.canObserve || observing} onClick={() => void observeMailbox()} title={gateway.canObserve ? "只读读取邮箱证据，草稿箱内容会作为候选出现" : "需要连接当前学生的邮箱标签页"}>
+              <Icon name="refresh" size={14} />{observing ? "读取中…" : "读取邮箱草稿箱"}
+            </button>
+            <p className="sm-observe-state"><i className={`sm-dot ${gateway.state === "connected" ? "ready" : ""}`} />{gateway.studentAddress || "未选择学生邮箱"} · {gateway.state === "connected" ? "网关已连接" : gateway.state === "mismatch" ? "网关连着其他邮箱" : gateway.state === "disconnected" ? "网关未连接" : "网关未启用"}</p>
+          </div>
+          <div className="sm-source-list">
+            {grouped.map((group) => <div className="sm-group" key={group.id}>
+              <div className="sm-group-label"><Icon name={group.icon} size={11} /><span>{group.title}</span><b>{group.items.length}</b></div>
+              {group.items.map((candidate) => <button key={candidate.key}
+                className={`sm-source-card ${candidate.key === focused ? "is-selected" : ""} ${candidate.channel === "draft" ? "is-draft" : ""}`}
+                aria-pressed={candidate.key === focused}
+                onClick={() => setFocused(candidate.key === focused ? "" : candidate.key)}>
+                <span className={`sm-file-icon ${group.color}`}><Icon name={candidate.channel === "draft" ? "mail" : group.icon} size={17} /></span>
+                <span className="sm-source-copy">
+                  <strong title={candidate.name}>{candidate.name}</strong>
+                  <span className="sm-source-meta-line">
+                    <em className={`sm-channel ${candidate.channel}`}>{candidate.channel === "draft" ? "草稿箱" : "上传"}</em>
+                    <i title={candidate.detail}>{candidate.detail}</i>
+                  </span>
+                </span>
+                {candidate.conflict && <span className="sm-flag is-conflict" title="存在阻塞项">!</span>}
+                {candidate.unmatched && !candidate.conflict && <span className="sm-flag" title="尚未匹配">?</span>}
+              </button>)}
+            </div>)}
+            {!loading && !grouped.length && <p className="sm-empty">{query ? "没有匹配的候选。" : "拖入来源集，或读取邮箱草稿箱。"}</p>}
+            <button className="sm-add-source" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} />{recognizing ? "识别中…" : "拖入或选择来源集"}<span>{recognizing ? "请稍候" : "浏览文件"}</span></button>
+          </div>
+        </section>
 
-        <section className="sm-categories"><div className="sm-column-heading"><Icon name="branch" size={16} /><h2>Stable categories</h2><span>{categories.length} fixed</span></div><div className="sm-category-list">{categories.map((category) => {
-          const members = category.id === "profile" || category.id === "mailbox" ? [] : sources.filter((source) => source.category === category.id);
-          const count = category.id === "profile" || category.id === "mailbox" ? Number(Boolean(currentStudent)) : members.length;
-          return <article className="sm-category-card" data-category={category.id} key={category.id}><button className="sm-category-main" title={category.detail} onClick={() => setInspection({ title: category.title, detail: category.detail, evidence: category.id === "profile" ? currentStudent : category.id === "mailbox" ? { mailbox: currentStudent?.mailbox } : members })}><span className={`sm-rule-icon ${category.color}`}><Icon name={category.icon} size={17} /></span><span className="sm-category-copy"><strong>{category.title}</strong><small>{category.id === "profile" ? currentStudent?.name || "No Student selected" : category.id === "mailbox" ? currentStudent?.mailbox || "No Mailbox registered" : `${members.length} retained source${members.length === 1 ? "" : "s"}`}</small></span><span className="sm-category-count">{count}</span></button><div className="sm-classified-chips">{members.slice(0, 3).map((source) => <button className="sm-file-chip" key={source.id} onClick={() => inspectSource(source)}><Icon name="file" size={11} /><span title={source.name}>{source.name}</span></button>)}{!members.length && category.id !== "profile" && category.id !== "mailbox" && <span className="sm-file-chip is-empty">Nothing retained</span>}{members.length > 3 && <span className="sm-file-chip">+{members.length - 3} more</span>}</div></article>;
-        })}</div></section>
+        <section className="sm-mapping">
+          {review ? <>
+            <div className="sm-column-heading"><Icon name="branch" size={16} /><h2>识别批次 · {review.rows.length} 个来源</h2>
+              <button className="sm-review-close" aria-label="取消本次识别" disabled={busy} onClick={() => setReview(null)}><Icon name="close" size={15} /></button></div>
+            <div className="sm-review-rows">
+              {review.rows.map((row) => {
+                const option = typeOption(row.type);
+                const revised = row.type !== row.result.type;
+                const tone = confidenceTone(row.result.confidence);
+                const summary = identitySummary({ ...row.result, type: row.type });
+                const evidence = row.result.reasons[0] ?? "无结构证据，需人工判定。";
+                return <article key={row.key} className={`sm-review-row ${row.included ? "is-included" : "is-excluded"}`}>
+                  <div className="sm-review-head">
+                    <label className="sm-review-check" title={row.included ? "排除" : "纳入"}>
+                      <input type="checkbox" checked={row.included} disabled={busy} onChange={() => toggleRow(row.key)} />
+                    </label>
+                    <span className={`sm-review-icon ${row.included ? "" : "is-off"}`}><Icon name={option.icon} size={15} /></span>
+                    <strong title={row.name}>{row.name}{revised && <b className="sm-revised-tag">已修订</b>}</strong>
+                    <span className={`sm-review-confidence ${tone}`}><i className={`sm-dot ${tone === "ready" ? "ready" : ""}`} />{row.result.confidence}</span>
+                  </div>
+                  <small className="sm-review-meta">{row.container && <span className="sm-container-tag">{row.container}</span>}{summary ? `${summary} · ` : ""}{Math.max(1, Math.round(row.size / 1024))} KB</small>
+                  <em title={[...row.result.reasons, ...row.result.cautions].join("\n")}>{evidence}</em>
+                  <select aria-label={`修订 ${row.name} 的类型`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.key, event.target.value as RecognitionTypeId)}>
+                    <optgroup label="产生外联工作">
+                      {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </optgroup>
+                    <optgroup label="参考 / 待判定">
+                      {recognitionTypeOptions.filter((item) => !item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                    </optgroup>
+                  </select>
+                </article>;
+              })}
+            </div>
+            <div className="sm-review-footer">
+              <div className="sm-review-note" role={importability.ok ? "status" : "alert"}>
+                {importability.ok
+                  ? <><Icon name="check" size={14} /><span>{includedCount} / {review.rows.length} 将导入{importability.advisories.length ? ` · ${importability.advisories[0]}` : ""}</span></>
+                  : <><Icon name="warning" size={14} /><span title={importability.issues.join("\n")}>{importability.issues[0]}{importability.issues.length > 1 ? ` (+${importability.issues.length - 1})` : ""}</span></>}
+              </div>
+              <div className="sm-review-actions">
+                <button className="sm-button" disabled={busy} onClick={() => setReview(null)}>取消</button>
+                <button className="primary" disabled={busy || !importability.ok} onClick={() => void confirmReviewImport()}>{busy ? "导入中…" : `导入 ${includedCount} 个来源`}</button>
+              </div>
+            </div>
+          </> : <>
+            <div className="sm-column-heading"><Icon name="link" size={16} /><h2>映射工作台</h2>
+              <div className="sm-map-filters" role="group" aria-label="Filter mapping rows">
+                <button className={mapFilter === "all" ? "is-on" : ""} onClick={() => setMapFilter("all")}>全部 {mappingRows.length}</button>
+                <button className={mapFilter === "duplicate" ? "is-on" : ""} onClick={() => setMapFilter("duplicate")}>重复 {counts.duplicates}</button>
+                <button className={mapFilter === "conflict" ? "is-on" : ""} onClick={() => setMapFilter("conflict")}>冲突 {counts.conflicts}</button>
+                <button className={mapFilter === "unmatched" ? "is-on" : ""} onClick={() => setMapFilter("unmatched")}>未匹配 {candidates.filter((candidate) => candidate.unmatched).length}</button>
+              </div></div>
+            <div className="sm-flow">
+              {mappingRows.map((candidate) => {
+                if (candidate.channel === "draft" && candidate.observation) {
+                  const draft = candidate.observation;
+                  const checked = selectedDrafts.includes(draft.id);
+                  return <article key={candidate.key} className={`sm-map-row ${draft.taskId ? "" : "is-unmatched"} ${candidate.key === focused ? "is-focused" : ""}`}>
+                    <div className="sm-map-side">
+                      <span className="sm-compare-tag">草稿箱</span>
+                      <strong title={draft.subject}>{draft.subject || "(no subject)"}</strong>
+                      <small>{draft.recipient || "无可用收件人"}{draft.attachmentCount ? ` · ${draft.attachmentCount} 附件` : ""}{draft.bodyAvailable ? "" : " · 正文未采集"}</small>
+                    </div>
+                    <span className="sm-map-arrow" aria-hidden="true"><Icon name="link" size={13} /></span>
+                    <div className="sm-map-side">
+                      <span className="sm-compare-tag">数据库</span>
+                      <strong>{draft.taskId ? draft.supervisor || "已匹配任务" : "无匹配任务"}</strong>
+                      <small>{draft.taskId ? "将建立 Preparation" : "先导入导师名单以建立任务"}</small>
+                    </div>
+                    <label className="sm-map-pick" title={draft.taskId && draft.bodyAvailable ? "纳入本次导入" : "该草稿尚不可导入"}>
+                      <input type="checkbox" checked={checked} disabled={!draft.taskId || !draft.bodyAvailable}
+                        onChange={() => setSelectedDrafts((current) => checked ? current.filter((id) => id !== draft.id) : [...current, draft.id])} />
+                    </label>
+                  </article>;
+                }
+                const source = candidate.source!;
+                const finding = findingsBySource.get(source.id);
+                return <article key={candidate.key} className={`sm-map-row ${candidate.conflict ? "is-conflict" : ""} ${candidate.key === focused ? "is-focused" : ""}`}
+                  onFocus={() => setFocused(candidate.key)}>
+                  <div className="sm-map-side">
+                    <span className="sm-compare-tag">上传</span>
+                    <strong title={source.name}>{source.name}</strong>
+                    <small>{Math.max(1, Math.round(source.size / 1024))} KB{candidate.confidence ? ` · ${candidate.confidence}` : ""}</small>
+                  </div>
+                  <span className="sm-map-arrow" aria-hidden="true"><Icon name="link" size={13} /></span>
+                  <div className="sm-map-side">
+                    <span className="sm-compare-tag">映射</span>
+                    <select aria-label={`重新映射 ${source.name}`} value={typeOfSource(source)}
+                      disabled={busy || !heldFiles.includes(source.name)}
+                      title={heldFiles.includes(source.name) ? "改动会以原字节重新导入（幂等）" : "原始字节不在本次会话，需重新拖入"}
+                      onChange={(event) => void remapSource(source, event.target.value as RecognitionTypeId)}>
+                      <optgroup label="产生外联工作">
+                        {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                      </optgroup>
+                      <optgroup label="参考 / 待判定">
+                        {recognitionTypeOptions.filter((item) => !item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
+                      </optgroup>
+                    </select>
+                    <small>{source.recognition?.reasons[0] ?? finding?.detail ?? human(source.category)}</small>
+                  </div>
+                </article>;
+              })}
+              {!loading && !mappingRows.length && <p className="sm-empty">{candidates.length ? "该筛选下没有映射行。" : "拖入来源集或读取邮箱草稿箱后，这里会出现映射行。"}</p>}
+            </div>
+            <div className="sm-review-footer">
+              <div className="sm-review-note" role="status">
+                <Icon name="shield" size={14} />
+                <span>{importableDrafts.length
+                  ? `${importableDrafts.length} 封草稿可导入为来源材料`
+                  : lastImport
+                    ? `上次导入 ${lastImport.rows} 行，${lastImport.duplicate} 重复，${lastImport.conflicts} 冲突`
+                    : "草稿箱与上传是同一条管线：识别 → 查重 → 冲突 → 落库"}</span>
+              </div>
+              <div className="sm-review-actions">
+                <button className="primary" disabled={busy || !importableDrafts.length} onClick={() => void importDrafts()}>
+                  {busy ? "导入中…" : `导入 ${importableDrafts.length} 封草稿`}</button>
+              </div>
+            </div>
+          </>}
+        </section>
 
-        <section className="sm-output"><div className="sm-column-heading"><Icon name="source" size={16} /><h2>Resolved tasks</h2><span>{tasks.length}</span><label className="sm-task-filter"><select aria-label="Filter resolved tasks" value={filter} onChange={(event) => setFilter(event.target.value as TaskFilter)}><option value="all">All</option><option value="active">Active</option><option value="incomplete">Missing email</option></select></label></div><div className="sm-task-list">
-          {currentStudent && <div className="sm-task-student"><span className="sm-student-avatar blue">{initials(currentStudent.name)}</span><strong>{currentStudent.name}</strong><small>{data?.campaign?.name}</small><span className="sm-task-student-mail"><Icon name="mail" size={12} />{currentStudent.mailbox}</span></div>}
-          {tasks.map((item) => { const active = Boolean(item.recipient_addresses.length); const preparation = item.preparation; const attachments = preparation?.attachment_count ?? 0; return <button key={item.task_id} className={`sm-task-row ${active ? "" : "is-incomplete"}`} onClick={() => setSelectedTaskId(item.task_id)}><span className="sm-task-row-icon"><Icon name={preparation ? "file" : "user"} size={15} /></span><span className="sm-task-row-copy"><strong>{item.supervisor_name}</strong><small>{item.institution_name} · {item.recipient_addresses.join(", ") || "no email identified"}</small></span><span className={`sm-task-badge ${preparation ? "" : "is-off"}`}><Icon name="file" size={12} />{preparation ? "Prepared" : "No draft"}</span><span className={`sm-task-badge ${attachments ? "" : "is-off"}`}><Icon name="clip" size={12} />{attachments}</span><span className={`sm-task-pill ${active ? "active" : "incomplete"}`}><i className={`sm-dot ${active ? "ready" : ""}`} />{active ? human(item.message_status) : "Missing email"}</span></button>; })}
-          {!loading && !tasks.length && <div className="sm-empty"><Icon name="search" size={25} /><p>{data?.tasks.length ? "No matching Outreach Tasks." : "Import a supported source set for this Student and Campaign."}</p><button className="sm-button" onClick={() => { setQuery(""); setFilter("all"); }}>Clear task filters</button></div>}
-        </div><div className="sm-output-note"><Icon name="shield" size={14} /><span>Core creates one Outreach Task per Student, Supervisor and Campaign. Preparation and readiness remain separate.</span></div></section>
+        <section className="sm-output">
+          <div className="sm-column-heading"><Icon name="source" size={16} /><h2>Outreach tasks</h2><span>{tasks.length}</span>
+            <label className="sm-task-filter"><select aria-label="Filter resolved tasks" value={taskFilter} onChange={(event) => setTaskFilter(event.target.value as TaskFilter)}><option value="all">All</option><option value="active">Active</option><option value="incomplete">Missing email</option></select></label></div>
+          <div className="sm-task-list">
+            {tasks.map((item) => {
+              const active = Boolean(item.recipient_addresses.length);
+              const preparation = item.preparation;
+              const attachments = preparation?.attachment_count ?? 0;
+              const observed = observedByTask.get(item.task_id) ?? 0;
+              const expanded = item.task_id === expandedTaskId;
+              return <div key={item.task_id} className={`sm-task-block ${active ? "" : "is-incomplete"} ${expanded ? "is-open" : ""}`}>
+                <button className="sm-task-row" aria-expanded={expanded} onClick={() => setExpandedTaskId(expanded ? "" : item.task_id)}>
+                  <span className="sm-task-row-icon"><Icon name={preparation ? "file" : "user"} size={15} /></span>
+                  <span className="sm-task-row-copy"><strong>{item.supervisor_name}</strong><small>{item.institution_name} · {item.recipient_addresses.join(", ") || "no email identified"}</small></span>
+                  {observed > 0 && <span className="sm-task-badge is-observed"><Icon name="mail" size={12} />{observed}</span>}
+                  <span className={`sm-task-badge ${preparation ? "" : "is-off"}`}><Icon name="file" size={12} />{preparation ? "Prepared" : "No draft"}</span>
+                  <span className={`sm-task-badge ${attachments ? "" : "is-off"}`}><Icon name="clip" size={12} />{attachments}</span>
+                  <span className={`sm-task-pill ${active ? "active" : "incomplete"}`}><i className={`sm-dot ${active ? "ready" : ""}`} />{active ? human(item.message_status) : "Missing email"}</span>
+                  <Icon name="chevron" size={13} />
+                </button>
+                {expanded && <div className="sm-task-detail">
+                  <dl className="sm-map-fields">
+                    <div><span>Recipient address</span><strong>{item.recipient_addresses.join(", ") || "Missing — no usable address recorded"}</strong></div>
+                    <div><span>Active Preparation</span><strong>{preparation ? `${preparation.source_name} · ${preparation.subject || "subject required"}` : "No supported draft associated"}</strong></div>
+                    <div><span>Mailbox identity</span><strong>{studentMailbox?.address ?? scope?.mailbox ?? "—"}</strong></div>
+                  </dl>
+                  <p className="sm-task-exceptions">{taskQuery.isLoading && !taskDetail
+                    ? "Loading task evidence…"
+                    : taskDetail?.task.exceptions.length
+                      ? `Exceptions: ${taskDetail.task.exceptions.map((entry) => human(entry.code)).join(", ")}`
+                      : "No exceptions recorded."}</p>
+                  <button className="primary full" onClick={() => { window.location.hash = "#review"; }}>打开 Readiness 审查</button>
+                </div>}
+              </div>;
+            })}
+            {!loading && !tasks.length && <div className="sm-empty"><Icon name="search" size={25} /><p>{data?.tasks.length ? "没有匹配的外联任务。" : "导入来源集或草稿箱邮件后，这里会出现任务。"}</p><button className="sm-button" onClick={() => { setQuery(""); setTaskFilter("all"); }}>Clear task filters</button></div>}
+          </div>
+        </section>
       </main>
-      <footer className="sm-footer"><span><i className="sm-dot ready" />Persisted Core data<span className="footer-separator">|</span>{sources.length} sources · {activeCount} active · {(data?.tasks.length ?? 0) - activeCount} missing email · {currentStudent?.name || "No Student"}</span><span><Icon name="shield" size={12} />Original bytes and evidence are retained</span></footer>
-      {dragging && <div className="sm-drop-overlay" aria-hidden="true"><div className="sm-drop-card"><span className="sm-drop-icon"><Icon name="file" size={26} /></span><strong>Drop to recognize with SmartMail Core</strong><span>Core classifies .docx, .xlsx and .csv sources from their structure first. You review and revise the types, then import only the approved set.</span></div></div>}
+      {dragging && <div className="sm-drop-overlay" aria-hidden="true"><div className="sm-drop-card"><span className="sm-drop-icon"><Icon name="file" size={26} /><Icon name="mail" size={26} /></span><strong>放入即由 Core 识别</strong><span>上传文件与邮箱草稿走同一条管线：识别 → 查重 → 冲突 → 落库。类型可在中列修订后再导入。</span></div></div>}
     </div>
     <input ref={fileInput} type="file" multiple accept=".xlsx,.zip,.docx,.pdf,.csv" hidden onChange={(event) => { void ingest(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
-    <dialog ref={reviewDialog} aria-label="Review recognized sources" className="sm-recog" onClose={() => setReview(null)} onClick={(event) => { if (event.target === event.currentTarget && !busy) setReview(null); }}>
-      {review && <div className="sm-recog-inner" role="document">
-        <div className="sm-recog-top">
-          <div>
-            <span>DETERMINISTIC RECOGNITION</span>
-            <h2>{review.rows.length} source{review.rows.length === 1 ? "" : "s"} recognized</h2>
-            <p>Core classified every file from its structure and discourse, not its extension. Revise a type or toggle inclusion; uncertain imports stay blocked.</p>
-          </div>
-          <button aria-label="Cancel recognition review" disabled={busy} onClick={() => setReview(null)}><Icon name="close" size={19} /></button>
-        </div>
-        {review.relations.length > 0 && <div className="sm-recog-relations">
-          {review.relations.map((relation, index) => <div key={index} className="sm-recog-relation">
-            <Icon name="branch" size={14} />
-            <span><strong>{relation.relation === "exact_duplicate" ? "Exact duplicate" : "Near-duplicate / version"}</strong>
-              {": "}{relation.a.split("/").pop()} ↔ {relation.b.split("/").pop()}
-              {relation.relation === "near_duplicate" && ` · ${Math.round((relation.containment ?? relation.similarity) * 100)}% shared content`}
-              {" — both retained, nothing is merged automatically."}</span>
-          </div>)}
-        </div>}
-        <div className="sm-recog-rows">
-          {review.rows.map((row) => {
-            const option = typeOption(row.type);
-            const revised = row.type !== row.result.type;
-            const tone = confidenceTone(row.result.confidence);
-            const summary = identitySummary({ ...row.result, type: row.type });
-            const evidence = row.result.reasons[0] ?? "No supporting structural evidence; held for operator review.";
-            return <article key={row.key} className={`sm-recog-row ${row.included ? "is-included" : "is-excluded"}`}>
-              <label className="sm-recog-check" title={row.included ? "Exclude from this import" : "Include in this import"}>
-                <input type="checkbox" checked={row.included} disabled={busy} onChange={() => toggleRow(row.key)} />
-              </label>
-              <span className={`sm-recog-type-icon ${row.included ? "" : "is-off"}`}><Icon name={option.icon} size={17} /></span>
-              <div className="sm-recog-copy">
-                <strong title={row.name}>{row.name}{revised && <b className="sm-revised-tag">Revised</b>}</strong>
-                <small>{row.container && <span className="sm-container-tag" title={`Expanded from ${row.container}`}>{row.container}</span>}{summary ? `${summary} · ` : ""}{Math.max(1, Math.round(row.size / 1024))} KB</small>
-                <em title={[...row.result.reasons, ...row.result.cautions].join("\n")}>{evidence}{row.result.cautions.length > 0 ? ` · ${row.result.cautions.length} caution${row.result.cautions.length === 1 ? "" : "s"}` : ""}</em>
-              </div>
-              <span className={`sm-recog-confidence ${tone}`} title={[...row.result.reasons, ...row.result.cautions].join("\n")}>
-                <i className={`sm-dot ${tone === "ready" ? "ready" : ""}`} />{row.result.confidence}
-              </span>
-              <select aria-label={`Revise recognized type for ${row.name}`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.key, event.target.value as RecognitionTypeId)}>
-                <optgroup label="Creates outreach work">
-                  {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                </optgroup>
-                <optgroup label="Reference / unresolved">
-                  {recognitionTypeOptions.filter((item) => !item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
-                </optgroup>
-              </select>
-            </article>;
-          })}
-        </div>
-        <div className="sm-recog-footer">
-          <div className="sm-recog-foot-note">
-            {importability.ok
-              ? <><Icon name="check" size={15} /><div><span>{includedCount} of {review.rows.length} source{review.rows.length === 1 ? "" : "s"} will import.</span>{importability.advisories.length > 0 && <ul className="sm-recog-advisories">{importability.advisories.map((advisory, index) => <li key={index}>{advisory}</li>)}</ul>}</div></>
-              : <><Icon name="warning" size={15} /><div><ul>{importability.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>{importability.advisories.length > 0 && <ul className="sm-recog-advisories">{importability.advisories.map((advisory, index) => <li key={index}>{advisory}</li>)}</ul>}</div></>}
-          </div>
-          <div className="sm-recog-actions">
-            <button className="sm-recog-cancel" disabled={busy} onClick={() => setReview(null)}>Cancel</button>
-            <button className="primary" disabled={busy || !importability.ok} onClick={() => void confirmReviewImport()}>{busy ? "Importing…" : `Import ${includedCount} source${includedCount === 1 ? "" : "s"}`}</button>
-          </div>
-        </div>
-      </div>}
-    </dialog>
-    <dialog ref={inspector} aria-label="Source evidence inspector" className="sm-detail" onClick={(event) => { if (event.target === event.currentTarget) { inspector.current?.close(); setInspection(null); } }}><div className="sm-detail-inner"><div className="sm-detail-top"><span>RETAINED EVIDENCE</span><button aria-label="Close inspector" onClick={() => { inspector.current?.close(); setInspection(null); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name="link" size={27} /></div><h2>{inspection?.title}</h2><p>{inspection?.detail}</p><pre>{JSON.stringify(inspection?.evidence, null, 2)}</pre><div className="sm-detail-note"><Icon name="shield" size={17} />Core remains authoritative for supported associations and readiness.</div><button className="primary full" onClick={() => { inspector.current?.close(); setInspection(null); }}>Done</button></div></dialog>
-    <dialog ref={taskDialog} aria-label="Resolved task inspector" className="sm-detail sm-task-detail" onClick={(event) => { if (event.target === event.currentTarget) { taskDialog.current?.close(); setSelectedTaskId(""); } }}>{selectedTask ? (() => { const preparation = selectedTask.preparations.find((item) => item.status !== "superseded"); return <div className="sm-detail-inner"><div className="sm-detail-top"><span>OUTREACH TASK · {preparation?.ready ? "READY" : "IN PREPARATION"}</span><button aria-label="Close task inspector" onClick={() => { taskDialog.current?.close(); setSelectedTaskId(""); }}><Icon name="close" size={19} /></button></div><div className="sm-detail-symbol"><Icon name={preparation ? "file" : "user"} size={27} /></div><h2>{selectedTask.task.supervisor.name}</h2><p>{currentStudent?.name} → {selectedTask.task.supervisor.name} · {selectedTask.task.institution.name}</p><div className="sm-detail-fields"><div><span>Campaign</span><strong>{data?.campaign?.name}</strong></div><div><span>Recipient address</span><strong>{selectedTask.task.supervisor.addresses.join(", ") || "Missing — no usable address recorded"}</strong></div><div><span>Active Preparation</span><strong>{preparation ? `${preparation.source.name} · ${preparation.subject || "subject required"}` : "No supported draft associated"}</strong></div><div><span>Mailbox identity</span><strong>{selectedTask.task.mailbox.address}</strong></div><div><span>Task exceptions</span><strong>{selectedTask.task.exceptions.map((item) => human(item.code)).join(", ") || "None"}</strong></div><div><span>Readiness findings</span><strong>{preparation?.readiness_findings.map((item) => human(item.code)).join(", ") || "None"}</strong></div></div><div className="sm-detail-note"><Icon name="shield" size={17} />Corrections and attachment confirmation continue in Readiness review.</div><button className="primary full" onClick={() => { taskDialog.current?.close(); setSelectedTaskId(""); window.location.hash = "#review"; }}>Open readiness review</button></div>; })() : <div className="sm-detail-inner"><h2>{taskQuery.isLoading ? "Loading task details…" : "Task details unavailable"}</h2></div>}</dialog>
   </AppShell>;
 }

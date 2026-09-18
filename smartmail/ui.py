@@ -25,6 +25,14 @@ def dispatch(core, request):
     if command == "intake_import":
         return import_uploaded_sources(
             core, request["campaign_id"], request["student_id"], request["files"])
+    if command == "draft_material":
+        return {"candidates": core.draft_material_candidates(
+            request["campaign_id"], request["student_id"])}
+    if command == "intake_import_drafts":
+        result = core.import_mailbox_drafts(
+            request["campaign_id"], request["student_id"], request.get("observation_ids") or [])
+        return {**result, "workspace": intake_workspace(
+            core, request["campaign_id"], request["student_id"])}
     if command == "intake_recognize":
         return recognize_uploaded_sources(core, request["files"])
     if command == "review_workspace":

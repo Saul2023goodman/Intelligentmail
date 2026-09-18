@@ -88,7 +88,8 @@ def dispatch_execution(core, request):
     if command == "execution_configure":
         return core.configure_plan(request["campaign_id"], **{
             key: request[key] for key in (
-                "timezone", "windows", "spacing_minutes", "daily_limit", "horizon_days")
+                "timezone", "windows", "spacing_minutes", "daily_limit", "horizon_days",
+                "institution_limit")
             if key in request})
     if command == "execution_propose":
         return core.propose_plan(request["campaign_id"])

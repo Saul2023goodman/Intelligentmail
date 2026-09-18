@@ -232,7 +232,8 @@ CREATE TABLE IF NOT EXISTS plan_configurations (
     windows TEXT NOT NULL,
     spacing_minutes INTEGER NOT NULL,
     daily_limit INTEGER NOT NULL,
-    horizon_days INTEGER NOT NULL
+    horizon_days INTEGER NOT NULL,
+    institution_limit INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS sending_plans (
     id TEXT PRIMARY KEY,
@@ -243,7 +244,8 @@ CREATE TABLE IF NOT EXISTS sending_plans (
     windows TEXT NOT NULL,
     spacing_minutes INTEGER NOT NULL,
     daily_limit INTEGER NOT NULL,
-    horizon_days INTEGER NOT NULL
+    horizon_days INTEGER NOT NULL,
+    institution_limit INTEGER NOT NULL DEFAULT 1
 );
 CREATE TABLE IF NOT EXISTS sending_plan_proposals (
   id TEXT PRIMARY KEY,

@@ -71,6 +71,22 @@ export type Commands = {
     args: { campaign_id: string; student_id: string };
     result: import("./mailbox-types").MailboxWorkspace;
   };
+  draft_material: {
+    args: { campaign_id: string; student_id: string };
+    result: { candidates: import("./mailbox-types").DraftMaterialCandidate[] };
+  };
+  intake_import_drafts: {
+    args: { campaign_id: string; student_id: string; observation_ids: string[] };
+    result: {
+      import: { id: string; campaign_id: string; student_id: string };
+      imported: {
+        observation_id: string; subject: string; recipient: string;
+        task_id: string; source_id: string; preparation_id: string;
+      }[];
+      skipped: { observation_id: string; subject: string; reason: string }[];
+      workspace: IntakeWorkspace;
+    };
+  };
   execution_workspace: {
     args: { campaign_id: string };
     result: ExecutionWorkspace;
@@ -161,6 +177,7 @@ export async function core<T extends Request>(
 
 const MUTATING_COMMANDS = new Set<CommandName>([
   "intake_import",
+  "intake_import_drafts",
   "confirm_attachment",
   "set_attachment_source",
   "resolve_review_exception",

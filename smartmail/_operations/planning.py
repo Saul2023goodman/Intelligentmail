@@ -14,6 +14,7 @@ _PLAN_CONSTRAINT_LABELS = {
     "windows": "allowed windows",
     "spacing_minutes": "spacing",
     "daily_limit": "daily limit",
+    "institution_pace": "same-institution pacing",
 }
 
 #: Deterministic defaults for a Campaign that has not configured a Sending Plan.
@@ -23,6 +24,7 @@ PLAN_DEFAULTS = {
     "spacing_minutes": 15,
     "daily_limit": 20,
     "horizon_days": 14,
+    "institution_limit": 1,
 }
 
 
@@ -37,8 +39,9 @@ class PlanningOperations:
     def configure_plan(self, campaign_id: str, *, timezone: str | None = None,
                        windows=None, spacing_minutes: int | None = None,
                        daily_limit: int | None = None,
-                       horizon_days: int | None = None) -> dict:
-        """Configure the allowed windows, timezone, spacing and daily limits of a Campaign.
+                       horizon_days: int | None = None,
+                       institution_limit: int | None = None) -> dict:
+        """Configure the allowed windows, timezone, spacing, limits and institution pacing.
 
         Only the supplied fields change; an unconfigured Campaign starts from the
         deterministic defaults, so a proposal can always be reproduced.
@@ -55,16 +58,19 @@ class PlanningOperations:
             else self._plan_positive(daily_limit, "daily limit", "actions per day"),
             "horizon_days": current["horizon_days"] if horizon_days is None
             else self._plan_positive(horizon_days, "planning horizon", "days to search"),
+            "institution_limit": current["institution_limit"] if institution_limit is None
+            else self._plan_positive(
+                institution_limit, "institution limit", "advisors per institution per session"),
         }
         with self._db:
             self._db.execute(
                 "INSERT OR REPLACE INTO plan_configurations "
-                "(campaign_id, timezone, windows, spacing_minutes, daily_limit, horizon_days) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "(campaign_id, timezone, windows, spacing_minutes, daily_limit, horizon_days, "
+                "institution_limit) VALUES (?, ?, ?, ?, ?, ?, ?)",
                 (campaign_id, candidate["timezone"],
                  json.dumps(candidate["windows"], ensure_ascii=False),
                  candidate["spacing_minutes"], candidate["daily_limit"],
-                 candidate["horizon_days"]))
+                 candidate["horizon_days"], candidate["institution_limit"]))
         return self._plan_configuration(campaign_id)
 
     def _plan_configuration(self, campaign_id: str) -> dict:
@@ -80,6 +86,8 @@ class PlanningOperations:
             "windows": json.loads(row["windows"]),
             "spacing_minutes": row["spacing_minutes"],
             "daily_limit": row["daily_limit"], "horizon_days": row["horizon_days"],
+            "institution_limit": row["institution_limit"]
+            if "institution_limit" in row.keys() else PLAN_DEFAULTS["institution_limit"],
         }
 
     @staticmethod
@@ -188,31 +196,46 @@ class PlanningOperations:
         The proposal is deterministic: the same configuration, work and controlled
         time produce the same times.  Earlier proposals that were never confirmed
         are superseded so that only one proposed plan stays current.
+
+        Actions are paced **per institution**.  A session is one allowed window on
+        one local day; inside one session an institution contributes at most
+        ``institution_limit`` advisor(s), while different institutions run in
+        parallel.  Institutions never compare notes, so they may share a session;
+        advisors inside one do, so that institution's advisors are spread over
+        consecutive sessions.
         """
         self.get_campaign(campaign_id)
         configuration = self._plan_configuration(campaign_id)
+        sessions = self._plan_sessions(configuration)
         slots = self._plan_slots(configuration)
         assigned: list[datetime] = []
         proposals = self._plan_entries(campaign_id)
         plannable = [proposal for proposal in proposals if proposal["status"] == "scheduled"]
+        pacing = self._plan_pacing_constraint(plannable, sessions, configuration)
+        self._plan_assign(sessions, plannable, configuration, assigned)
         for proposal in plannable:
-            slot = self._next_plan_slot(slots, assigned, configuration)
-            if slot is None:
+            if proposal.get("slot") is None:
                 proposal["status"] = "impossible"
                 proposal["reason"] = "no_available_slot"
-                continue
-            assigned.append(slot)
-            proposal["slot"] = slot
         not_placed = [proposal for proposal in plannable
                       if proposal["status"] == "impossible"]
         if not_placed:
-            capacity = self._plan_capacity(slots, configuration)
-            constraint = self._plan_binding_constraint(slots, configuration)
-            detail = (
-                f"The configured windows, spacing and limits provide {capacity} usable sending "
-                f"time(s) within the {configuration['horizon_days']}-day horizon for "
-                f"{len(plannable)} Ready action(s); this action was left unscheduled rather than "
-                f"violating the {_PLAN_CONSTRAINT_LABELS[constraint]} constraint")
+            constraint = pacing or self._plan_binding_constraint(slots, configuration)
+            if pacing:
+                detail = (
+                    f"The {configuration['horizon_days']}-day horizon offers "
+                    f"{len(sessions)} session(s); at most "
+                    f"{configuration['institution_limit']} advisor(s) of one institution may "
+                    f"share a session, so this action was left unscheduled rather than placing "
+                    f"two advisors of one institution in the same session")
+            else:
+                capacity = self._plan_capacity(slots, configuration)
+                detail = (
+                    f"The configured windows, spacing and limits provide {capacity} usable "
+                    f"sending time(s) within the {configuration['horizon_days']}-day horizon "
+                    f"for {len(plannable)} Ready action(s); this action was left unscheduled "
+                    f"rather than violating the "
+                    f"{_PLAN_CONSTRAINT_LABELS[constraint]} constraint")
             for proposal in not_placed:
                 proposal["constraint"] = constraint
                 proposal["detail"] = detail
@@ -222,11 +245,11 @@ class PlanningOperations:
                 "UPDATE sending_plans SET status = 'superseded' "
                 "WHERE campaign_id = ? AND status = 'proposed'", (campaign_id,))
             self._db.execute(
-                "INSERT INTO sending_plans VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?)",
+                "INSERT INTO sending_plans VALUES (?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?)",
                 (plan_id, campaign_id, self._now(), configuration["timezone"],
                  json.dumps(configuration["windows"], ensure_ascii=False),
                  configuration["spacing_minutes"], configuration["daily_limit"],
-                 configuration["horizon_days"]))
+                 configuration["horizon_days"], configuration["institution_limit"]))
             for sequence, proposal in enumerate(proposals, start=1):
                 self._store_plan_proposal(plan_id, sequence, proposal, configuration)
         return self.get_plan(plan_id)
@@ -301,12 +324,17 @@ class PlanningOperations:
              slot.isoformat() if slot else "",
              slot.astimezone(timezone.utc).isoformat() if slot else ""))
 
-    def _plan_slots(self, configuration: dict) -> list[datetime]:
-        """Every allowed instant inside the configured windows, in chronological order."""
+    def _plan_sessions(self, configuration: dict) -> list[dict]:
+        """Every allowed window occurrence in the horizon, each with its own instants.
+
+        A session is one allowed window on one local day.  It is the unit that paces
+        one institution against another: institutions run in parallel inside a
+        session, one institution's advisors are spread across sessions.
+        """
         zone = ZoneInfo(configuration["timezone"])
         now = self._instant().astimezone(zone)
         spacing = timedelta(minutes=configuration["spacing_minutes"])
-        slots: list[datetime] = []
+        sessions: list[dict] = []
         seen: set[datetime] = set()
         for offset in range(configuration["horizon_days"]):
             date = now.date() + timedelta(days=offset)
@@ -314,16 +342,100 @@ class PlanningOperations:
             for window in configuration["windows"]:
                 if weekday not in window["days"]:
                     continue
-                slot = datetime.combine(date, self._plan_clock(window["start"]), tzinfo=zone)
+                opens = datetime.combine(date, self._plan_clock(window["start"]), tzinfo=zone)
                 closes = datetime.combine(date, self._plan_clock(window["end"]), tzinfo=zone)
+                instants: list[datetime] = []
+                slot = opens
                 while slot <= closes:
                     instant = slot.astimezone(timezone.utc)
                     if slot > now and instant not in seen and self._plan_wall_time_exists(slot):
                         seen.add(instant)
-                        slots.append(slot)
+                        instants.append(slot)
                     slot += spacing
-        slots.sort()
-        return slots
+                if instants:
+                    sessions.append({"opens": opens, "closes": closes, "slots": instants})
+        sessions.sort(key=lambda session: session["slots"][0])
+        return sessions
+
+    def _plan_slots(self, configuration: dict) -> list[datetime]:
+        """Every allowed instant inside the configured windows, in chronological order."""
+        return sorted(instant for session in self._plan_sessions(configuration)
+                      for instant in session["slots"])
+
+    def _plan_institution(self, task_id: str) -> str:
+        """The institution an Outreach Task belongs to; pacing is per institution."""
+        return self.get_task(task_id)["institution"]["name"] or task_id
+
+    def _plan_pacing_constraint(self, plannable: list[dict], sessions: list[dict],
+                                configuration: dict) -> str | None:
+        """Whether one institution has more advisors than the horizon's sessions allow."""
+        per_institution: dict[str, int] = {}
+        for entry in plannable:
+            key = self._plan_institution(entry["preparation"]["task_id"])
+            per_institution[key] = per_institution.get(key, 0) + 1
+        if not per_institution:
+            return None
+        if max(per_institution.values()) > len(sessions) * configuration["institution_limit"]:
+            return "institution_pace"
+        return None
+
+    def _plan_assign(self, sessions: list[dict], plannable: list[dict],
+                     configuration: dict, assigned: list[datetime]) -> None:
+        """Place actions session by session, rotating through the institutions.
+
+        Each instant of a session is offered to the next institution that still has
+        an unplaced advisor and has not reached the session's per-institution limit.
+        Spacing and the daily limit still hold across session and day boundaries.
+        """
+        zone = ZoneInfo(configuration["timezone"])
+        spacing = timedelta(minutes=configuration["spacing_minutes"])
+        limit = configuration["institution_limit"]
+        groups: dict[str, list[dict]] = {}
+        order: list[str] = []
+        for entry in plannable:
+            key = self._plan_institution(entry["preparation"]["task_id"])
+            if key not in groups:
+                groups[key] = []
+                order.append(key)
+            groups[key].append(entry)
+        counts: dict = {}
+        previous: datetime | None = None
+        for session in sessions:
+            used: dict[str, int] = {}
+            for instant in session["slots"]:
+                if previous is not None and instant - previous < spacing:
+                    continue
+                day = instant.astimezone(zone).date()
+                if counts.get(day, 0) >= configuration["daily_limit"]:
+                    continue
+                if all(not groups[key] or used.get(key, 0) >= limit for key in order):
+                    break
+                for key in order:
+                    if not groups[key] or used.get(key, 0) >= limit:
+                        continue
+                    entry = groups[key].pop(0)
+                    entry["slot"] = instant
+                    assigned.append(instant)
+                    counts[day] = counts.get(day, 0) + 1
+                    used[key] = used.get(key, 0) + 1
+                    previous = instant
+                    break
+            if not any(groups[key] for key in order):
+                break
+
+    @staticmethod
+    def _plan_session_index(local: datetime, windows: list[dict]) -> int | None:
+        """Which of the plan's windows a local time belongs to, if any.
+
+        A session is one window on one day, so the window index together with the
+        local date identifies the session an action is being placed in.
+        """
+        weekday = _PLAN_DAY_TOKENS[local.weekday()]
+        stamp = local.strftime("%H:%M")
+        for index, window in enumerate(windows):
+            if weekday in window["days"] and window["start"] <= stamp <= window["end"]:
+                return index
+        return None
 
     @staticmethod
     def _plan_wall_time_exists(slot: datetime) -> bool:
@@ -336,27 +448,6 @@ class PlanningOperations:
         return (resolved.year, resolved.month, resolved.day, resolved.hour, resolved.minute) == \
             (slot.year, slot.month, slot.day, slot.hour, slot.minute)
 
-    def _next_plan_slot(self, slots, assigned, configuration: dict):
-        """The next allowed instant that keeps the spacing and daily limits intact."""
-        zone = ZoneInfo(configuration["timezone"])
-        spacing = timedelta(minutes=configuration["spacing_minutes"])
-        counts: dict = {}
-        for instant in assigned:
-            day = instant.astimezone(zone).date()
-            counts[day] = counts.get(day, 0) + 1
-        previous = assigned[-1] if assigned else None
-        taken = set(assigned)
-        for slot in slots:
-            if slot in taken:
-                continue
-            if previous is not None and slot - previous < spacing:
-                continue
-            day = slot.astimezone(zone).date()
-            if counts.get(day, 0) >= configuration["daily_limit"]:
-                continue
-            return slot
-        return None
-
     def get_plan(self, plan_id: str) -> dict:
         """The Sending Plan as batch review: exact content, times and exclusions."""
         row = self._db.execute("SELECT * FROM sending_plans WHERE id = ?", (plan_id,)).fetchone()
@@ -366,6 +457,8 @@ class PlanningOperations:
             "timezone": row["timezone"], "windows": json.loads(row["windows"]),
             "spacing_minutes": row["spacing_minutes"], "daily_limit": row["daily_limit"],
             "horizon_days": row["horizon_days"],
+            "institution_limit": row["institution_limit"]
+            if "institution_limit" in row.keys() else PLAN_DEFAULTS["institution_limit"],
         }
         views = []
         for proposal in self._db.execute(
@@ -384,6 +477,7 @@ class PlanningOperations:
     def _plan_proposal_view(self, proposal, timezone_name: str) -> dict:
         """One planned action with everything an operator reviews before Confirmation."""
         preparation = self.get_preparation(proposal["preparation_id"])
+        task = self.get_task(proposal["task_id"])
         attachments = [
             {"id": slot["attachment"]["id"], "label": slot["label"],
              "name": slot["attachment"]["name"], "sha256": slot["attachment"]["sha256"],
@@ -396,6 +490,8 @@ class PlanningOperations:
             "scheduled_at": proposal["scheduled_at"], "timezone": timezone_name,
             "scheduled_utc": proposal["scheduled_utc"],
             "confirmation_id": proposal["confirmation_id"],
+            "institution_name": task["institution"]["name"],
+            "supervisor_name": task["supervisor"]["name"],
             "sender": preparation["sender"], "recipient": preparation["recipient"],
             "subject": preparation["subject"], "ready": preparation["ready"],
             "readiness_findings": preparation["readiness_findings"],
@@ -544,11 +640,28 @@ class PlanningOperations:
             raise SmartMailError(
                 f"The time {local.isoformat()} is outside every allowed window of this Sending "
                 f"Plan ({weekday} {local.strftime('%H:%M')} in {plan['timezone']})")
+        windows = json.loads(plan["windows"])
+        limit = plan["institution_limit"] if "institution_limit" in plan.keys() \
+            else PLAN_DEFAULTS["institution_limit"]
+        session = self._plan_session_index(local, windows)
+        institution = self._plan_institution(proposal["task_id"])
         spacing = timedelta(minutes=plan["spacing_minutes"])
         others = list(self._db.execute(
-            "SELECT preparation_id, scheduled_at FROM sending_plan_proposals "
+            "SELECT preparation_id, task_id, scheduled_at FROM sending_plan_proposals "
             "WHERE plan_id = ? AND status = 'scheduled' AND id != ?",
             (plan_id, proposal["id"])))
+        if session is not None:
+            shared = sum(
+                1 for other in others
+                if self._plan_institution(other["task_id"]) == institution
+                and self._plan_session_index(
+                    self._plan_instant(other["scheduled_at"], zone).astimezone(zone), windows)
+                == session)
+            if shared + 1 > limit:
+                raise SmartMailError(
+                    f"At most {limit} advisor(s) of {institution} may share one session; "
+                    f"{shared} already scheduled in it. Choose another session of this "
+                    f"Sending Plan, or raise the institution limit in the rules")
         for other in others:
             if abs(instant - self._plan_instant(other["scheduled_at"], zone)) < spacing:
                 raise SmartMailError(

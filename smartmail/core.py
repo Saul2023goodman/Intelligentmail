@@ -94,6 +94,10 @@ class SmartMail(
              "updated_at TEXT NOT NULL DEFAULT ''"),
             ("confirmations", "confirmed_at",
              "confirmed_at TEXT NOT NULL DEFAULT ''"),
+            ("plan_configurations", "institution_limit",
+             "institution_limit INTEGER NOT NULL DEFAULT 1"),
+            ("sending_plans", "institution_limit",
+             "institution_limit INTEGER NOT NULL DEFAULT 1"),
         ):
             existing = {row["name"] for row in self._db.execute(f"PRAGMA table_info({table})")}
             if column not in existing:
