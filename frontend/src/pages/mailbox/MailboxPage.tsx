@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppShell, NavigationItem, Topbar } from '../../app/shell';
-import { routes, type Route } from '../../app/routes';
+import { AppShell, Topbar } from '../../app/shell';
+import { useWorkspaceScope } from '../../app/scope';
 import { core, human, type Workspace, type MailboxWorkspace, type ComparisonRow } from '../../core';
 import Icon from '../../shared/Icon';
 import { kindOf, statusOf, statuses, type Status } from './presentation';
@@ -16,14 +16,15 @@ function Dialog({ title, close, children }: { title: string; close: () => void; 
   </dialog>;
 }
 export default function MailboxPage() {
+  const { scope } = useWorkspaceScope();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [campaign, setCampaign] = useState('');
-  const [student, setStudent] = useState('');
+  const campaign = scope?.campaignId ?? '';
+  const student = scope?.studentId ?? '';
   const [data, setData] = useState<MailboxWorkspace | null>(null);
   const [query, setQuery] = useState('');
   const [status, setStatus] = useState<Status | 'all'>('all');
   const [kind, setKind] = useState('all');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -32,13 +33,16 @@ export default function MailboxPage() {
   const [history, setHistory] = useState(false);
   useEffect(() => {
     let active = true;
-    core('workspace', {}).then(w => {
+    if (!campaign) {
+      return () => { active = false; };
+    }
+    core('workspace', { campaign_id: campaign }).then(w => {
       if (!active) return;
-      setWorkspace(w); setCampaign(previous => previous || w.campaigns[0]?.id || ''); setStudent(previous => previous || w.mailboxes[0]?.student_id || '');
+      setWorkspace(w);
       setLoading(false);
     }).catch(e => { if (active) { setError(String(e.message)); setLoading(false); } });
     return () => { active = false; };
-  }, [revision]);
+  }, [campaign, revision]);
   useEffect(() => {
     let active = true;
     // Clear the previous scope while synchronizing this query with Core.
@@ -69,11 +73,11 @@ export default function MailboxPage() {
   const observation = data?.observation;
   const canRead = workspace?.mailbox_capabilities.capabilities.read_history.available;
   const count = (key: Status) => rows.filter(row => statusOf(row) === key).length;
-  return <AppShell className="mailbox-page" navigation={<>{(Object.keys(routes) as Route[]).map(route => <NavigationItem key={route} route={route} active={route === 'mailbox'} />)}<div className="rail-spacer" /></>}>
+  return <AppShell className="mailbox-page" activeRoute="mailbox">
     <div className="workspace">
       <Topbar breadcrumb="Mailbox" homeHref="#workflow"><span className="mb-top-note"><Icon name="shield" size={15} /> Observation & reconciliation</span></Topbar>
       <section className="mb-heading"><div><div className="mb-eyebrow">COMMUNICATION OPERATIONS</div><h1>Mailbox <span>Reconciliation workspace</span></h1><p>What SmartMail expects. What the mailbox shows.</p></div><div className="mb-heading-actions"><button className="mb-button" onClick={() => setHistory(true)}><Icon name="clock" size={16} /> Observation history</button><button className="mb-button mb-primary" disabled={!student || !campaign || !canRead || loading || refreshing} onClick={refresh}><Icon name="refresh" size={16} />{refreshing ? 'Observing mailbox…' : 'Refresh evidence'}</button></div></section>
-      <section className="mb-controls" aria-label="Workspace scope"><label>Campaign<select value={campaign} disabled={refreshing} onChange={e => { setCampaign(e.target.value); setNotice(''); }}><option value="" disabled>Select campaign</option>{workspace?.campaigns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</select></label><label>Student mailbox<select value={student} disabled={refreshing} onChange={e => { setStudent(e.target.value); setNotice(''); }}><option value="" disabled>Select mailbox</option>{workspace?.mailboxes.map(m => <option key={m.id} value={m.student_id}>{m.student_name} · {m.address}</option>)}</select></label><div className="mb-observed-at"><i className={observation?.status === 'complete' ? 'complete' : ''} /><span>{observation ? `Last observation · ${date(observation.observed_at)}` : 'No mailbox observation yet'}<small>{canRead ? 'Read-only observation available' : 'Connect the dedicated 163 extension to refresh'}</small></span></div></section>
+      <section className="mb-controls" aria-label="Mailbox evidence status"><div className="mb-observed-at"><i className={observation?.status === 'complete' ? 'complete' : ''} /><span>{observation ? `Last observation · ${date(observation.observed_at)}` : 'No mailbox observation yet'}<small>{canRead ? 'Read-only observation available' : 'Connect the dedicated 163 extension to refresh'}</small></span></div></section>
       <section className="mb-stats" aria-label="Reconciliation filters">{(['all', 'matched', 'discrepancy', 'unknown', 'external', 'reply'] as const).map(key => <button key={key} aria-pressed={status === key} className={`mb-stat ${key} ${status === key ? 'selected' : ''}`} onClick={() => setStatus(key)}><span>{key === 'all' ? 'All comparisons' : statuses[key].label}</span><strong>{loading ? '—' : key === 'all' ? rows.length : count(key)}</strong><small>{key === 'all' ? 'Current evidence' : key === 'matched' ? 'Established by Core' : key === 'discrepancy' ? 'External change detected' : key === 'unknown' ? 'Needs more evidence' : key === 'external' ? 'No local association' : 'Associated & unassociated'}</small></button>)}</section>
       {error && <div className="mb-notice mb-error" role="alert"><Icon name="warning" size={16} /><span>{error}</span><button onClick={() => setRevision(v => v + 1)}>Retry loading</button></div>}
       {notice && <div className="mb-notice" role="status">{notice}</div>}
@@ -81,7 +85,7 @@ export default function MailboxPage() {
         <div className="mb-toolbar"><div className="mb-tabs" aria-label="Record type">{['all', 'sent', 'schedules', 'replies'].map(k => <button aria-pressed={kind === k} className={kind === k ? 'active' : ''} key={k} onClick={() => setKind(k)}>{k === 'all' ? 'All records' : k[0].toUpperCase() + k.slice(1)}</button>)}</div><label className="mb-search"><Icon name="search" size={16} /><input aria-label="Search comparisons" placeholder="Search subject, supervisor, evidence…" value={query} onChange={e => setQuery(e.target.value)} /></label><select aria-label="Comparison status" value={status} onChange={e => setStatus(e.target.value as Status | 'all')}><option value="all">All statuses</option>{Object.entries(statuses).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></div>
         <div className="mb-column-head"><div><span className="mb-system-icon"><Icon name="database" size={22} /></span><span><strong>SmartMail</strong><small>Expected state · local system of record</small></span><span className="mb-source-label">LOCAL</span></div><span className="mb-compare-icon"><Icon name="refresh" /></span><div><span className="mb-system-icon external"><Icon name="mail" size={22} /></span><span><strong>External mailbox</strong><small>{mailbox?.address || 'Observed state · select a mailbox'}</small></span><span className="mb-source-label">OBSERVED</span></div></div>
         <div className="mb-comparisons" aria-label="Expected and observed comparisons" aria-busy={loading || refreshing}>
-          {loading ? <div className="mb-empty"><Icon name="refresh" size={30} /><h2>Loading reconciliation evidence</h2><p>Reading retained SmartMail records.</p></div> : filtered.length === 0 ? <div className="mb-empty"><span className="mb-empty-icon"><Icon name="branch" size={36} /></span><h2>{rows.length ? 'No comparisons match these filters' : !campaign || !student ? 'Select a campaign and Student mailbox' : 'A clear view starts with evidence'}</h2><p>{rows.length ? 'Try a different status or search term.' : 'Local work appears here alongside retained mailbox observations. Refresh evidence after connecting the dedicated extension.'}</p>{rows.length > 0 && <button className="mb-button" onClick={() => { setQuery(''); setStatus('all'); setKind('all'); }}>Clear filters</button>}</div> : filtered.map(row => {
+          {loading ? <div className="mb-empty"><Icon name="refresh" size={30} /><h2>Loading reconciliation evidence</h2><p>Reading retained SmartMail records.</p></div> : filtered.length === 0 ? <div className="mb-empty"><span className="mb-empty-icon"><Icon name="branch" size={36} /></span><h2>{rows.length ? 'No comparisons match these filters' : !campaign || !student ? 'Choose a Student in Workflow' : 'A clear view starts with evidence'}</h2><p>{rows.length ? 'Try a different status or search term.' : 'Local work appears here alongside retained mailbox observations. Refresh evidence after connecting the dedicated extension.'}</p>{rows.length > 0 && <button className="mb-button" onClick={() => { setQuery(''); setStatus('all'); setKind('all'); }}>Clear filters</button>}</div> : filtered.map(row => {
             const state = statusOf(row); const local = row.local; const observed = row.observed;
             return <button key={row.id} className={`mb-comparison ${state}`} onClick={() => setSelected(row)} aria-label={`Inspect ${local?.subject || observed?.subject || 'evidence'}: ${statuses[state].label}`}>
               <div className={`mb-record ${!local ? 'absent' : ''}`}><span className="mb-record-icon"><Icon name={local?.kind === 'external_schedule' ? 'clock' : local?.kind === 'sent_record' ? 'send' : local?.kind === 'reply_association' ? 'reply' : 'file'} size={19} /></span><div className="mb-record-text"><strong>{local?.subject || (local?.kind === 'reply_association' ? local.supervisor : local ? 'Untitled preparation' : 'No local association')}</strong><small>{local ? `${local.supervisor} · ${local.institution}` : 'Mailbox-wide evidence · campaign unassigned'}</small><span>{local?.recipient || (local ? human(local.kind) : 'Retained for operator inspection')}</span></div><span className="mb-state">{local ? human(local.state) : 'External only'}{local?.time && <small>{date(local.time)}</small>}</span></div>

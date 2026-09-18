@@ -397,7 +397,15 @@
   overflow: hidden;
 }
 :where(.workspace-page) .graph-size {
-  transform-origin: center center;
+  position: relative;
+  flex: none;
+}
+:where(.workspace-page) .graph-scale {
+  position: absolute;
+  inset: 0 auto auto 0;
+  width: 1300px;
+  height: 870px;
+  transform-origin: top left;
   will-change: transform;
 }
 :where(.workspace-page) .graph {

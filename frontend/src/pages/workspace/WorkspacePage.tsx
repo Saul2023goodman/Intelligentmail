@@ -4,8 +4,9 @@ import type { Workspace } from "../../core";
 import { fitScale, gatewayHealth } from "./workflow-model";
 import Workflow from "./Workflow";
 import Icon from "../../shared/Icon";
-import { AppShell, Topbar, NavigationItem } from "../../app/shell";
+import { AppShell, Topbar } from "../../app/shell";
 import { navigate, type Route } from "../../app/routes";
+import { useWorkspaceScope } from "../../app/scope";
 import "./Workspace.css";
 
 const STUDENT_KEY = "smartmail.selectedStudent";
@@ -20,9 +21,10 @@ const formatTime = (value: null | string) =>
   value ? new Date(value).toLocaleString() : "尚未观察";
 
 export default function WorkspacePage({ route }: { route: Route }) {
+  const { scope, setScope } = useWorkspaceScope();
   const [data, setData] = useState<Workspace | null>(null);
   const [studentId, setStudentId] = useState(
-    () => localStorage.getItem(STUDENT_KEY) ?? "",
+    () => scope?.studentId || localStorage.getItem(STUDENT_KEY) || "",
   );
   const [selected, setSelected] = useState("mailbox");
   const [scale, setScale] = useState(1);
@@ -74,7 +76,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
   }, [load]);
   useEffect(() => {
     if (!data) return;
-    if (!studentId) {
+    if (!studentId || !data.mailboxes.some((mailbox) => mailbox.student_id === studentId)) {
       const first = data.mailboxes[0]?.student_id ?? "";
       if (first) {
         // oxlint-disable-next-line react/set-state-in-effect -- Pick the initial Student once the Core's mailbox list arrives.
@@ -83,14 +85,23 @@ export default function WorkspacePage({ route }: { route: Route }) {
       }
       return;
     }
-    // The selected Student may be absent only while its scope is still loading.
-    if (!data.mailboxes.some((mailbox) => mailbox.student_id === studentId))
-      return;
     const campaignId = campaignFor(studentId, data);
     if (campaignId && campaignId !== data.report?.campaign.id) {
       void load(campaignId);
+      return;
     }
-  }, [data, studentId, campaignFor, load]);
+    const mailbox = data.mailboxes.find((item) => item.student_id === studentId);
+    const campaign = data.campaigns.find((item) => item.id === campaignId) ?? data.report?.campaign;
+    if (mailbox && campaignId) {
+      setScope({
+        studentId,
+        studentName: mailbox.student_name,
+        mailbox: mailbox.address,
+        campaignId,
+        campaignName: campaign?.name ?? "",
+      });
+    }
+  }, [data, studentId, campaignFor, load, setScope]);
   const switchStudent = (id: string) => {
     setStudentId(id);
     localStorage.setItem(STUDENT_KEY, id);
@@ -233,20 +244,10 @@ export default function WorkspacePage({ route }: { route: Route }) {
   return (
     <AppShell
       className="workspace-page"
-      navigation={
-        <>
-          <NavigationItem route="workflow" active />
-          <NavigationItem route="sources" />
-          <NavigationItem route="review" />
-          <NavigationItem route="execution" />
-          <NavigationItem route="mailbox" />
-          <NavigationItem route="records" />
-          <div className="rail-spacer" />
-        </>
-      }
+      activeRoute="workflow"
     >
       <div className="workspace">
-        <Topbar breadcrumb="Workflow" homeHref="/">
+        <Topbar breadcrumb="Workflow" homeHref="/" showScope={false}>
           <span className={`connection ${error ? "offline" : ""}`}>
             <i />
             {error

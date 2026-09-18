@@ -88,13 +88,16 @@ export default function Workflow({
       className="graph-size"
       style={
         {
-          width: GRAPH_WIDTH,
-          height: GRAPH_HEIGHT,
-          transform: `scale(${scale})`,
+          width: GRAPH_WIDTH * scale,
+          height: GRAPH_HEIGHT * scale,
         } as CSSProperties
       }
     >
-      <div className="graph">
+      <div
+        className="graph-scale"
+        style={{ transform: `scale(${scale})` } as CSSProperties}
+      >
+        <div className="graph">
         <div className="lane intake-lane">
           <span>00 / 读取 · 入库 · 来源任务</span>
         </div>
@@ -217,6 +220,7 @@ export default function Workflow({
         <div className="graph-note">
           <Icon name="shield" size={15} /> Every external action requires an
           exact-content confirmation.
+        </div>
         </div>
       </div>
     </div>

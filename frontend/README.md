@@ -27,7 +27,9 @@ Open the loopback URL printed by Vite. The Core bridge defaults to the repositor
 Vite if needed. `SMARTMAIL_PYTHON` is optional when `python` already has the
 repository requirements installed.
 
-The pages support campaign and Student scoping, browser source-set import, supported
+Workflow owns the single global Student selection; the selected Student's Campaign
+and mailbox scope flows to every other page as read-only context. The pages support
+browser source-set import, supported
 document preparation, readiness review, task search, message and source inspection,
 read-only mailbox intake, persisted evidence, duplicate checks, subject/recipient
 correction, attachment confirmation, source-based Rewrite, zoom and fit. Connect
@@ -56,7 +58,7 @@ Restart Vite after editing Python Core code so its long-lived stdio worker reloa
 ## Page ownership and shared foundation
 
 Workspace code lives in `src/pages/workspace/`; Intake (Source mapping) lives in
-`src/pages/intake/`. Shared shell, navigation and hash routing live in `src/app/`,
+`src/pages/intake/`. Shared shell, global scope, navigation and hash routing live in `src/app/`,
 tokens/icons/primitives in `src/shared/`, and the typed Core bridge in `src/core/`.
 Keep page development within its directory. See
 [foundation interfaces and state lifetime](../docs/frontend-foundation.md) and

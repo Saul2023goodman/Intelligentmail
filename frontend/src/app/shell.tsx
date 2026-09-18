@@ -1,15 +1,16 @@
 import type { ReactNode } from "react";
 import Icon from "../shared/Icon";
 import { navigate, routes, type Route } from "./routes";
+import { useWorkspaceScope } from "./scope";
 
-/** Pages supply their existing actions and content; the shell owns chrome only. */
+/** The shell owns one shared navigation rail; pages supply only their content. */
 export function AppShell({
   className = "",
-  navigation,
+  activeRoute,
   children,
 }: {
   className?: string;
-  navigation: ReactNode;
+  activeRoute: Route;
   children: ReactNode;
 }) {
   return (
@@ -19,7 +20,10 @@ export function AppShell({
           <span />
           <span />
         </div>
-        {navigation}
+        {(Object.keys(routes) as Route[]).map((route) => (
+          <NavigationItem key={route} route={route} active={route === activeRoute} />
+        ))}
+        <div className="rail-spacer" />
         <div className="avatar">OP</div>
       </nav>
       {children}
@@ -60,12 +64,14 @@ export function Topbar({
   breadcrumb,
   homeHref,
   onHome,
+  showScope = true,
   children,
 }: {
   className?: string;
   breadcrumb: string;
   homeHref: string;
   onHome?: () => void;
+  showScope?: boolean;
   children: ReactNode;
 }) {
   return (
@@ -76,7 +82,40 @@ export function Topbar({
       <div className="breadcrumb">
         Workspace <span>/</span> {breadcrumb}
       </div>
-      {children}
+      <div className="topbar-actions">
+        {children}
+        {showScope && <WorkspaceScopeIndicator />}
+      </div>
     </header>
+  );
+}
+
+function WorkspaceScopeIndicator() {
+  const { scope } = useWorkspaceScope();
+  const detail = scope
+    ? [scope.campaignName !== scope.studentName ? scope.campaignName : "", scope.mailbox]
+        .filter(Boolean)
+        .join(" · ")
+    : "";
+  return (
+    <button
+      type="button"
+      className="workspace-scope-indicator"
+      onClick={() => navigate("workflow")}
+      title={scope ? "当前学生工作区；在 Workflow 中切换" : "在 Workflow 中选择学生"}
+    >
+      <span className="workspace-scope-avatar" aria-hidden="true">
+        {scope?.studentName.trim().slice(0, 1).toUpperCase() || "?"}
+      </span>
+      <span className="workspace-scope-copy">
+        <strong>{scope?.studentName || "尚未选择学生"}</strong>
+        <small>
+          {scope
+            ? detail
+            : "前往 Workflow 设定全局工作区"}
+        </small>
+      </span>
+      <Icon name="chevron" size={12} />
+    </button>
   );
 }

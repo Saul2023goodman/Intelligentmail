@@ -105,6 +105,66 @@
   padding: 0 30px;
   gap: 24px;
 }
+.topbar-actions {
+  margin-left: auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.workspace-scope-indicator {
+  min-width: 0;
+  max-width: 300px;
+  height: 42px;
+  justify-content: flex-start;
+  gap: 9px;
+  padding: 4px 9px 4px 5px;
+  border: 1px solid #dfe7f2;
+  border-radius: 9px;
+  background: #f8faff;
+  color: #60718a;
+}
+.workspace-scope-indicator:hover:not(:disabled) {
+  border-color: #b9cef0;
+  background: #f2f7ff;
+}
+.workspace-scope-avatar {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: linear-gradient(145deg, #5e99f5, #397af0);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+}
+.workspace-scope-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  text-align: left;
+}
+.workspace-scope-copy strong,
+.workspace-scope-copy small {
+  max-width: 215px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workspace-scope-copy strong {
+  color: #354863;
+  font-size: 11px;
+  font-weight: 650;
+}
+.workspace-scope-copy small {
+  color: #8b99ad;
+  font-size: 8px;
+}
 .wordmark {
   font-size: 20px;
   font-weight: 700;
@@ -210,6 +270,12 @@
   .search {
     width: 220px;
   }
+  .workspace-scope-copy small {
+    display: none;
+  }
+  .workspace-scope-indicator {
+    max-width: 180px;
+  }
 }
 @media (max-width: 550px) {
   .rail {
@@ -231,6 +297,17 @@
     padding: 8px;
   }
   .search kbd {
+    display: none;
+  }
+  .workspace-scope-copy {
+    display: none;
+  }
+  .workspace-scope-indicator {
+    width: 38px;
+    flex: 0 0 38px;
+    padding: 3px;
+  }
+  .workspace-scope-indicator > svg {
     display: none;
   }
 }

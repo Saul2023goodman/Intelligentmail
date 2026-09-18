@@ -10,15 +10,16 @@ The original page content, controls, dialogs, and Core operations are retained.
 | Foundation | `frontend/src/app/` | Hash routes, navigation items, rail, topbar, shell CSS |
 | Foundation | `frontend/src/shared/` | Design tokens, typed icons, SearchField, primitive CSS |
 | Core integration | `frontend/src/core/` | Typed bridge commands and report models |
-| Workspace | `frontend/src/pages/workspace/` | Workflow graph, student (campaign) switcher and student creation |
+| Workspace | `frontend/src/pages/workspace/` | Workflow graph, the single global Student (Campaign) switcher and student creation |
 | Intake | `frontend/src/pages/intake/` | Source mapping, browser source import, Core evidence inspection and filtering |
 | Review | `frontend/src/pages/review/` | Preparation readiness, evidence inspection and supported operator corrections |
 
 ## Page development
 
-Existing page work stays within its directory. Both pages consume the same shell
-and may supply page-specific rail actions and topbar content. Those actions remain
-owned by the page; the shell never imports pages, sample fixtures, or Core.
+Existing page work stays within its directory. Every page consumes the same shell,
+which owns the complete navigation rail and active-route treatment. Pages may add
+topbar content, but never page-specific rail destinations or rail sizing. The shell
+never imports pages, sample fixtures, or Core.
 Use `navigate()` for route changes and `NavigationItem` for rail destinations.
 New top-level pages need one coordinated route registration and App composition
 change; ordinary page features need neither.
@@ -31,6 +32,15 @@ Tokens retain the original typography, palette, focus rings and shell colors.
 Workspace CSS is scoped with `:where(.workspace-page)` to preserve selector
 specificity. Intake keeps its existing `sm-` classes. Page styles must not supply
 implicit dependencies to other pages.
+
+## Global workspace scope
+
+Workflow is the only place where the operator selects or creates a Student. Because
+each Student owns exactly one Campaign, that selection establishes the global
+Student, Campaign and mailbox scope for every route. The scope is persisted locally
+and stays live while pages mount and unmount. Other pages show the shared scope as a
+read-only topbar summary linking back to Workflow; they must not add Campaign or
+Student selectors of their own.
 
 ## Global viewport contract
 
@@ -66,8 +76,8 @@ non-responsive layout guidance.
   `#tasks`) opens Workspace workflow.
 - `#source-mapping` retains the existing Intake deep link.
 - Hash changes drive browser back/forward and active rail state.
-- Workspace stays mounted while Intake is visible, preserving campaign state, as
-  before. It renders no DOM while another route is active.
+- Workspace stays mounted on every route, preserving and synchronizing the global
+  Student/Campaign scope. It renders no DOM while another route is active.
 - Intake and Review mount when entered and unmount when left. Filters and transient
   review markings reset on navigation; imported sources and Core mutations persist.
 

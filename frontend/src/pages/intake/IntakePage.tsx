@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import SearchField from "../../shared/SearchField";
 import Icon from "../../shared/Icon";
-import { AppShell, Topbar, NavigationItem } from "../../app/shell";
+import { AppShell, Topbar } from "../../app/shell";
+import { useWorkspaceScope } from "../../app/scope";
 import {
   core,
   human,
@@ -44,9 +45,10 @@ function initials(name: string) {
 }
 
 export default function IntakePage() {
+  const { scope } = useWorkspaceScope();
   const [data, setData] = useState<IntakeWorkspace | null>(null);
-  const [campaign, setCampaign] = useState("");
-  const [student, setStudent] = useState("");
+  const campaign = scope?.campaignId ?? "";
+  const student = scope?.studentId ?? "";
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<TaskFilter>("all");
   const [selectedSource, setSelectedSource] = useState<SourceView | null>(null);
@@ -65,14 +67,16 @@ export default function IntakePage() {
   const reviewDialog = useRef<HTMLDialogElement>(null);
   const dragDepth = useRef(0);
 
-  const load = useCallback(async (studentId?: string) => {
+  const load = useCallback(async (studentId: string) => {
     setLoading(true); setError("");
     try {
       // A Student owns exactly one Campaign, so the Student chooses the intake scope.
-      const next = await core("intake_workspace", studentId ? { student_id: studentId } : {});
+      if (!studentId) {
+        setData(null);
+        return;
+      }
+      const next = await core("intake_workspace", { student_id: studentId });
       setData(next);
-      setCampaign(next.campaign?.id ?? "");
-      setStudent(next.student?.id ?? "");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Unable to load intake workspace");
     } finally { setLoading(false); }
@@ -80,8 +84,10 @@ export default function IntakePage() {
   useEffect(() => {
     // Initial synchronization with the long-lived local Core worker.
     // oxlint-disable-next-line react/set-state-in-effect
-    void load();
-  }, [load]);
+    setSelectedSource(null);
+    setSelectedTask(null);
+    void load(student);
+  }, [load, student]);
   useEffect(() => { if (inspection) inspector.current?.showModal(); }, [inspection]);
   useEffect(() => { if (selectedTask) taskDialog.current?.showModal(); }, [selectedTask]);
   useEffect(() => {
@@ -185,26 +191,17 @@ export default function IntakePage() {
     setInspection({ title: source.name, detail: `${Math.max(1, Math.round(source.size / 1024))} KB · ${human(source.category)}`, evidence: { source_id: source.id, sha256: source.sha256, import_id: source.importId, finding: source.finding || null } });
   }
 
-  return <AppShell className="sm-app" navigation={<>
-    <NavigationItem route="workflow" label="Outreach workflow" /><NavigationItem route="sources" active />
-    <NavigationItem route="review" /><NavigationItem route="execution" /><NavigationItem route="mailbox" /><NavigationItem route="records" />
-    <div className="sm-rail-line" /><button aria-label="Intake workspace guide" title="Intake workspace guide" onClick={() => setInspection({ title: "Supported source intake", detail: "Import one .xlsx master list or a .zip bundle. Core deterministically associates supported draft documents and retains every source byte.", evidence: { authority: "Core validates patterns, creates Outreach Tasks, and prepares local messages", external_actions: "none" } })}><Icon name="book" /></button>
-    <div className="rail-spacer" /><button className="rail-add" aria-label="Add source files" onClick={() => fileInput.current?.click()}><Icon name="plus" /></button>
-  </>}>
+  return <AppShell className="sm-app" activeRoute="sources">
     <div className="workspace" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <Topbar className="sm-topbar" breadcrumb="Source mapping" homeHref="#workflow">
-        <div className="sm-student-switch" role="group" aria-label="Switch student">{data?.students.map((item) => <button key={item.id} className={item.id === student ? "is-active" : ""} aria-pressed={item.id === student} title={`${item.name} · ${item.mailbox}`} onClick={() => { setStudent(item.id); setSelectedTask(null); void load(item.id); }}><span className="sm-student-avatar blue">{initials(item.name)}</span><strong>{item.name}</strong></button>)}</div>
-        <span className="sm-divider" />
-        <span className="sm-campaign"><Icon name="folder" size={15} /><strong>{data?.campaign?.name || "No Campaign"}</strong><span className="sm-demo-label">CORE</span></span>
         <SearchField label="Search source findings and tasks" value={query} onChange={setQuery} placeholder="Search source findings or resolved tasks…" iconSize={16} />
-        <button className="sm-add-top" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()}><Icon name="plus" size={14} />{recognizing ? "Recognizing…" : busy ? "Importing…" : "Add source set"}</button><div className="sm-user">OP</div>
       </Topbar>
       {(notice || error) && <div className="sm-notice" role={error ? "alert" : "status"}><Icon name={error ? "warning" : "check"} size={16} />{error || notice}<button aria-label="Dismiss notification" onClick={() => { setNotice(""); setError(""); }}><Icon name="close" size={15} /></button></div>}
       <main className="sm-board">
         <section className="sm-sources"><div className="sm-column-heading"><Icon name="folder" size={16} /><h2>Unresolved raw sources</h2><span>{String(unresolved.length).padStart(2, "0")}</span></div><div className="sm-source-list">
           {unresolved.map((source) => <button key={source.id} className={`sm-source-card ${selectedSource?.id === source.id ? "is-selected" : ""}`} aria-pressed={selectedSource?.id === source.id} onClick={() => setSelectedSource(selectedSource?.id === source.id ? null : source)} onDoubleClick={() => inspectSource(source)}><span className="sm-file-icon slate"><Icon name="file" size={20} /></span><span className="sm-source-copy"><strong>{source.name}</strong><small>{Math.max(1, Math.round(source.size / 1024))} KB</small><span className="sm-source-meta-line"><em>{source.recognition?.label ?? (source.finding || "Core could not associate this source")}</em>{source.recognition?.revised && <b className="sm-revised-tag">Revised</b>}</span></span><Icon name="chevron" size={13} /></button>)}
           {!loading && !unresolved.length && <p className="sm-empty">{query ? "No matching unresolved sources." : "No unresolved Source Materials in this scope."}</p>}
-          <button className="sm-add-source" disabled={busy || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} /> Drag &amp; drop a supported source set<span>Browse files</span></button>
+          <button className="sm-add-source" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} />{recognizing ? "Recognizing source set…" : "Drag & drop a supported source set"}<span>{recognizing ? "Please wait" : "Browse files"}</span></button>
           {selectedSource && <div className="sm-selection"><span>Inspecting <strong>{selectedSource.name}</strong></span><button onClick={() => inspectSource(selectedSource)}>Inspect evidence <Icon name="arrow" size={13} /></button><button onClick={() => setSelectedSource(null)}>Clear selection</button></div>}
         </div></section>
 

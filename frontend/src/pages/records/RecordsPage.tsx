@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AppShell, NavigationItem, Topbar } from "../../app/shell";
-import { routes, type Route } from "../../app/routes";
+import { AppShell, Topbar } from "../../app/shell";
+import { useWorkspaceScope } from "../../app/scope";
 import {
   core,
   type RecordsTaskDetail,
   type RecordsWorkspace,
-  type Workspace,
 } from "../../core";
 import Icon, { type IconName } from "../../shared/Icon";
 import {
@@ -297,8 +296,8 @@ function SectionLabel({ icon, title, count }: { icon: IconName; title: string; c
 }
 
 export default function RecordsPage() {
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [campaign, setCampaign] = useState("");
+  const { scope } = useWorkspaceScope();
+  const campaign = scope?.campaignId ?? "";
   const [data, setData] = useState<RecordsWorkspace | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -309,21 +308,6 @@ export default function RecordsPage() {
   const [detail, setDetail] = useState<RecordsTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [selectedNodeKey, setSelectedNodeKey] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    core("workspace", {})
-      .then((w) => {
-        if (!active) return;
-        setWorkspace(w);
-        setCampaign((previous) => previous || w.campaigns[0]?.id || "");
-      })
-      .catch((e) => active && setError(String(e.message)))
-      .finally(() => active && setLoading(false));
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     let active = true;
@@ -411,14 +395,7 @@ export default function RecordsPage() {
   return (
     <AppShell
       className="records-page"
-      navigation={
-        <>
-          {(Object.keys(routes) as Route[]).map((route) => (
-            <NavigationItem key={route} route={route} active={route === "records"} />
-          ))}
-          <div className="rail-spacer" />
-        </>
-      }
+      activeRoute="records"
     >
       <div className="workspace">
         <Topbar breadcrumb="Records" homeHref="#workflow">
@@ -430,13 +407,6 @@ export default function RecordsPage() {
             <h1>Records <span>lineage &amp; traceability</span></h1>
           </div>
           <div className="rc-scope">
-            <label>
-              Campaign
-              <select value={campaign} onChange={(e) => { setCampaign(e.target.value); setSelectedTask(""); setSelectedNodeKey(""); }}>
-                <option value="" disabled>Select campaign</option>
-                {workspace?.campaigns.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
-            </label>
             <span className="rc-readonly-badge"><Icon name="shield" size={13} /> Read-only · no editing or execution</span>
           </div>
         </section>

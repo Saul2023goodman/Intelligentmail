@@ -5,7 +5,8 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { AppShell, NavigationItem, Topbar } from "../../app/shell";
+import { AppShell, Topbar } from "../../app/shell";
+import { useWorkspaceScope } from "../../app/scope";
 import {
   core,
   human,
@@ -231,11 +232,11 @@ function Message({
 }
 
 export default function ExecutionPage() {
+  const { scope } = useWorkspaceScope();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [data, setData] = useState<ExecutionWorkspace | null>(null);
-  const [campaign, setCampaign] = useState("");
+  const campaign = scope?.campaignId ?? "";
   const [search, setSearch] = useState("");
-  const [mailbox, setMailbox] = useState("");
   const [executionSelection, setExecutionSelection] = useState<string[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [inspected, setInspected] = useState("");
@@ -253,15 +254,19 @@ export default function ExecutionPage() {
     const current = ++version.current;
     setLoading(true);
     try {
-      const next = await core("workspace", scope ? { campaign_id: scope } : {});
-      const id = next.report?.campaign.id;
+      if (!scope) {
+        setWorkspace(null);
+        setData(null);
+        return;
+      }
+      const next = await core("workspace", { campaign_id: scope });
+      const id = scope;
       const execution = id
         ? await core("execution_workspace", { campaign_id: id })
         : null;
       if (current !== version.current) return;
       setWorkspace(next);
       setData(execution);
-      if (id) setCampaign(id);
       setSelected((previous) =>
         previous.filter((p) =>
           execution?.reviews.some(
@@ -274,14 +279,17 @@ export default function ExecutionPage() {
     }
   }
   useEffect(() => {
+    setSelected([]);
+    setExecutionSelection([]);
+    setInspected("");
     refresh().catch((e) => setError(String(e.message || e)));
     const generation = version;
     return () => {
       generation.current++;
     };
-    // Initial load; campaign changes explicitly refresh their chosen scope.
+    // The Workflow owns the global Student/Campaign scope.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [campaign]);
 
   async function perform(
     action: () => Promise<unknown>,
@@ -334,7 +342,6 @@ export default function ExecutionPage() {
     ) ?? [];
   const visible = ready.filter(
     (r) =>
-      (!mailbox || r.sender === mailbox) &&
       `${r.subject} ${r.sender} ${r.recipient} ${taskName(r.task_id)}`
         .toLowerCase()
         .includes(search.toLowerCase()),
@@ -411,17 +418,7 @@ export default function ExecutionPage() {
   return (
     <AppShell
       className="execution-page"
-      navigation={
-        <>
-          <NavigationItem route="workflow" />
-          <NavigationItem route="sources" />
-          <NavigationItem route="review" />
-          <NavigationItem route="execution" active />
-          <NavigationItem route="mailbox" />
-          <NavigationItem route="records" />
-          <div className="rail-spacer" />
-        </>
-      }
+      activeRoute="execution"
     >
       <div className="workspace">
         <Topbar breadcrumb="Batch execution" homeHref="#workflow">
@@ -454,46 +451,6 @@ export default function ExecutionPage() {
           </button>
         </div>
         <div className="ex-toolbar">
-          <label className="ex-select">
-            <Icon name="folder" size={16} />
-            <select
-              aria-label="Campaign"
-              value={campaign}
-              disabled={disabled}
-              onChange={(e) => {
-                const id = e.target.value;
-                setCampaign(id);
-                setData(null);
-                setSelected([]);
-                setExecutionSelection([]);
-                setInspected("");
-                setMailbox("");
-                perform(() => refresh(id), "", false);
-              }}
-            >
-              {!workspace?.campaigns.length && (
-                <option value="">No campaigns</option>
-              )}
-              {workspace?.campaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="ex-select">
-            <Icon name="mail" size={16} />
-            <select
-              aria-label="Student mailbox"
-              value={mailbox}
-              onChange={(e) => setMailbox(e.target.value)}
-            >
-              <option value="">All student mailboxes</option>
-              {[...new Set(data?.reviews.map((r) => r.sender))].map((m) => (
-                <option key={m}>{m}</option>
-              ))}
-            </select>
-          </label>
           <label className="ex-search">
             <Icon name="search" size={16} />
             <input
@@ -624,7 +581,7 @@ export default function ExecutionPage() {
                     <Empty icon="database">
                       {loading
                         ? "Loading preparations…"
-                        : search || mailbox
+                        : search
                           ? "No ready tasks match these filters."
                           : "Ready preparations appear here after validation in Core."}
                     </Empty>

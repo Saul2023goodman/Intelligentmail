@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AppShell, NavigationItem, Topbar } from "../../app/shell";
+import { AppShell, Topbar } from "../../app/shell";
 import { navigate } from "../../app/routes";
-import { core, human, type ReviewRow, type ReviewWorkspace, type Workspace } from "../../core";
+import { useWorkspaceScope } from "../../app/scope";
+import { core, human, type ReviewRow, type ReviewWorkspace } from "../../core";
 import Icon from "../../shared/Icon";
 import "./Review.css";
 
@@ -29,9 +30,9 @@ function Signal({ tone, children }: { tone: Tone; children?: React.ReactNode }) 
 }
 
 export default function ReviewPage() {
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const { scope } = useWorkspaceScope();
   const [data, setData] = useState<ReviewWorkspace | null>(null);
-  const [campaign, setCampaign] = useState("");
+  const campaign = scope?.campaignId ?? "";
   const [selectedId, setSelectedId] = useState("");
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -45,15 +46,11 @@ export default function ReviewPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  const load = useCallback(async (scope?: string) => {
+  const load = useCallback(async (campaignId: string) => {
     setLoading(true);
     setError("");
     try {
-      const nextWorkspace = await core("workspace", scope ? { campaign_id: scope } : {});
-      const id = scope || nextWorkspace.report?.campaign.id || nextWorkspace.campaigns[0]?.id || "";
-      const next = id ? await core("review_workspace", { campaign_id: id }) : null;
-      setWorkspace(nextWorkspace);
-      setCampaign(id);
+      const next = campaignId ? await core("review_workspace", { campaign_id: campaignId }) : null;
       setData(next);
       setSelectedId((current) => next?.rows.some((row) => row.preparation.id === current)
         ? current : next?.rows[0]?.preparation.id || "");
@@ -67,8 +64,8 @@ export default function ReviewPage() {
   useEffect(() => {
     // Initial synchronization with the long-lived local Core worker.
     // oxlint-disable-next-line react/set-state-in-effect
-    void load();
-  }, [load]);
+    void load(campaign);
+  }, [campaign, load]);
   const row = data?.rows.find((item) => item.preparation.id === selectedId) ?? null;
   useEffect(() => {
     // Reset the editable field when the operator selects a different Preparation.
@@ -112,16 +109,9 @@ export default function ReviewPage() {
     setNotice("");
   }
 
-  return <AppShell className="review-page" navigation={<>
-    <NavigationItem route="workflow" /><NavigationItem route="sources" />
-    <NavigationItem route="review" active /><NavigationItem route="execution" />
-    <NavigationItem route="mailbox" /><NavigationItem route="records" /><div className="rail-spacer" />
-  </>}>
+  return <AppShell className="review-page" activeRoute="review">
     <div className="workspace">
       <Topbar breadcrumb="Review" homeHref="#workflow">
-        <label className="rv-campaign">Campaign <select value={campaign} disabled={busy} onChange={(event) => void load(event.target.value)}>
-          {workspace?.campaigns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-        </select></label>
         <span className="rv-demo"><span /> CORE WORKSPACE</span>
       </Topbar>
       <div className="rv-heading"><div><div className="rv-eyebrow">PREPARE WITH CONFIDENCE</div><h1>Readiness workbench<span>Review</span></h1><p>Inspect Core evidence and resolve blockers before separate sending confirmation.</p></div>
