@@ -4,9 +4,9 @@
 <body>
   <h1>SmartMail · 163 邮箱</h1>
   <p id="status" role="status" aria-live="polite">正在读取连接状态…</p>
-  <p>连接当前已登录的邮箱标签页。邮件准备与发送确认在 SmartMail 中完成。</p>
-  <button id="connect">连接当前邮箱</button><button id="disconnect" class="secondary">断开连接</button>
-  <p class="note">连接不代表发送授权。首次使用须安装本机桥接。发送扩展尚待实邮验收，默认禁用。</p>
+  <p>扩展会自动发现、连接并恢复已登录的邮箱主页。只有多个邮箱页无法判定时才需要手动选择。</p>
+  <button id="connect">连接当前邮箱</button><button id="disconnect" class="secondary">暂停自动连接</button>
+  <p class="note">连接不代表发送授权。首次使用须安装本机桥接；自动恢复不会重放已领取的操作。</p>
   <details><summary>安装时使用的扩展 ID</summary><code id="extension-id"></code></details>
   <script src="popup.js"></script>
 </body>

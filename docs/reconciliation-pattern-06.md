@@ -1,18 +1,20 @@
 # Supported Mailbox Observation Pattern 06
 
 This pattern observes a real 163.com Mailbox through the dedicated SmartMail
-Chrome/Edge extension. The extension runs in the operator's explicitly selected,
-authenticated mailbox tab and connects to the local application through the
+Chrome/Edge extension. The extension runs in an unambiguous authenticated mailbox
+tab in the operator's browser and connects to the local application through the
 versioned Native Messaging host. It does not launch a browser or receive mailbox
 credentials. This pattern covers read-only observation and Reconciliation; it
 does not verify immediate sending, native scheduling, cancellation or Recall.
 
-## Operator-assisted connection
+## Automatic connection with operator fallback
 
 Install and register the extension using [the migration guide](browser-extension-pivot.md),
-then open `https://mail.163.com` and log in in the intended tab. The extension popup
-must show the same address as the Student's registered Mailbox before a refresh is
-accepted:
+then open `https://mail.163.com` and log in in the intended tab. The extension
+automatically connects a unique or uniquely active mailbox page; if several
+background mailbox pages are open, choose the intended one from its extension
+popup. The connected address must match the Student's registered Mailbox before a
+refresh is accepted:
 
 ```powershell
 python -m smartmail.bridge --home .smartmail status
@@ -20,10 +22,10 @@ python -m smartmail --home .smartmail --adapter 163-extension mailbox capabiliti
 python -m smartmail --home .smartmail --adapter 163-extension mailbox refresh --student STUDENT_ID
 ```
 
-Connection and authentication are operator actions. If login, verification or a
-CAPTCHA is required, or the tab/document is reloaded, the extension reports an
-interruption and SmartMail persists it. Reconnect the selected tab after resolving
-the interruption. A tab logged into another address is persisted as `wrong_mailbox`
+Authentication remains an operator action. If login, verification or a CAPTCHA is
+required, the extension reports an interruption and SmartMail persists it. Once
+the mailbox page is ready, page reloads and Native Messaging failures recover with
+bounded retries. A tab logged into another address is persisted as `wrong_mailbox`
 and its message rows are discarded.
 
 ## Read-only observation boundary

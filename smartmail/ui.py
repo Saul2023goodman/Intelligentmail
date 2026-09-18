@@ -57,6 +57,8 @@ def dispatch(core, request):
             "mailbox_capabilities": core.mailbox_capabilities(),
             "mailboxes": mailbox_summaries(core),
         }
+    if command == "gateway_status":
+        return core.mailbox.gateway_status()
     if command == "task":
         return {**core.report_task(request["task_id"]),
                 "rewrite_sources": rewrite_sources(core, request["task_id"])}

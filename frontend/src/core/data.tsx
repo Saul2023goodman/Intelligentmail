@@ -60,7 +60,7 @@ export function useCoreData() {
 export function useCoreQuery<K extends CommandName>(
   command: K,
   args: CommandArgs<K>,
-  options: { enabled?: boolean; maxAge?: number } = {},
+  options: { enabled?: boolean; maxAge?: number; refetchInterval?: number } = {},
 ) {
   const cache = useCoreData();
   const key = queryKey(command, args);
@@ -79,16 +79,40 @@ export function useCoreQuery<K extends CommandName>(
   const state = useSyncExternalStore(subscribe, snapshot, snapshot);
   const enabled = options.enabled ?? true;
   const maxAge = options.maxAge ?? 30_000;
+  const refetchInterval = options.refetchInterval ?? 0;
 
   useEffect(() => {
     if (enabled) void cache.fetch(command, stableArgs, { maxAge }).catch(() => undefined);
   }, [cache, command, enabled, maxAge, stableArgs]);
 
+  useEffect(() => {
+    if (!enabled || refetchInterval <= 0) return;
+    const refresh = () => {
+      if (typeof document === "undefined" || document.visibilityState === "visible")
+        void cache.fetch(command, stableArgs, { force: true }).catch(() => undefined);
+    };
+    const timer = window.setInterval(refresh, refetchInterval);
+    window.addEventListener("focus", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [cache, command, enabled, refetchInterval, stableArgs]);
+
+  const refresh = useCallback(
+    () => cache.fetch<CommandResult<K>>(command, stableArgs, { force: true }),
+    [cache, command, stableArgs],
+  );
+  const setData = useCallback(
+    (data: CommandResult<K>) => cache.set(command, stableArgs, data),
+    [cache, command, stableArgs],
+  );
+
   return {
     ...state,
     data: state.data ?? null,
     isLoading: enabled && state.data === undefined && state.isFetching,
-    refresh: () => cache.fetch<CommandResult<K>>(command, stableArgs, { force: true }),
-    setData: (data: CommandResult<K>) => cache.set(command, stableArgs, data),
+    refresh,
+    setData,
   };
 }

@@ -91,6 +91,7 @@ export type Commands = {
     args: { confirmation_id: string };
     result: { paused?: boolean; flow?: { state: string } };
   };
+  gateway_status: { args: Record<string, never>; result: import("./types").MailboxGateway };
   workspace: { args: { campaign_id?: string }; result: Workspace };
   task: { args: { task_id: string }; result: IntakeTaskDetail & { rewrite_sources: { id: string; name: string }[] } };
   create_campaign: { args: { name: string }; result: Campaign };

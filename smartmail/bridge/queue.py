@@ -118,7 +118,8 @@ class CommandQueue:
                               (self.clock(), session)).rowcount:
                 raise BridgeError("Connection was replaced or disconnected")
             db.execute("UPDATE commands SET state = 'expired', payload = '{}' "
-                       "WHERE state = 'queued' AND deadline <= ?", (self.clock(),))
+                       "WHERE state IN ('queued', 'claimed', 'authorized') AND deadline <= ?",
+                       (self.clock(),))
             db.execute("DELETE FROM files WHERE command_id IN "
                        "(SELECT id FROM commands WHERE state = 'expired')")
             if not ready:

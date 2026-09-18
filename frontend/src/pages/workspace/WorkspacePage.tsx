@@ -27,7 +27,15 @@ export default function WorkspacePage({ route }: { route: Route }) {
     () => scope?.studentId || localStorage.getItem(STUDENT_KEY) || "",
   );
   const [campaignId, setCampaignId] = useState(scope?.campaignId || "");
-  const workspaceQuery = useCoreQuery("workspace", campaignId ? { campaign_id: campaignId } : {});
+  const workspaceQuery = useCoreQuery(
+    "workspace",
+    campaignId ? { campaign_id: campaignId } : {},
+  );
+  const gatewayQuery = useCoreQuery(
+    "gateway_status",
+    {},
+    { maxAge: 1_000, refetchInterval: route === "workflow" ? 2_000 : 0 },
+  );
   const data = workspaceQuery.data;
   const [selected, setSelected] = useState("mailbox");
   const [scale, setScale] = useState(1);
@@ -47,8 +55,8 @@ export default function WorkspacePage({ route }: { route: Route }) {
     data?.mailboxes.find((mailbox) => mailbox.student_id === studentId) ??
     null;
   const gateway = useMemo(
-    () => gatewayHealth(data?.mailbox_capabilities.gateway, studentMailbox),
-    [data?.mailbox_capabilities.gateway, studentMailbox],
+    () => gatewayHealth(gatewayQuery.data ?? data?.mailbox_capabilities.gateway, studentMailbox),
+    [data?.mailbox_capabilities.gateway, gatewayQuery.data, studentMailbox],
   );
   const campaignFor = useCallback(
     (id: string, workspace: Workspace | null) =>
@@ -56,6 +64,8 @@ export default function WorkspacePage({ route }: { route: Route }) {
       "",
     [],
   );
+  const refreshWorkspace = workspaceQuery.refresh;
+  const refreshGateway = gatewayQuery.refresh;
   useEffect(() => {
     if (!data) return;
     if (!studentId || !data.mailboxes.some((mailbox) => mailbox.student_id === studentId)) {
@@ -91,7 +101,10 @@ export default function WorkspacePage({ route }: { route: Route }) {
     setCampaignId(campaignFor(id, data));
     localStorage.setItem(STUDENT_KEY, id);
   };
-  const reload = () => workspaceQuery.refresh();
+  const reload = useCallback(
+    () => Promise.all([refreshWorkspace(), refreshGateway()]),
+    [refreshGateway, refreshWorkspace],
+  );
   const busy = actionBusy;
   const displayError = error || workspaceQuery.error?.message || "";
   const openGateway = useCallback(() => {
@@ -125,9 +138,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
     } finally {
       setObserving(false);
     }
-    // reload is stable via useCallback; gateway.canObserve gates readiness.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studentId, gateway.canObserve]);
+  }, [studentId, gateway.canObserve, reload]);
   const openDialog = () => {
     setError("");
     setNewStudent(true);
@@ -483,7 +494,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
                 <div>
                   <dt>桥接协议</dt>
                   <dd>
-                    v{data?.mailbox_capabilities.gateway.protocol ?? 0}
+                    v{(gatewayQuery.data ?? data?.mailbox_capabilities.gateway)?.protocol ?? 0}
                   </dd>
                 </div>
                 <div>
@@ -514,9 +525,9 @@ export default function WorkspacePage({ route }: { route: Route }) {
 
               {gateway.state === "disconnected" && (
                 <ol className="gateway-steps">
-                  <li>在浏览器中登录目标 163 邮箱并停留在邮箱主页。</li>
-                  <li>点击浏览器工具栏的 SmartMail 扩展图标，选择“连接”。</li>
-                  <li>连接成功后回到此处，重新检查状态并读取邮箱证据。</li>
+                  <li>在浏览器中登录目标 163 邮箱并进入邮箱主页。</li>
+                  <li>扩展会自动发现并连接；页面刷新或桥接抖动后也会自动恢复。</li>
+                  <li>只有同时打开多个邮箱页时，才需在目标页面点扩展图标选择。</li>
                 </ol>
               )}
               {gateway.state === "mismatch" && (
@@ -560,7 +571,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
                   disabled={observing || busy}
                   onClick={reload}
                 >
-                  重新检查状态
+                  立即检查状态
                 </button>
               </div>
               <p className="gateway-foot">

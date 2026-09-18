@@ -141,7 +141,7 @@ Successful commands print UTF-8 JSON, except `preparation preview`, which prints
 
 ## Connect and reconcile a real 163.com mailbox
 
-The 163.com connection now runs through the dedicated Chrome/Edge extension in `extensions/netease163`. The extension connects one operator-selected, already authenticated 163 mailbox tab to a local Native Messaging host. SmartMail does not launch a browser, discover profiles, receive credentials, or use a Playwright runtime in production.
+The 163.com connection now runs through the dedicated Chrome/Edge extension in `extensions/netease163`. The extension automatically connects the only eligible, already authenticated mailbox tab (or the uniquely active eligible tab) to a local Native Messaging host; only ambiguous multi-tab cases require an operator choice. SmartMail does not launch a browser, discover profiles, receive credentials, or use a Playwright runtime in production.
 
 Install and connect the extension as described in the [extension pivot and migration guide](docs/browser-extension-pivot.md). Register the intended Student and Mailbox first. After the extension popup shows the matching mailbox address, run a read-only refresh with the same `--home` directory used during installation:
 
@@ -151,7 +151,7 @@ Install and connect the extension as described in the [extension pivot and migra
 .\.venv\Scripts\python -m smartmail --home .smartmail --adapter 163-extension mailbox refresh --student STUDENT_ID
 ```
 
-If the operator has not logged in, the mailbox tab is on a verification/CAPTCHA page, the tab is closed, or the Native Messaging host is unavailable, SmartMail persists the interruption. Complete the interaction in the selected tab and reconnect the extension; SmartMail does not bypass authentication. A tab connected to a different account is persisted as `wrong_mailbox` and contributes no message rows. Refresh discovers recognized built-in folders in the live DOM, enumerates canonical message IDs through bounded paginated reads, and fetches structured header, MIME and attachment metadata for each ID. It does not open Compose, create or edit a draft, send, schedule, delete, cancel or Recall anything.
+If the operator has not logged in, the mailbox tab is on a verification/CAPTCHA page, the tab is closed, or the Native Messaging host is unavailable, SmartMail persists the interruption. Complete the interaction in the mailbox tab; the extension retries page discovery and Native Messaging automatically, but never bypasses authentication. A tab connected to a different account is persisted as `wrong_mailbox` and contributes no message rows. Refresh discovers recognized built-in folders in the live DOM, enumerates canonical message IDs through bounded paginated reads, and fetches structured header, MIME and attachment metadata for each ID. It does not open Compose, create or edit a draft, send, schedule, delete, cancel or Recall anything.
 
 Every refresh persists the observation, canonical platform references, list and metadata-detail evidence, the adapter capability snapshot, and explicit per-folder Evidence Coverage: declared total, enumerated IDs, requested/successful pages, and requested/attempted/successful/failed details. Supported-scope completeness is distinct from whole-mailbox completeness. Virtual views, unrecognized custom folders and message-body HTML are not claimed; body HTML is deliberately excluded because its endpoint changes unread state. Inspect retained evidence and the Reconciliation it produced:
 

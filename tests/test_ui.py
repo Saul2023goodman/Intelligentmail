@@ -187,6 +187,16 @@ class UiBridgeTests(ExecutionTestCase):
         self.assertTrue(detail["sources"])
         self.assertEqual(self.mailbox.requests, [])
 
+    def test_gateway_status_is_a_small_live_query(self):
+        self.core.mailbox = ControlledMailbox()
+        result = dispatch(self.core, {"command": "gateway_status"})
+        self.assertEqual(result, {
+            "adapter": "controlled",
+            "connected": False,
+            "mailbox_address": "",
+            "protocol": 0,
+        })
+
     def test_readiness_workspace_uses_real_preparation_and_operator_actions(self):
         preparation, _ = self.ready_preparation(subject=None, attach=False)
         view = dispatch(self.core, {"command": "review_workspace",

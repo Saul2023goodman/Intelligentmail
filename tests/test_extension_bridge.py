@@ -58,6 +58,14 @@ class BridgeTests(unittest.TestCase):
         with self.assertRaises(BridgeError):
             self.queue.authorize("session", command_id)
 
+    def test_expired_claim_does_not_block_later_work_after_reconnect(self):
+        expired = self.enqueue("observe")
+        self.assertEqual(self.queue.poll("session")["id"], expired)
+        self.now += 11
+        next_command = self.enqueue("observe")
+        self.assertEqual(self.queue.poll("session")["id"], next_command)
+        self.assertIsNone(self.queue.result(expired))
+
     def test_explicit_mailbox_and_single_connection(self):
         with self.assertRaises(BridgeError):
             self.queue.connect("another", "student@163.com")

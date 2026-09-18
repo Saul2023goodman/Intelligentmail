@@ -26,7 +26,8 @@ The Python suite covers the public SmartMail boundary, durable command queue,
 Native Messaging framing, Windows host-manifest generation, extension adapter
 capabilities, confirmed attachment transfer, persisted Confirmation rechecks,
 single-delivery behavior, mailbox identity handshake, responsive idle pickup,
-disconnect/expiry handling, wrong-Mailbox evidence,
+automatic unambiguous tab selection, bounded reconnect backoff,
+disconnect/expiry handling, expired-claim cleanup, wrong-Mailbox evidence,
 authentication pauses, Unknown Outcome recovery and the fact that the old
 `163-browser` option is rejected. The Node suite covers command ordering, one
 submission permit, disconnect and deadline guards, read-only isolation, attachment
