@@ -3,27 +3,36 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { Plugin } from "vite";
 
+export function coreWorkerArguments(
+  environment: Record<string, string | undefined>,
+): string[] {
+  const workerArguments = [
+    "-u",
+    "-m",
+    "smartmail.ui",
+    "--home",
+    environment.SMARTMAIL_HOME || ".smartmail",
+  ];
+  const enabled = (name: string) =>
+    ["1", "true", "yes"].includes((environment[name] || "").toLowerCase());
+  if (enabled("SMARTMAIL_ENABLE_EXTENSION_SEND"))
+    workerArguments.push("--enable-extension-send");
+  if (enabled("SMARTMAIL_ENABLE_EXTENSION_SCHEDULE"))
+    workerArguments.push("--enable-extension-schedule");
+  if (enabled("SMARTMAIL_ENABLE_EXTENSION_RECALL"))
+    workerArguments.push("--enable-extension-recall");
+  return workerArguments;
+}
+
 // Vite is the only HTTP surface. Python communicates over private stdio.
-export function corePlugin(): Plugin {
+export function corePlugin(environment: Record<string, string | undefined> = process.env): Plugin {
   return {
     name: "smartmail-core",
     configureServer(server) {
       const root = fileURLToPath(new URL("../", import.meta.url));
-      const workerArguments = [
-        "-u",
-        "-m",
-        "smartmail.ui",
-        "--home",
-        process.env.SMARTMAIL_HOME || ".smartmail",
-      ];
-      const enabled = (name: string) => ["1", "true", "yes"].includes(
-        (process.env[name] || "").toLowerCase(),
-      );
-      if (enabled("SMARTMAIL_ENABLE_EXTENSION_SEND")) workerArguments.push("--enable-extension-send");
-      if (enabled("SMARTMAIL_ENABLE_EXTENSION_SCHEDULE")) workerArguments.push("--enable-extension-schedule");
-      if (enabled("SMARTMAIL_ENABLE_EXTENSION_RECALL")) workerArguments.push("--enable-extension-recall");
+      const workerArguments = coreWorkerArguments(environment);
       const child = spawn(
-        process.env.SMARTMAIL_PYTHON || "python",
+        environment.SMARTMAIL_PYTHON || "python",
         workerArguments,
         { cwd: root, windowsHide: true, stdio: ["pipe", "pipe", "inherit"] },
       );
