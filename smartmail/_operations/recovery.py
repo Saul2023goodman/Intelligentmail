@@ -21,6 +21,9 @@ class RecoveryOperations:
             "JOIN tasks t ON t.id = a.task_id "
             "WHERE a.state IN ('in_progress', 'sent') ORDER BY a.rowid"))
         if not rows:
+            # No attempt was left open, but a run may still have been: close it from
+            # the outcomes its items already carry rather than leaving it running.
+            self._reconcile_running_runs()
             return
         recovered_at = self._now()
         for row in rows:
@@ -87,6 +90,9 @@ class RecoveryOperations:
             self._pause_flow_if_idle(
                 row["campaign_id"], "recovery_required", evidence)
         self._db.commit()
+        # Attempt outcomes are re-established first; a run left open by the restart
+        # is then closed from those outcomes rather than assumed to have finished.
+        self._reconcile_running_runs()
 
     def reconcile_and_continue(self, attempt_id: str,
                                confirmation_ids: list[str] | None = None,
@@ -179,6 +185,7 @@ class RecoveryOperations:
             self._db.execute(
                 "UPDATE execution_attempts SET evidence = ?, phase = 'recorded', updated_at = ? "
                 "WHERE id = ?", (json.dumps(evidence, ensure_ascii=False), self._now(), attempt_id))
+            self._note_resolved_attempt(attempt_id, "sent")
             summary_row = self._db.execute(
                 "SELECT summary FROM reconciliations WHERE id = ?",
                 (refreshed["reconciliation"]["id"],)).fetchone()

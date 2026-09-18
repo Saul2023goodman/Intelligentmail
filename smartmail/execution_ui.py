@@ -34,6 +34,35 @@ def review(core, request):
     return {"value": value, "token": snapshot(value)}
 
 
+#: Each run kind needs its own capability; a disabled kind blocks only its own region.
+KIND_CAPABILITY = {"immediate": "immediate_send", "scheduled": "native_scheduling",
+                   "cancellation": "schedule_cancellation", "replacement": "schedule_cancellation"}
+
+
+def run_kind_capability(core, kind):
+    """Whether the mailbox reports this kind available, and why it is not when it is not."""
+    capabilities = core.mailbox_capabilities()["capabilities"]
+    if kind not in KIND_CAPABILITY:
+        return {"kind": kind, "available": False, "capability": "",
+                "basis": f"This execution kind is not supported by the batch page: {kind}"}
+    required = [KIND_CAPABILITY[kind]]
+    if kind == "replacement":
+        required.append("native_scheduling")
+    for capability in required:
+        entry = capabilities.get(capability, {})
+        if not entry.get("available"):
+            return {"kind": kind, "available": False,
+                    "capability": capability, "basis": entry.get("basis", "")}
+    return {"kind": kind, "available": True, "capability": required[0], "basis": ""}
+
+
+def confirmations_of(result):
+    """The Confirmations an authorization produced, whatever its request kind was."""
+    if isinstance(result, list):
+        return result
+    return list(result.get("confirmations") or [])
+
+
 def dispatch_execution(core, request):
     command = request["command"]
     if command == "execution_workspace":
@@ -47,7 +76,15 @@ def dispatch_execution(core, request):
             "confirmations": core.list_confirmations(campaign_id),
             "schedules": core.list_external_schedules(campaign_id=campaign_id),
             "attempts": core.list_execution_attempts(campaign_id),
+            "queue": core.execution_queue(campaign_id),
+            "runs": core.list_execution_runs(campaign_id),
+            "availability": {kind: run_kind_capability(core, kind)
+                             for kind in KIND_CAPABILITY},
         }
+    if command == "execution_runs":
+        return {"runs": core.list_execution_runs(request["campaign_id"])}
+    if command == "execution_run_show":
+        return core.get_execution_run(request["run_id"])
     if command == "execution_configure":
         return core.configure_plan(request["campaign_id"], **{
             key: request[key] for key in (
@@ -64,31 +101,37 @@ def dispatch_execution(core, request):
         if request.get("token") != current["token"]:
             raise SmartMailError("The reviewed content or execution details changed. Review again before confirming.")
         kind = request["kind"]
+        # The batch page carries these Confirmations straight into a run, so one
+        # authorization never needs a second selection or a second full review.
         if kind == "plan":
-            return core.confirm_plan(request["plan_id"])
+            plan = core.confirm_plan(request["plan_id"])
+            return {**plan, "confirmations": [
+                core.get_confirmation(proposal["confirmation_id"])
+                for proposal in plan["proposals"] if proposal["confirmation_id"]]}
         if kind == "immediate":
             return core.confirm_preparations(request["preparation_ids"], {"kind": "immediate"})
         if kind == "cancellation":
-            return core.confirm_schedule_cancellation(request["schedule_id"])
-        return core.confirm_schedule_replacement(
+            confirmed = core.confirm_schedule_cancellation(request["schedule_id"])
+            return {**confirmed, "confirmations": [confirmed["confirmation"]]}
+        confirmed = core.confirm_schedule_replacement(
             request["schedule_id"], request["replacement_confirmation_id"])
+        return {**confirmed, "confirmations": [confirmed["confirmation"]]}
     if command == "execution_run":
-        confirmation = core.get_confirmation(request["confirmation_id"])
-        if confirmation["status"] != "active":
-            raise SmartMailError("Confirmation is not active; review and confirm again before executing")
-        kind = confirmation["execution"]["kind"]
-        capability = {"immediate": "immediate_send", "scheduled": "native_scheduling",
-                      "cancellation": "schedule_cancellation", "replacement": "schedule_cancellation"}.get(kind)
-        capabilities = core.mailbox_capabilities()["capabilities"]
-        if not capability or not capabilities[capability]["available"]:
-            raise SmartMailError("This mailbox operation is disabled. Its capability must be enabled separately.")
-        if kind == "replacement" and not capabilities["native_scheduling"]["available"]:
-            raise SmartMailError("Replacement also requires native scheduling capability")
-        if kind == "immediate":
-            return core.run_execution([confirmation["id"]])
-        if kind == "scheduled":
-            return core.place_schedule(confirmation["id"])
-        if kind == "cancellation":
-            return core.run_schedule_cancellation(confirmation["id"])
-        return core.run_schedule_replacement(confirmation["id"])
+        identifiers = request.get("confirmation_ids")
+        if identifiers is None:
+            identifiers = [request["confirmation_id"]]
+        if not isinstance(identifiers, list) or not identifiers:
+            raise SmartMailError("Select at least one Confirmation to execute")
+        confirmations = [core.get_confirmation(identifier) for identifier in identifiers]
+        for confirmation in confirmations:
+            if confirmation["status"] != "active":
+                raise SmartMailError(
+                    "Confirmation is not active; review and confirm again before executing")
+        reported = run_kind_capability(core, confirmations[0]["execution"]["kind"])
+        if not reported["available"]:
+            raise SmartMailError(
+                f"This mailbox operation is disabled. {reported['basis'] or 'Its capability must be enabled separately.'}")
+        return core.run_batch([confirmation["id"] for confirmation in confirmations])
+    if command == "execution_queue":
+        return {"queue": core.execution_queue(request["campaign_id"])}
     raise SmartMailError("Unsupported UI command")

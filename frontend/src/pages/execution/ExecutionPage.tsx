@@ -13,6 +13,8 @@ import {
   core,
   human,
   type ExecutionWorkspace,
+  type ExecutionRun,
+  type QueueRow,
   type PreparationReview,
   type SendingPlan,
   type PlanConfiguration,
@@ -26,9 +28,13 @@ import Icon, { type IconName } from "../../shared/Icon";
 import "./Execution.css";
 
 type DialogState =
-  | { type: "batch-run"; confirmations: Confirmation[] }
   | { type: "rules" }
-  | { type: "review"; request: ReviewRequest; result: ReviewResult }
+  | {
+      type: "review";
+      request: ReviewRequest;
+      result: ReviewResult;
+      runAfter: boolean;
+    }
   | {
       type: "adjust";
       preparation: string;
@@ -37,15 +43,45 @@ type DialogState =
       plan: string;
     }
   | { type: "replace"; schedule: ExternalSchedule }
-  | { type: "run"; confirmation: Confirmation };
+  | { type: "run"; confirmation: Confirmation }
+  | { type: "result"; run: ExecutionRun };
 const phases = [
-  "Ready tasks",
+  "Execution queue",
   "Proposed slots",
-  "Confirmation",
+  "Awaiting execution",
   "Execution",
-  "Batch",
+  "Authorize and run",
   "Timeline",
 ];
+/** Batch outcomes an operator reads after a run, in the order they matter. */
+const OUTCOME_LABELS: [string, string][] = [
+  ["sent", "Sent"],
+  ["externally_scheduled", "Scheduled"],
+  ["cancelled", "Cancelled"],
+  ["replaced", "Replaced"],
+  ["observed_failure", "Failed"],
+  ["unknown_outcome", "Unknown"],
+  ["refused", "Refused"],
+  ["not_reached", "Not reached"],
+];
+const QUEUE_TONE: Record<string, string> = {
+  ready_to_authorize: "blue",
+  awaiting_execution: "green",
+  externally_scheduled: "amber",
+  already_sent: "gray",
+  not_ready: "red",
+};
+/** Success is green only when the mailbox actually carried the action out. */
+const OUTCOME_TONE: Record<string, string> = {
+  sent: "green",
+  externally_scheduled: "blue",
+  cancelled: "blue",
+  replaced: "blue",
+  observed_failure: "red",
+  unknown_outcome: "amber",
+  refused: "red",
+  not_reached: "gray",
+};
 const date = (value?: string) =>
   value
     ? new Date(value).toLocaleString(undefined, {
@@ -127,6 +163,18 @@ function buildEvents(
       tone: s.state.includes("unknown") ? "amber" : "blue",
       title: human(s.state),
       detail: `${taskName(s.task_id)} · ${s.mailbox_address}`,
+    });
+  for (const r of data.runs ?? [])
+    events.push({
+      key: `run-${r.id}`,
+      at: r.finished_at || r.started_at,
+      preparationIds: r.items
+        .map((entry) => entry.preparation_id)
+        .filter((id): id is string => Boolean(id)),
+      icon: r.state === "completed" ? "check" : "stop",
+      tone: r.state === "completed" ? "green" : r.state === "running" ? "amber" : "red",
+      title: `${human(r.kind)} run ${human(r.state)}`,
+      detail: `${r.executed_count} of ${r.requested_count} reached · ${r.not_reached_count} not reached`,
     });
   for (const a of data.attempts)
     events.push({
@@ -240,8 +288,11 @@ export default function ExecutionPage() {
   const workspace = workspaceQuery.data;
   const data = executionQuery.data;
   const [search, setSearch] = useState("");
-  const [executionSelection, setExecutionSelection] = useState<string[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
+  // ``null`` means the Core-computed default: everything that may be authorized.
+  // The normal path is subtraction, not building a selection from empty.
+  const [override, setOverride] = useState<string[] | null>(null);
+  const [progress, setProgress] = useState("");
+  const [run, setRun] = useState<ExecutionRun | null>(null);
   const [inspected, setInspected] = useState("");
   const [tab, setTab] = useState(0);
   const [busy, setBusy] = useState(false);
@@ -280,40 +331,30 @@ export default function ExecutionPage() {
       setBusy(false);
     }
   }
-  const review = (request: ReviewRequest) =>
+  const queue: QueueRow[] = data?.queue ?? [];
+  const authorizable = queue.filter((row) => row.state === "ready_to_authorize");
+  const selected =
+    override ?? authorizable.map((row) => row.preparation_id);
+  const review = (request: ReviewRequest, runAfter: boolean) =>
     perform(
       async () => {
         const result = await core("execution_review", request);
-        setDialog({ type: "review", request, result });
+        setDialog({ type: "review", request, result, runAfter });
       },
       "",
       false,
     );
   const plans = data?.plans.filter((p) => p.status !== "superseded") ?? [];
   const plan = plans.at(-1);
-  const ready =
-    data?.reviews.filter(
-      (r) =>
-        r.ready &&
-        !r.already_sent &&
-        r.status === "active" &&
-        !data.schedules.some(
-          (s) =>
-            s.preparation_id === r.preparation_id &&
-            [
-              "externally_scheduled",
-              "placement_unknown",
-              "cancel_unknown",
-            ].includes(s.state),
-        ),
-    ) ?? [];
-  const visible = ready.filter(
-    (r) =>
-      `${r.subject} ${r.sender} ${r.recipient} ${taskName(r.task_id)}`
-        .toLowerCase()
-        .includes(search.toLowerCase()),
+  const awaiting = queue.filter((row) => row.state === "awaiting_execution");
+  const awaitingOf = (kind: string) =>
+    awaiting.filter((row) => row.confirmation_kind === kind && row.confirmation_id);
+  const visible = authorizable.filter((row) =>
+    `${row.subject} ${row.recipient} ${taskName(row.task_id)}`
+      .toLowerCase()
+      .includes(search.toLowerCase()),
   );
-  const picked = ready.filter((r) => selected.includes(r.preparation_id));
+  const picked = authorizable.filter((row) => selected.includes(row.preparation_id));
   const item = data?.reviews.find((r) => r.preparation_id === inspected);
   const events = buildEvents(data, taskName);
   const focus = item
@@ -327,22 +368,45 @@ export default function ExecutionPage() {
     else days.push([key, [event]]);
   }
   const confirmations = data?.confirmations ?? [];
+  const operations = confirmations.filter((c) =>
+    ["cancellation", "replacement"].includes(c.execution.kind),
+  );
   const paused = workspace?.report?.flow.state === "paused";
-  const available = (kind: string) => {
-    const key = capabilityFor(kind);
-    return (
-      !!key &&
-      !!workspace?.mailbox_capabilities.capabilities[key]?.available &&
-      (kind !== "replacement" ||
-        !!workspace?.mailbox_capabilities.capabilities.native_scheduling
-          ?.available)
-    );
-  };
-  const used = (c: Confirmation) =>
-    data?.schedules.some((s) => s.confirmation_id === c.id) ||
-    data?.attempts.some(
-      (a) => a.confirmation_id === c.id && !["not_attempted"].includes(a.state),
-    );
+  const runs = data?.runs ?? [];
+  const latest = run ?? runs[0] ?? null;
+  const availability = data?.availability ?? {};
+  const available = (kind: string) => !!availability[kind]?.available;
+  const basis = (kind: string) =>
+    availability[kind]?.basis || "This operation is disabled for the connected mailbox.";
+
+  async function runConfirmations(identifiers: string[]) {
+    setProgress(`Running ${identifiers.length} authorized action(s)…`);
+    const result = await core("execution_run", { confirmation_ids: identifiers });
+    setRun(result);
+    setOverride(null);
+    setDialog({ type: "result", run: result });
+    return result;
+  }
+  async function confirmThen(request: ReviewRequest, token: string, runAfter: boolean) {
+    setProgress("Authorizing…");
+    const confirmed = await core("execution_confirm", { ...request, token });
+    const created: Confirmation[] = Array.isArray(confirmed)
+      ? confirmed
+      : ((confirmed as { confirmations?: Confirmation[] }).confirmations ?? []);
+    if (!runAfter) {
+      setDialog(null);
+      setNotice(
+        `Authorized ${created.length} action(s). They appear under awaiting execution and can be run without selecting them again.`,
+      );
+      return;
+    }
+    if (!created.length) {
+      setDialog(null);
+      setNotice("No Confirmation was created; nothing was executed.");
+      return;
+    }
+    await runConfirmations(created.map((c) => c.id));
+  }
   function taskName(id: string) {
     return (
       workspace?.report?.tasks.find((t) => t.task_id === id)?.supervisor_name ||
@@ -350,8 +414,10 @@ export default function ExecutionPage() {
     );
   }
   function toggle(id: string) {
-    setSelected((old) =>
-      old.includes(id) ? old.filter((p) => p !== id) : [...old, id],
+    setOverride(
+      selected.includes(id)
+        ? selected.filter((p) => p !== id)
+        : [...selected, id],
     );
   }
   const disabled = busy || loading;
@@ -486,22 +552,22 @@ export default function ExecutionPage() {
             {panel(
               0,
               "database",
-              ready.length,
+              queue.length,
               <>
                 <div className="ex-panel-sub">
-                  <span>Validated preparations</span>
+                  <span>Core-computed authorization state</span>
                   <button
                     disabled={!visible.length || disabled}
                     onClick={() =>
-                      setSelected((old) =>
-                        visible.every((r) => old.includes(r.preparation_id))
-                          ? old.filter(
+                      setOverride(
+                        visible.every((r) => selected.includes(r.preparation_id))
+                          ? selected.filter(
                               (id) =>
                                 !visible.some((r) => r.preparation_id === id),
                             )
                           : [
                               ...new Set([
-                                ...old,
+                                ...selected,
                                 ...visible.map((r) => r.preparation_id),
                               ]),
                             ],
@@ -515,47 +581,63 @@ export default function ExecutionPage() {
                   </button>
                 </div>
                 <div className="ex-scroll">
-                  {visible.length ? (
-                    visible.map((r, i) => (
-                      <div
-                        key={r.preparation_id}
-                        className={`ex-task ${selected.includes(r.preparation_id) ? "is-selected" : ""}`}
-                      >
-                        <input
-                          type="checkbox"
-                          aria-label={`Select ${r.recipient}`}
-                          checked={selected.includes(r.preparation_id)}
-                          disabled={disabled}
-                          onChange={() => toggle(r.preparation_id)}
-                        />
-                        <button
-                          className="ex-task-content"
-                          onClick={() => inspect(r.preparation_id)}
+                  {queue.length ? (
+                    queue
+                      .filter(
+                        (row) =>
+                          `${row.subject} ${row.recipient} ${taskName(row.task_id)}`
+                            .toLowerCase()
+                            .includes(search.toLowerCase()),
+                      )
+                      .map((row, i) => (
+                        <div
+                          key={row.preparation_id}
+                          className={`ex-task ${selected.includes(row.preparation_id) ? "is-selected" : ""}`}
                         >
-                          <span className={`ex-monogram ex-color-${i % 4}`}>
-                            {taskName(r.task_id).slice(0, 2).toUpperCase()}
-                          </span>
-                          <span>
-                            <strong>{taskName(r.task_id)}</strong>
-                            <small>{r.recipient}</small>
-                          </span>
-                          <span className="ex-dot" title="Ready preparation" />
-                        </button>
-                      </div>
-                    ))
+                          <input
+                            type="checkbox"
+                            aria-label={`Select ${row.recipient}`}
+                            checked={selected.includes(row.preparation_id)}
+                            disabled={
+                              disabled || row.state !== "ready_to_authorize"
+                            }
+                            onChange={() => toggle(row.preparation_id)}
+                          />
+                          <button
+                            className="ex-task-content"
+                            onClick={() => inspect(row.preparation_id)}
+                          >
+                            <span className={`ex-monogram ex-color-${i % 4}`}>
+                              {taskName(row.task_id).slice(0, 2).toUpperCase()}
+                            </span>
+                            <span>
+                              <strong>{taskName(row.task_id)}</strong>
+                              <small>{row.recipient}</small>
+                            </span>
+                            <span
+                              className={`ex-chip ex-chip-${QUEUE_TONE[row.state] ?? "gray"}`}
+                              title={
+                                row.blocking_codes.length
+                                  ? row.blocking_codes.join(", ")
+                                  : undefined
+                              }
+                            >
+                              {human(row.state)}
+                            </span>
+                          </button>
+                        </div>
+                      ))
                   ) : (
                     <Empty icon="database">
                       {loading
                         ? "Loading preparations…"
-                        : search
-                          ? "No ready tasks match these filters."
-                          : "Ready preparations appear here after validation in Core."}
+                        : "Active Preparations and their authorization state appear here."}
                     </Empty>
                   )}
                 </div>
                 <div className="ex-panel-foot">
                   {picked.length} selected{" "}
-                  <span>Readiness is not authorization</span>
+                  <span>Readiness is never authorization</span>
                 </div>
               </>,
             )}
@@ -649,84 +731,106 @@ export default function ExecutionPage() {
             {panel(
               2,
               "shield",
-              confirmations.length,
+              awaiting.length + operations.length,
               <>
                 <div className="ex-panel-sub">
-                  <span>Exact content · exact intent</span>
-                  <button
-                    disabled={disabled || !executionSelection.length}
-                    onClick={() => {
-                      setError("");
-                      setDialog({
-                        type: "batch-run",
-                        confirmations: confirmations.filter(
-                          (c) => executionSelection.includes(c.id) && !used(c),
-                        ),
-                      });
-                    }}
-                  >
-                    Run selected ({executionSelection.length})
-                  </button>
+                  <span>Authorized · not yet carried out</span>
                 </div>
                 <div className="ex-scroll">
-                  {confirmations.length ? (
-                    confirmations.map((c) => (
-                      <article
-                        key={c.id}
-                        className={`ex-card ex-confirmed ${used(c) ? "ex-muted" : ""}`}
+                  {[
+                    { kind: "immediate", rows: awaitingOf("immediate") },
+                    { kind: "scheduled", rows: awaitingOf("scheduled") },
+                  ].map((group) => (
+                    <section className="ex-group" key={group.kind}>
+                      <h3>
+                        {group.kind === "immediate" ? "Send now" : "Place schedule"}{" "}
+                        <span>{group.rows.length}</span>
+                      </h3>
+                      {!available(group.kind) && (
+                        <p className="ex-banner">{basis(group.kind)}</p>
+                      )}
+                      <button
+                        className="ex-button ex-primary"
+                        disabled={
+                          disabled ||
+                          paused ||
+                          !available(group.kind) ||
+                          !group.rows.length
+                        }
+                        onClick={() =>
+                          perform(async () => {
+                            await runConfirmations(
+                              group.rows.map((row) => row.confirmation_id!),
+                            );
+                          }, "")
+                        }
                       >
-                        <div className="ex-card-top">
-                          <input
-                            type="checkbox"
-                            aria-label={`Execute ${taskName(c.task_id)} ${c.execution.kind}`}
-                            checked={executionSelection.includes(c.id)}
-                            disabled={disabled || !!used(c)}
-                            onChange={() =>
-                              setExecutionSelection((old) =>
-                                old.includes(c.id)
-                                  ? old.filter((id) => id !== c.id)
-                                  : [...old, c.id],
-                              )
-                            }
-                          />
-                          <span className="ex-check">
-                            <Icon name="check" size={13} />
-                          </span>
-                          <strong>{human(c.execution.kind)}</strong>
-                          <span>
-                            {used(c) ? "Attempt recorded" : "Confirmed"}
-                          </span>
-                        </div>
+                        <Icon name="send" size={15} />
+                        {group.kind === "immediate"
+                          ? `Send ${group.rows.length} authorized`
+                          : `Place ${group.rows.length} schedule(s)`}
+                      </button>
+                      {group.rows.map((row) => (
                         <button
-                          className="ex-card-title"
-                          onClick={() => inspect(c.preparation_id)}
+                          className="ex-batch-row"
+                          key={row.preparation_id}
+                          onClick={() => inspect(row.preparation_id)}
                         >
-                          {taskName(c.task_id)}
+                          <span className="ex-check">
+                            <Icon name="check" size={12} />
+                          </span>
+                          {taskName(row.task_id)}
+                          <span>{row.subject}</span>
                         </button>
-                        <p>
-                          {date(
-                            c.execution.scheduled_at ||
-                              c.execution.scheduled_utc,
-                          )}
-                        </p>
-                        <div className="ex-card-bottom">
-                          <span>{date(c.confirmed_at)}</span>
+                      ))}
+                    </section>
+                  ))}
+                  {operations.length > 0 && (
+                    <section className="ex-group">
+                      <h3>
+                        Cancellation and replacement <span>{operations.length}</span>
+                      </h3>
+                      {!available("cancellation") && (
+                        <p className="ex-banner">{basis("cancellation")}</p>
+                      )}
+                      {operations.map((c) => (
+                        <article className="ex-card ex-confirmed" key={c.id}>
+                          <div className="ex-card-top">
+                            <span className="ex-check">
+                              <Icon name="check" size={13} />
+                            </span>
+                            <strong>{human(c.execution.kind)}</strong>
+                          </div>
                           <button
-                            disabled={disabled || !!used(c)}
-                            onClick={() => {
-                              setError("");
-                              setDialog({ type: "run", confirmation: c });
-                            }}
+                            className="ex-card-title"
+                            onClick={() => inspect(c.preparation_id)}
                           >
-                            Review execution <Icon name="arrow" size={14} />
+                            {taskName(c.task_id)}
                           </button>
-                        </div>
-                      </article>
-                    ))
-                  ) : (
+                          <div className="ex-card-bottom">
+                            <span>{date(c.confirmed_at)}</span>
+                            <button
+                              disabled={
+                                disabled ||
+                                paused ||
+                                !available(c.execution.kind)
+                              }
+                              onClick={() => {
+                                setError("");
+                                setDialog({ type: "run", confirmation: c });
+                              }}
+                            >
+                              Review execution <Icon name="arrow" size={14} />
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </section>
+                  )}
+                  {!awaiting.length && !operations.length && (
                     <Empty icon="shield">
-                      Review a proposed plan or selected ready tasks, then
-                      explicitly confirm the batch.
+                      Authorized actions appear here until a run carries them
+                      out. Authorization and execution stay separate decisions.
                     </Empty>
                   )}
                 </div>
@@ -745,7 +849,36 @@ export default function ExecutionPage() {
                   <span>Mailbox evidence & outcomes</span>
                 </div>
                 <div className="ex-scroll">
-                  {!data?.attempts.length && !data?.schedules.length && (
+                  {latest && (
+                    <article
+                      className={`ex-card ex-outcome ${latest.state === "stopped" ? "ex-excluded" : ""}`}
+                    >
+                      <div className="ex-card-top">
+                        <Icon name="send" size={16} />
+                        <strong>{human(latest.kind)} run {human(latest.state)}</strong>
+                        <span>{date(latest.started_at)}</span>
+                      </div>
+                      <RunSummary run={latest} />
+                      {latest.state === "stopped" && (
+                        <p className="ex-hint">
+                          Stopped after {latest.executed_count} of{" "}
+                          {latest.requested_count} · {latest.not_reached_count}{" "}
+                          never reached
+                          {workspace?.report?.flow.reason
+                            ? ` · ${human(workspace.report.flow.reason)}`
+                            : ""}
+                          . Resolve it in the{" "}
+                          <a href="#records">execution ledger</a>, then run the
+                          remaining actions explicitly.
+                        </p>
+                      )}
+                      <details>
+                        <summary>Run items</summary>
+                        <pre>{JSON.stringify(latest.items, null, 2)}</pre>
+                      </details>
+                    </article>
+                  )}
+                  {!data?.attempts.length && !data?.schedules.length && !latest && (
                     <Empty icon="send">
                       Execution outcomes appear here after an attempt. A
                       scheduled time passing never means sent.
@@ -774,7 +907,10 @@ export default function ExecutionPage() {
                             disabled || s.state !== "externally_scheduled"
                           }
                           onClick={() =>
-                            review({ kind: "cancellation", schedule_id: s.id })
+                            review(
+                              { kind: "cancellation", schedule_id: s.id },
+                              false,
+                            )
                           }
                         >
                           Cancel schedule
@@ -838,64 +974,143 @@ export default function ExecutionPage() {
               "source",
               picked.length,
               <>
-                <div className="ex-batch-actions">
-                  <button
-                    className="ex-button ex-primary"
-                    disabled={disabled || !picked.length}
-                    onClick={() =>
-                      review({
-                        kind: "immediate",
-                        preparation_ids: picked.map((p) => p.preparation_id),
-                      })
-                    }
-                  >
-                    <Icon name="send" size={15} />
-                    Confirm immediate
-                  </button>
-                  <button
-                    className="ex-button"
-                    disabled={disabled || !plan?.proposals.length}
-                    onClick={() =>
-                      plan && review({ kind: "plan", plan_id: plan.id })
-                    }
-                  >
-                    <Icon name="clock" size={15} />
-                    Confirm plan ({plan?.proposals.length ?? 0})
-                  </button>
-                  <button
-                    className="ex-button"
-                    disabled={!selected.length || disabled}
-                    onClick={() => setSelected([])}
-                  >
-                    Clear selection
-                  </button>
-                </div>
-                <div className="ex-scroll ex-batch-list">
-                  {picked.length ? (
-                    picked.map((r) => (
-                      <div className="ex-batch-row" key={r.preparation_id}>
-                        <span className="ex-check">
-                          <Icon name="check" size={12} />
-                        </span>
-                        <button onClick={() => inspect(r.preparation_id)}>
-                          {taskName(r.task_id)}
-                        </button>
-                        <span>{r.subject}</span>
-                        <small>{r.sender}</small>
-                        <button
-                          aria-label={`Remove ${r.recipient} from batch`}
-                          disabled={disabled}
-                          onClick={() => toggle(r.preparation_id)}
-                        >
-                          <Icon name="close" size={14} />
-                        </button>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="ex-hint">
-                      Select ready tasks for immediate confirmation. Plan
-                      confirmation covers every proposed slot in the campaign.
+                {/* Two distinct regions, each stating its own scope: a Campaign-wide
+                    plan can no longer be mistaken for the current selection. */}
+                <div className="ex-scroll ex-authorize">
+                  <section className="ex-group">
+                    <h3>
+                      Send now <span>{picked.length}</span>
+                    </h3>
+                    <p className="ex-scope">
+                      Scope: the {picked.length} Preparation
+                      {picked.length === 1 ? "" : "s"} selected above. One review,
+                      one authorization, then one run.
                     </p>
+                    {!available("immediate") && (
+                      <p className="ex-banner">{basis("immediate")}</p>
+                    )}
+                    <div className="ex-batch-actions">
+                      <button
+                        className="ex-button ex-primary"
+                        disabled={
+                          disabled ||
+                          paused ||
+                          !picked.length ||
+                          !available("immediate")
+                        }
+                        onClick={() =>
+                          review(
+                            {
+                              kind: "immediate",
+                              preparation_ids: picked.map((row) => row.preparation_id),
+                            },
+                            true,
+                          )
+                        }
+                      >
+                        <Icon name="send" size={15} />
+                        Review and send {picked.length}
+                      </button>
+                      <button
+                        className="ex-button"
+                        disabled={
+                          disabled || !picked.length || !available("immediate")
+                        }
+                        onClick={() =>
+                          review(
+                            {
+                              kind: "immediate",
+                              preparation_ids: picked.map((row) => row.preparation_id),
+                            },
+                            false,
+                          )
+                        }
+                      >
+                        <Icon name="shield" size={15} />
+                        Authorize only
+                      </button>
+                    </div>
+                    {picked.length ? (
+                      picked.map((row) => (
+                        <div className="ex-batch-row" key={row.preparation_id}>
+                          <span className="ex-check">
+                            <Icon name="check" size={12} />
+                          </span>
+                          <button onClick={() => inspect(row.preparation_id)}>
+                            {taskName(row.task_id)}
+                          </button>
+                          <span>{row.subject}</span>
+                          <button
+                            aria-label={`Remove ${row.recipient} from batch`}
+                            disabled={disabled}
+                            onClick={() => toggle(row.preparation_id)}
+                          >
+                            <Icon name="close" size={14} />
+                          </button>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="ex-hint">
+                        Nothing selected. Every Preparation that may be
+                        authorized is selected by default — deselect the ones to
+                        hold back.
+                      </p>
+                    )}
+                  </section>
+                  <section className="ex-group">
+                    <h3>
+                      Place schedules <span>{plan?.proposals.length ?? 0}</span>
+                    </h3>
+                    <p className="ex-scope">
+                      Scope: every proposed slot of the current campaign plan,
+                      not the selection above.
+                    </p>
+                    {!available("scheduled") && (
+                      <p className="ex-banner">{basis("scheduled")}</p>
+                    )}
+                    <div className="ex-batch-actions">
+                      <button
+                        className="ex-button ex-primary"
+                        disabled={
+                          disabled ||
+                          paused ||
+                          !plan?.proposals.length ||
+                          !available("scheduled")
+                        }
+                        onClick={() =>
+                          plan && review({ kind: "plan", plan_id: plan.id }, true)
+                        }
+                      >
+                        <Icon name="clock" size={15} />
+                        Review and place {plan?.proposals.length ?? 0}
+                      </button>
+                      <button
+                        className="ex-button"
+                        disabled={
+                          disabled ||
+                          !plan?.proposals.length ||
+                          !available("scheduled")
+                        }
+                        onClick={() =>
+                          plan && review({ kind: "plan", plan_id: plan.id }, false)
+                        }
+                      >
+                        <Icon name="shield" size={15} />
+                        Authorize plan only
+                      </button>
+                    </div>
+                    <p className="ex-hint">
+                      A confirmed plan produces scheduled Confirmations that
+                      appear under awaiting execution. They are never sent
+                      immediately.
+                    </p>
+                  </section>
+                </div>
+                <div className="ex-panel-foot">
+                  {progress ? (
+                    <span className="ex-progress">{progress}</span>
+                  ) : (
+                    <span>Authorization and execution stay separate</span>
                   )}
                 </div>
               </>,
@@ -973,8 +1188,8 @@ export default function ExecutionPage() {
       {dialog && (
         <Modal
           title={
-            dialog.type === "batch-run"
-              ? "Review batch execution"
+            dialog.type === "result"
+              ? `Execution run ${human(dialog.run.state)}`
               : dialog.type === "rules"
                 ? "Scheduling rules"
                 : dialog.type === "adjust"
@@ -997,69 +1212,56 @@ export default function ExecutionPage() {
               {error}
             </div>
           )}
-          {dialog.type === "batch-run" && (
+          {dialog.type === "result" && (
             <>
               <div className="ex-dialog-body">
                 <p>
-                  Execute these {dialog.confirmations.length} confirmed
-                  operations in order. The batch stops on an error or a paused
-                  execution flow.
+                  {human(dialog.run.kind)} run {human(dialog.run.state)} ·{" "}
+                  {dialog.run.executed_count} of {dialog.run.requested_count}{" "}
+                  reached. Completion alone never claims success: read the
+                  observed outcomes.
                 </p>
-                {dialog.confirmations.map((c) => (
-                  <section key={c.id}>
-                    <h3>
-                      {taskName(c.task_id)} · {human(c.execution.kind)}
-                    </h3>
+                <RunSummary run={dialog.run} />
+                {dialog.run.state === "stopped" && (
+                  <div className="ex-banner ex-error">
                     <p>
-                      {date(
-                        c.execution.scheduled_at || c.execution.scheduled_utc,
-                      )}
+                      The run stopped after {dialog.run.executed_count} of{" "}
+                      {dialog.run.requested_count}; {dialog.run.not_reached_count}{" "}
+                      action(s) were never reached and stay eligible for a later,
+                      explicitly requested run.
                     </p>
-                    {data?.reviews
-                      .filter((r) => r.preparation_id === c.preparation_id)
-                      .map((r) => (
-                        <Message key={r.preparation_id} item={r} />
-                      ))}
-                    {!available(c.execution.kind) && (
-                      <p className="ex-banner">
-                        {human(c.execution.kind)} capability is disabled.
+                    {workspace?.report?.flow.reason && (
+                      <p>
+                        Pause reason: {human(workspace.report.flow.reason)}.
+                        Resolve it in the{" "}
+                        <a href="#records">execution ledger</a>, then run the
+                        remaining actions explicitly.
                       </p>
                     )}
-                  </section>
-                ))}
+                  </div>
+                )}
+                <ol className="ex-run-items">
+                  {dialog.run.items.map((entry) => (
+                    <li key={entry.id}>
+                      <span
+                        className={`ex-chip ex-chip-${OUTCOME_TONE[entry.outcome] ?? "gray"}`}
+                      >
+                        {human(entry.outcome)}
+                      </span>
+                      <span>
+                        {entry.task_id ? taskName(entry.task_id) : "Action"}
+                      </span>
+                      {entry.detail && <small>{entry.detail}</small>}
+                    </li>
+                  ))}
+                </ol>
               </div>
               <div className="ex-dialog-actions">
                 <button
                   className="ex-button ex-primary"
-                  disabled={
-                    busy ||
-                    paused ||
-                    !dialog.confirmations.length ||
-                    dialog.confirmations.some(
-                      (c) => !available(c.execution.kind),
-                    )
-                  }
-                  onClick={() =>
-                    perform(async () => {
-                      for (const c of dialog.confirmations) {
-                        const result = await core("execution_run", {
-                          confirmation_id: c.id,
-                        });
-                        setExecutionSelection((old) =>
-                          old.filter((id) => id !== c.id),
-                        );
-                        if (result.paused || result.flow?.state === "paused") {
-                          setDialog(null);
-                          throw new Error(
-                            "Batch stopped: execution flow is paused. Inspect recorded evidence before continuing.",
-                          );
-                        }
-                      }
-                      setDialog(null);
-                    }, "Batch requests completed. Inspect the observed outcomes in the execution ledger.")
-                  }
+                  onClick={() => setDialog(null)}
                 >
-                  {busy ? "Executing batch…" : "Execute confirmed batch"}
+                  Close
                 </button>
               </div>
             </>
@@ -1168,11 +1370,14 @@ export default function ExecutionPage() {
                   className="ex-button ex-primary"
                   disabled={busy || !replacement}
                   onClick={() =>
-                    review({
-                      kind: "replacement",
-                      schedule_id: dialog.schedule.id,
-                      replacement_confirmation_id: replacement,
-                    })
+                    review(
+                      {
+                        kind: "replacement",
+                        schedule_id: dialog.schedule.id,
+                        replacement_confirmation_id: replacement,
+                      },
+                      false,
+                    )
                   }
                 >
                   Review replacement
@@ -1212,21 +1417,35 @@ export default function ExecutionPage() {
                 )}
               </div>
               <div className="ex-dialog-actions">
-                <span>No external action occurs yet</span>
+                <span>
+                  {dialog.runAfter
+                    ? "Authorizing, then carrying the run out in order"
+                    : "No external action occurs yet"}
+                </span>
                 <button
                   className="ex-button ex-primary"
                   disabled={busy}
                   onClick={() =>
-                    perform(async () => {
-                      await core("execution_confirm", {
-                        ...dialog.request,
-                        token: dialog.result.token,
-                      });
-                      setDialog(null);
-                    }, "Confirmation recorded. Review execution when ready.")
+                    perform(
+                      async () => {
+                        await confirmThen(
+                          dialog.request,
+                          dialog.result.token,
+                          dialog.runAfter,
+                        );
+                        setProgress("");
+                      },
+                      dialog.runAfter
+                        ? ""
+                        : "Confirmation recorded. Authorized actions appear under awaiting execution.",
+                    )
                   }
                 >
-                  {busy ? "Confirming…" : "Confirm exact details"}
+                  {busy
+                    ? progress || "Working…"
+                    : dialog.runAfter
+                      ? "Authorize and run"
+                      : "Confirm exact details"}
                 </button>
               </div>
             </>
@@ -1314,6 +1533,27 @@ export default function ExecutionPage() {
   );
 }
 
+function RunSummary({ run }: { run: ExecutionRun }) {
+  return (
+    <div className="ex-run-summary">
+      {OUTCOME_LABELS.filter(([key]) => (run.summary?.[key] ?? 0) > 0).map(
+        ([key, label]) => (
+          <span
+            className={`ex-chip ex-chip-${OUTCOME_TONE[key] ?? "gray"}`}
+            key={key}
+          >
+            {label} {run.summary[key]}
+          </span>
+        ),
+      )}
+      {run.state === "completed" && (
+        <span className="ex-chip ex-chip-gray">
+          {run.requested_count} requested
+        </span>
+      )}
+    </div>
+  );
+}
 function OperationDetails({ value }: { value: OperationReview }) {
   return (
     <>

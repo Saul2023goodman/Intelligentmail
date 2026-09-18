@@ -138,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
     stop = execution.add_parser("stop", help="Stop an unresolved Execution Attempt")
     stop.add_argument("id")
     stop.add_argument("--detail", default="")
+    batch = execution.add_parser(
+        "batch", help="Carry out several Confirmations as one ordered Execution Run")
+    batch.add_argument("ids", nargs="+")
+    execution.add_parser("runs", help="Inspect the Execution Runs of a Campaign").add_argument(
+        "--campaign", required=True)
+    execution.add_parser("run-show", help="Inspect one Execution Run and its items").add_argument("id")
+    execution.add_parser("queue", help="Authorized and unauthorized work of a Campaign").add_argument(
+        "--campaign", required=True)
 
     sent = commands.add_parser("sent", help="Inspect immutable Sent Records").add_subparsers(dest="action", required=True)
     sent.add_parser("list").add_argument("--campaign", required=True)

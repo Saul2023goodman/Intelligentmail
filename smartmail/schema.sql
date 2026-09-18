@@ -287,6 +287,27 @@ CREATE TABLE IF NOT EXISTS external_operations (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS execution_runs (
+  id TEXT PRIMARY KEY,
+  campaign_id TEXT NOT NULL REFERENCES campaigns(id),
+  kind TEXT NOT NULL,
+  state TEXT NOT NULL,
+  requested_count INTEGER NOT NULL,
+  executed_count INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  finished_at TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS execution_run_items (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL REFERENCES execution_runs(id),
+  confirmation_id TEXT NOT NULL REFERENCES confirmations(id),
+  sequence INTEGER NOT NULL,
+  attempt_id TEXT REFERENCES execution_attempts(id),
+  outcome TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  UNIQUE(run_id, sequence)
+);
 CREATE TABLE IF NOT EXISTS mailbox_settings (
   mailbox_id TEXT PRIMARY KEY REFERENCES mailboxes(id),
   observation_interval_seconds INTEGER NOT NULL DEFAULT 0,

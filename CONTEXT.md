@@ -127,6 +127,14 @@ _Avoid_: All local work, mailbox-wide sending suspension
 One attempt to carry out a confirmed external operation, whose outcome is established from available external evidence.
 _Avoid_: Communication action, proof of sending
 
+**Execution Run**:
+One operator-initiated, ordered execution of a set of active Confirmations belonging to a single Campaign and a single execution kind, retaining what was requested, what was reached, what was observed, and what was never reached.
+_Avoid_: Batch job, automatic retry, sending session
+
+**Execution Run Item**:
+One Confirmation's place in an Execution Run, carrying its own observed outcome, including the record that it was never reached.
+_Avoid_: Queue entry, retry slot, sending receipt
+
 **Externally Scheduled**:
 The state in which the external mailbox confirms that a message is scheduled for sending.
 _Avoid_: Sent, locally planned

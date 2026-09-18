@@ -123,6 +123,14 @@ def dispatch(core, args):
         elif args.action in ("reconcile-and-continue", "reconcile"):
             result = core.reconcile_and_continue(
                 args.id, args.confirmation_ids or None, acknowledge=args.acknowledge)
+        elif args.action == "batch":
+            result = core.run_batch(args.ids)
+        elif args.action == "runs":
+            result = core.list_execution_runs(args.campaign)
+        elif args.action == "run-show":
+            result = core.get_execution_run(args.id)
+        elif args.action == "queue":
+            result = core.execution_queue(args.campaign)
         else:
             result = core.stop_execution_attempt(args.id, detail=args.detail)
     elif args.command == "sent":

@@ -5,6 +5,8 @@ import type {
   SendingPlan,
   ReviewRequest,
   ReviewResult,
+  ExecutionRun,
+  QueueRow,
 } from "./execution-types";
 import type { RecordsTaskDetail, RecordsWorkspace } from "./records-types";
 import type {
@@ -88,9 +90,12 @@ export type Commands = {
     result: unknown;
   };
   execution_run: {
-    args: { confirmation_id: string };
-    result: { paused?: boolean; flow?: { state: string } };
+    args: { confirmation_id?: string; confirmation_ids?: string[] };
+    result: ExecutionRun & { paused?: boolean };
   };
+  execution_runs: { args: { campaign_id: string }; result: { runs: ExecutionRun[] } };
+  execution_run_show: { args: { run_id: string }; result: ExecutionRun };
+  execution_queue: { args: { campaign_id: string }; result: { queue: QueueRow[] } };
   gateway_status: { args: Record<string, never>; result: import("./types").MailboxGateway };
   workspace: { args: { campaign_id?: string }; result: Workspace };
   task: { args: { task_id: string }; result: IntakeTaskDetail & { rewrite_sources: { id: string; name: string }[] } };
