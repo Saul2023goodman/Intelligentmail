@@ -81,7 +81,7 @@ SmartMail 核心 → 163-extension adapter → 本地命令队列
 
 - 协议版本为 1，支持的固定操作为 `observe`、`submit`（即时发送）、`schedule`（原生定时放置，含附件块）、`cancel_schedule`、`recall`，以及连接、心跳/领取、按命令索引读取附件块、单次操作许可和结果回传。没有任意 JavaScript、shell、URL 或文件路径执行接口；页面侧 wmsvr 调用限定在固定的 `mbox:*` 函数白名单内。
 - `extension-bridge.sqlite3` 是独立的传输数据库；`smartmail.sqlite3` 仍是业务事实和执行台账的来源。本机主机只读检查业务库，不调用启动恢复逻辑，不创建 Confirmation。
-- 心跳租期为 15 秒；命令默认有效期 120 秒。领取是持久化的单次状态转换，重连不会重放。忙碌心跳不领取新命令。
+- 心跳租期为 15 秒；命令默认有效期 120 秒。连接完成后立即执行首轮拉取，空闲时以 250 ms 节拍领取命令，忙碌时保持 1 秒心跳且不领取新命令。领取是持久化的单次状态转换，重连不会重放。
 - 每次发放许可前按 Confirmation 种类分别校验：`immediate`/`scheduled`/`cancellation`/`replacement`/`recall`，并检查 attempt 身份、冻结请求、有效 Confirmation、正文与附件摘要、readiness Blocker、执行暂停和已发送记录（定时另查未来精确时间和重复外部定时）。页面在点击前再次检查账号、正文、收件人、附件选择和命令期限。
 - 附件总量上限为 20 MiB，使用 192 KiB 块传输；正文等命令数据上限为 512 KiB。主机发往浏览器的每帧小于 1 MiB；接收帧上限为 32 MiB。完成或本地等待结束会清理队列内的正文和附件副本，业务历史不受影响。
 - 只读采集每个受支持文件夹最多 5,000 条，保留分页与详情读取覆盖信息。正文 HTML 端点、未识别的自定义文件夹均排除，不宣称整箱完整覆盖。草稿箱中 `flags.scheduleDelivery=true` 的行单独标记为 `scheduled`，与本地计划、Unknown Outcome、Sent 严格区分。

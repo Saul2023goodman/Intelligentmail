@@ -12,20 +12,21 @@ Run from the repository root:
 
 ```powershell
 .\.venv\Scripts\python -X utf8 -m unittest discover -s tests -v
-node --test extensions/netease163/tests/commands.test.mjs
+node --test extensions/netease163/tests/*.test.mjs
 ```
 
 The current run completed with:
 
 ```text
 Python: Ran 205 tests; OK (5 representative-material tests skipped)
-Node:   11 tests; pass
+Node:   command, connection and schedule protocol tests; pass
 ```
 
 The Python suite covers the public SmartMail boundary, durable command queue,
 Native Messaging framing, Windows host-manifest generation, extension adapter
 capabilities, confirmed attachment transfer, persisted Confirmation rechecks,
-single-delivery behavior, disconnect/expiry handling, wrong-Mailbox evidence,
+single-delivery behavior, mailbox identity handshake, responsive idle pickup,
+disconnect/expiry handling, wrong-Mailbox evidence,
 authentication pauses, Unknown Outcome recovery and the fact that the old
 `163-browser` option is rejected. The Node suite covers command ordering, one
 submission permit, disconnect and deadline guards, read-only isolation, attachment

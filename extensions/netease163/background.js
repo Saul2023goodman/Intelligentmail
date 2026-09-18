@@ -1,4 +1,5 @@
 import { PROTOCOL, HOST, executeCommand } from "./commands.mjs";
+import { mailboxIdentity, nextPollDelay } from "./connection.mjs";
 
 let port = null;
 let connection = null;
@@ -9,7 +10,7 @@ let lastError = "尚未连接邮箱标签页";
 const waiting = new Map();
 
 function disconnect(detail = "连接已断开") {
-  clearInterval(timer);
+  clearTimeout(timer);
   timer = null;
   const previous = port;
   port = null;
@@ -96,13 +97,14 @@ async function connect(tabId) {
     target: { tabId }, world: "MAIN",
     func: () => globalThis.SmartMail163Reader?.runtimeAvailable() ? globalThis.SmartMail163Reader.account() : ""
   });
-  if (!identity[0]?.result) {
+  if (!mailboxIdentity(identity)) {
     identity = await chrome.scripting.executeScript({
       target: { tabId }, world: "ISOLATED", func: () => globalThis.SmartMail163.account()
     });
   }
-  if (!identity[0]?.result) throw new Error("无法唯一识别当前邮箱；请完成登录后重试");
-  connection = { tabId, documentId: identity[0].documentId, mailbox_address: identity[0].result };
+  const mailboxAddress = mailboxIdentity(identity);
+  if (!mailboxAddress) throw new Error("无法唯一识别当前邮箱；请完成登录后重试");
+  connection = { tabId, documentId: identity[0].documentId, mailbox_address: mailboxAddress };
   const selected = connection;
   port = chrome.runtime.connectNative(HOST);
   const selectedPort = port;
@@ -119,10 +121,15 @@ async function connect(tabId) {
     if (port === selectedPort) disconnect(detail);
   });
   try {
-    await rpc("connect", { mailbox_address: identity.result });
+    await rpc("connect", { mailbox_address: mailboxAddress });
     lastError = "";
-    timer = setInterval(async () => {
-      if (polling || connection !== selected) return;
+    const schedulePoll = delay => {
+      clearTimeout(timer);
+      if (connection === selected && port === selectedPort)
+        timer = setTimeout(poll, delay);
+    };
+    const poll = async () => {
+      if (polling || connection !== selected || port !== selectedPort) return;
       polling = true;
       try {
         const { command } = await rpc("poll", { ready: !busy });
@@ -132,11 +139,18 @@ async function connect(tabId) {
           executeCommand(command, { invoke, rpc, connected: () => connection === selected })
             .then(result => rpc("result", { command_id: command.id, result }))
             .catch(error => { lastError = String(error.message || error); })
-            .finally(() => { busy = false; });
+            .finally(() => { busy = false; schedulePoll(0); });
         }
       } catch (error) { disconnect(String(error.message || error)); }
-      finally { polling = false; }
-    }, 1000);
+      finally {
+        polling = false;
+        if (connection === selected && port === selectedPort)
+          schedulePoll(nextPollDelay(busy));
+      }
+    };
+    // Verify the whole connection and command path immediately. The previous
+    // fixed interval left every successful connect looking idle for one second.
+    await poll();
   } catch (error) { disconnect(String(error.message || error)); throw error; }
 }
 

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "SmartMail · 163 邮箱连接",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "连接选定的 163 邮箱标签页，为 SmartMail 提供邮箱观察、已确认发送、原生定时、取消和撤回操作。",
   "minimum_chrome_version": "106",
   "permissions": ["nativeMessaging", "scripting", "activeTab"],

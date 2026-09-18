@@ -5,6 +5,8 @@ document.getElementById("extension-id").textContent = chrome.runtime.id;
 
 async function update(type) {
   connect.disabled = disconnect.disabled = true;
+  if (type === "connect") status.textContent = "正在识别邮箱并连接本机桥接…";
+  if (type === "disconnect") status.textContent = "正在断开连接…";
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     const result = await chrome.runtime.sendMessage({ type, tabId: tab?.id });
