@@ -30,7 +30,11 @@ from smartmail.recognition import (
     TRACKING_SHEET,
     UNKNOWN,
     UNRELATED,
+    data_field_hints,
+    detect_delimiter,
     detect_relations,
+    normalize_header,
+    profile_column,
     recognize_bytes,
     recognize_collection,
     recognize_file,
@@ -83,14 +87,29 @@ def workbook_file(directory, name, sheets):
     return path
 
 
-def csv_bytes(rows):
+def csv_bytes(rows, delimiter=","):
     import io
     buffer = io.StringIO()
     import csv as csv_module
-    writer = csv_module.writer(buffer)
+    writer = csv_module.writer(buffer, delimiter=delimiter)
     for row in rows:
         writer.writerow(row)
     return buffer.getvalue().encode("utf-8-sig")
+
+
+def merged_workbook_file(directory, name, title, rows, merges):
+    """A workbook whose listed column ranges are merged vertically."""
+    path = Path(directory) / name
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = title
+    for row in rows:
+        worksheet.append(row)
+    for first, last in merges:
+        worksheet.merge_cells(f"{first}:{last}")
+    workbook.save(path)
+    workbook.close()
+    return path
 
 
 # Shared synthetic letter content: salutation, goodwill opener, explicit
@@ -398,6 +417,91 @@ class WorkbookRecognitionTests(unittest.TestCase):
         result = recognize_file(path)
         self.assertEqual(result["type"], SUPERVISOR_MASTER)
 
+    def test_merged_institution_reaches_every_supervisor_row(self):
+        # One university cell merged across its three supervisors: the value
+        # lives in the top-left cell only, so the reader sees two blanks.
+        path = merged_workbook_file(
+            self.directory, "merged.xlsx", "名单",
+            [["大学", "导师", "邮箱"],
+             ["A 大学", "张三", "a@example.edu"],
+             ["B 大学", "李四", "b@example.edu"],
+             [None, "王五", "c@example.edu"],
+             [None, "赵六", "d@example.edu"]],
+            [("A3", "A5")])
+        result = recognize_file(path)
+        self.assertEqual(result["type"], SUPERVISOR_MASTER)
+        self.assertEqual(result["identities"]["row_count"], 4)
+        self.assertEqual(result["identities"]["email_count"], 4)
+
+    def test_decorated_and_english_headers_are_recognized(self):
+        path = workbook_file(self.directory, "roster.xlsx", [(
+            "Sheet1", [
+                ["Professor", "Affiliation", "E-mail Address", "Homepage"],
+                ["Alex Green", "Example University", "alex@example.edu",
+                 "https://example.edu/alex"],
+                ["Blair Blue", "Other University", "blair@example.edu",
+                 "https://example.edu/blair"],
+            ])])
+        result = recognize_file(path)
+        self.assertEqual(result["type"], SUPERVISOR_MASTER)
+        self.assertEqual(result["confidence"], "high")
+
+    def test_header_row_below_a_banner_and_preamble_is_found(self):
+        path = workbook_file(self.directory, "deep.xlsx", [(
+            "Sheet1", [
+                ["2027 导师联系总表"],
+                [],
+                [],
+                ["备注：仅第一轮联系"],
+                ["大学", "导师", "邮箱", "研究方向"],
+                ["Example University", "Dr Alex Green", "alex@example.edu",
+                 "computational linguistics"],
+                ["Other University", "Dr Blair Blue", "blair@example.edu",
+                 "psycholinguistics"],
+            ])])
+        result = recognize_file(path)
+        self.assertEqual(result["type"], SUPERVISOR_MASTER)
+        self.assertEqual(result["evidence"]["sheets"][0]["header_row"], 5)
+        self.assertEqual(result["identities"]["row_count"], 2)
+
+    def test_institution_and_address_roster_without_names_is_reported(self):
+        path = workbook_file(self.directory, "contacts.xlsx", [(
+            "Sheet1", [
+                ["院校", "联系邮箱", "主页"],
+                ["Example University", "grad@example.edu", "https://example.edu/grad"],
+                ["Other University", "admissions@example.edu", "https://example.edu/ad"],
+            ])])
+        result = recognize_file(path)
+        self.assertEqual(result["type"], SUPERVISOR_MASTER)
+        self.assertTrue(any("no supervisor column" in reason
+                            for reason in result["reasons"]))
+        self.assertTrue(any("No supervisor/name column" in caution
+                            for caution in result["cautions"]))
+
+    def test_address_column_without_addresses_is_cautioned(self):
+        path = workbook_file(self.directory, "unfilled.xlsx", [(
+            "Sheet1", [
+                ["大学", "导师", "邮箱"],
+                ["Example University", "Dr Alex Green", "【AI填写】公开邮箱"],
+                ["Other University", "Dr Blair Blue", "Need Verification"],
+            ])])
+        result = recognize_file(path)
+        self.assertTrue(any("well-formed addresses" in caution
+                            for caution in result["cautions"]))
+
+    def test_unlabelled_address_column_is_reported_not_guessed(self):
+        path = workbook_file(self.directory, "odd.xlsx", [(
+            "Sheet1", [
+                ["序号", "姓名", "备注"],
+                ["1", "Alex Green", "alex@example.edu"],
+                ["2", "Blair Blue", "blair@example.edu"],
+            ])])
+        result = recognize_file(path)
+        self.assertEqual(result["type"], UNKNOWN)
+        columns = result["evidence"]["sheets"][0]["unlabelled_columns"]
+        self.assertTrue(any(item["field"] == "address" for item in columns))
+        self.assertTrue(any("no header" in caution for caution in result["cautions"]))
+
 
 class BulkImportCsvTests(unittest.TestCase):
     def test_outgoing_envelope_rows_are_batch_import(self):
@@ -434,6 +538,87 @@ class BulkImportCsvTests(unittest.TestCase):
         ]
         result = recognize_bytes("records.csv", csv_bytes(rows))
         self.assertNotEqual(result["type"], BULK_IMPORT)
+
+
+class DelimitedTextTests(unittest.TestCase):
+    """Extensions and separators a .csv-only reader could not handle."""
+
+    def _batch_rows(self):
+        return [
+            ["编号", "收件人", "主题", "正文", "附件", "定时时间"],
+            ["001", "a@example.edu", "Subject A",
+             "Dear Prof. A,\n\nI hope this email finds you well. Long letter body "
+             "with purpose and attachment mention.\n\nYours sincerely,\nStudent",
+             "Student-CV.pdf", "2026-08-27 07:30"],
+            ["002", "b@example.edu", "Subject B",
+             "Dear Prof. B,\n\nAnother complete personalized letter body of meaningful "
+             "length for the second supervisor here.\n\nYours sincerely,\nStudent",
+             "Student-CV.pdf", "2026-08-28 07:30"],
+            ["003", "c@example.edu", "Subject C",
+             "Dear Prof. C,\n\nThe third complete personalized letter body also carries "
+             "enough discourse to be a full message.\n\nYours sincerely,\nStudent",
+             "Student-CV.pdf", "2026-08-29 07:30"],
+        ]
+
+    def test_semicolon_separated_batch_is_recognized(self):
+        result = recognize_bytes("batch.csv",
+                                 csv_bytes(self._batch_rows(), delimiter=";"))
+        self.assertEqual(result["type"], BULK_IMPORT)
+        self.assertEqual(result["identities"]["row_count"], 3)
+        self.assertEqual(result["identities"]["recipient_count"], 3)
+        self.assertEqual(result["evidence"]["delimiter"], ";")
+
+    def test_tab_separated_batch_is_recognized(self):
+        result = recognize_bytes("batch.tsv",
+                                 csv_bytes(self._batch_rows(), delimiter="\t"))
+        self.assertEqual(result["type"], BULK_IMPORT)
+        self.assertEqual(result["identities"]["row_count"], 3)
+
+    def test_plain_text_that_is_not_a_table_stays_unknown(self):
+        result = recognize_bytes("notes.txt", "第一封邮件\n第二封邮件\n".encode("utf-8"))
+        self.assertEqual(result["type"], UNKNOWN)
+        self.assertFalse(result["actionable"])
+        self.assertTrue(any("single-column" in caution for caution in result["cautions"]))
+
+    def test_gb18030_encoded_batch_is_decoded(self):
+        result = recognize_bytes("batch.csv",
+                                 csv_bytes(self._batch_rows()).decode("utf-8")
+                                 .encode("gb18030"))
+        self.assertEqual(result["type"], BULK_IMPORT)
+
+    def test_delimiter_is_chosen_from_column_shape_not_character_counts(self):
+        # Every body carries commas; the file is semicolon-separated.
+        text = csv_bytes(self._batch_rows(), delimiter=";").decode("utf-8-sig")
+        self.assertEqual(detect_delimiter(text), ";")
+        self.assertEqual(detect_delimiter("a\tb\tc\nd\te\tf"), "\t")
+        self.assertEqual(detect_delimiter("编号,收件人,主题\n1,a@x.edu,s"), ",")
+
+
+class ColumnProfileTests(unittest.TestCase):
+    def test_profile_measures_the_value_shape_of_a_column(self):
+        profile = profile_column(0, "邮箱", ["a@example.edu", "b@example.edu", "待补充"])
+        self.assertEqual(profile.filled, 3)
+        self.assertAlmostEqual(profile.email_ratio, 2 / 3)
+        self.assertEqual(profile.unique_ratio, 1.0)
+
+    def test_empty_column_profile_is_safe(self):
+        profile = profile_column(0, "", [])
+        self.assertEqual(profile.filled, 0)
+        self.assertEqual(data_field_hints(profile), [])
+
+    def test_hints_name_the_field_the_values_support(self):
+        addresses = profile_column(0, "", ["a@example.edu", "b@example.edu"])
+        self.assertEqual(data_field_hints(addresses)[0][0], "address")
+        names = profile_column(1, "", ["Student-CV.pdf", "Transcript.pdf"])
+        self.assertEqual(data_field_hints(names)[0][0], "attachment")
+        dates = profile_column(2, "", ["2026-08-27", "2026-08-28"])
+        self.assertEqual(data_field_hints(dates)[0][0], "schedule")
+
+    def test_normalization_keeps_compound_labels_distinct(self):
+        self.assertEqual(normalize_header("邮箱 📮"), normalize_header("邮箱"))
+        self.assertEqual(normalize_header("E-mail Address"), normalize_header("emailaddress"))
+        self.assertNotEqual(normalize_header("导师筛选"), normalize_header("导师"))
+        self.assertNotEqual(normalize_header("所属院校"), normalize_header("院校"))
 
 
 class RelationTests(unittest.TestCase):

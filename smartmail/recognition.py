@@ -44,11 +44,14 @@ rule, not a new file-name branch.
 
 import csv
 import hashlib
+import posixpath
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from io import BytesIO, StringIO
 from pathlib import Path, PurePosixPath
+from xml.etree import ElementTree
 from zipfile import BadZipFile, ZipFile
 
 from openpyxl import load_workbook
@@ -261,34 +264,100 @@ PHASE_MARKER_RE = re.compile(r"^[◆◇※★]")
 LOG_NAV_MARKERS = ("📌", "👤", "总览", "维护", "日志", "打开邮件", "打开学生页", "打开主页")
 LOG_CATALOGUE_LABELS = ("导师", "学校", "邮件", "作品", "链接", "邮件数", "定位")
 
-# Workbook header semantic fields.  Exact, case-folded membership: compound
-# labels such as 导师筛选 ("supervisor screening", a status column) must not
-# match 导师 (a person column).
-MASTER_INSTITUTION = {"大学", "学校", "院校", "institution", "university", "school",
-                      "university name", "school name", "university/institution"}
-MASTER_SUPERVISOR = {"导师", "导师姓名", "supervisor", "supervisor name", "professor",
-                     "advisor", "supervisor full name", "name"}
-MASTER_ADDRESS = {"邮箱📮", "邮箱", "电子邮箱", "email", "e-mail", "email address",
-                  "e-mail address", "contact email", "mail"}
-PROGRAM_FIELDS = {
+def normalize_header(value: str) -> str:
+    """Reduce a header cell to the letters and digits that carry its meaning.
+
+    Decoration is pervasive in real workbooks -- "邮箱📮", "E-mail Address",
+    "Send At", "收件人（必填）" -- and a plain case-folded comparison misses all
+    of it.  Normalization folds compatibility forms, drops punctuation,
+    symbols, marks and separators, and keeps letters and digits only, so one
+    written label maps onto one comparison key.
+
+    Membership stays *exact* after normalization: 导师筛选 ("supervisor
+    screening", a status column) must still never match 导师 (a person column).
+    """
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(char for char in text
+                   if unicodedata.category(char)[0] in ("L", "N"))
+
+
+def _aliases(*labels: str) -> frozenset[str]:
+    return frozenset(normalize_header(label) for label in labels)
+
+
+# Workbook header semantic fields, compared with ``normalize_header``.
+# Exact membership: compound labels such as 导师筛选 ("supervisor screening",
+# a status column) must not match 导师 (a person column).
+MASTER_INSTITUTION = _aliases(
+    "大学", "学校", "院校", "高校", "机构", "单位", "所属学校", "所属院校",
+    "导师学校", "教授学校", "学校名称", "院校名称", "机构名称",
+    "institution", "university", "school", "college", "affiliation",
+    "organisation", "organization", "university name", "school name",
+    "institution name", "university/institution",
+)
+MASTER_SUPERVISOR = _aliases(
+    "导师", "导师姓名", "教授", "教授姓名", "老师", "姓名", "联系人", "联系人姓名",
+    "supervisor", "supervisor name", "supervisor full name", "professor",
+    "professor name", "advisor", "adviser", "faculty", "name", "contact name",
+)
+MASTER_ADDRESS = _aliases(
+    "邮箱📮", "邮箱", "电子邮箱", "邮箱地址", "邮件地址", "联系邮箱", "导师邮箱",
+    "教授邮箱", "email", "e-mail", "email address", "e-mail address",
+    "contact email", "mail",
+)
+# Corroborating roster columns: neither identifies a person by itself, but
+# together they confirm that a row describes a scholarly contact.
+MASTER_PROFILE = _aliases(
+    "个人主页", "主页", "导师链接", "教授链接", "链接", "网址",
+    "profile", "profile url", "homepage", "url", "website",
+)
+MASTER_RESEARCH = _aliases(
+    "研究方向", "研究领域", "研究兴趣", "方向", "领域",
+    "research interest", "research interests", "research area",
+    "research areas", "research focus", "field",
+)
+PROGRAM_FIELDS = _aliases(
     "项目名称", "学位类型", "学制", "培养模式", "英语要求", "学术要求", "项目方向简介",
     "截止说明", "截止日期", "项目主页", "其他材料/前置", "国家/地区", "项目方向",
+    "开学时间", "学费",
     "program", "program name", "degree", "degree type", "duration",
     "english requirement", "language requirement", "deadline", "application deadline",
-    "entry requirement",
-}
-WORKFLOW_FIELDS = {
+    "entry requirement", "tuition",
+)
+# Deliberately narrow: these labels veto a roster reading, so a generic column
+# such as 备注 must never be recruited into the workflow schema.
+WORKFLOW_FIELDS = _aliases(
     "套磁", "跟进", "状态", "导师筛选", "筛选", "优先级", "邮件状态", "回复状态",
-    "是否回复", "已发送", "发送状态", "下一步", "outreach priority", "priority",
-    "priority label", "status", "follow up", "follow-up", "next step", "replied",
-}
-BULK_RECIPIENT = {"收件人", "收件邮箱", "recipient", "recipient email", "to", "email"}
-BULK_SUBJECT = {"主题", "邮件主题", "subject", "subject line", "title"}
-BULK_BODY = {"正文", "邮件正文", "body", "content", "message", "message body"}
-BULK_SCHEDULE = {"定时时间", "发送时间", "计划发送时间", "scheduled time", "scheduled at",
-                 "send time", "planned send time"}
-BULK_ATTACHMENT = {"附件", "附件名", "attachment", "attachments", "attachment name"}
-BULK_ID = {"编号", "序号", "id", "no", "#", "number"}
+    "是否回复", "已发送", "发送状态", "下一步", "联系状态", "联系批次", "发送批次",
+    "outreach priority", "priority", "priority label", "status", "contact status",
+    "follow up", "follow-up", "next step", "replied",
+)
+BULK_RECIPIENT = _aliases(
+    "收件人", "收件邮箱", "收件人邮箱", "收件人邮箱地址", "邮箱地址", "邮件地址",
+    "recipient", "recipients", "recipient email", "to", "to email", "email",
+)
+BULK_SUBJECT = _aliases(
+    "主题", "邮件主题", "邮件标题", "标题", "subject", "subject line",
+    "email subject", "title",
+)
+BULK_BODY = _aliases(
+    "正文", "邮件正文", "邮件内容", "内容", "邮件文本", "body", "content",
+    "message", "message body", "email body", "text",
+)
+BULK_SCHEDULE = _aliases(
+    "定时时间", "定时", "定时发送时间", "定时日期", "预约发送时间", "预约时间",
+    "发送时间", "发送日期", "计划发送时间", "计划发送日期", "预定发送时间", "投递时间",
+    "schedule", "schedule at", "scheduled at", "scheduled time", "scheduled date",
+    "send at", "send time", "send date", "planned send time", "delivery time",
+)
+BULK_ATTACHMENT = _aliases(
+    "附件", "附件名", "附件名称", "附件路径", "附件文件", "材料", "文件",
+    "attachment", "attachments", "attachment name", "file", "files",
+    "filename", "filepath", "documents",
+)
+BULK_ID = _aliases(
+    "编号", "序号", "任务编号", "邮件编号", "id", "no", "#", "number", "rowid",
+)
 
 PLACEHOLDER_RE = re.compile(r"【AI[^】]*】|\[AI[^\]]*\]|Need Verification|Replace the placeholders", re.I)
 INSTRUCTION_SHEET_RE = re.compile(r"(?:指令|说明|instruction|guide|template|模板)", re.I)
@@ -309,8 +378,142 @@ EDUCATION_DOMAIN_RE = re.compile(
 SCHEDULE_VALUE_RE = re.compile(r"20\d{2}[-/]\d{1,2}[-/]\d{1,2}[\s T]\d{1,2}:\d{2}")
 ATTACHMENT_VALUE_RE = re.compile(r"^[\w][\w\-. ()（）]+\.(?:pdf|docx?|xlsx?|zip|png|jpg|jpeg)$", re.I)
 
+# A date-only column still carries a schedule; a full timestamp is the stricter
+# form required before a row may actually be sent.
+DATE_VALUE_RE = re.compile(
+    r"20\d{2}\s*[-/.年]\s*\d{1,2}\s*[-/.月]\s*\d{1,2}"
+    r"|^\d{1,2}\s*[-/]\s*\d{1,2}\s*[-/]\s*20\d{2}$")
+LIST_VALUE_RE = re.compile(r"[;；|、,，]")
+
 MAX_SHEET_ROWS = 5000
 MAX_CELL_CHARS = 500
+#: Rows of each column inspected when profiling its values.
+PROFILE_SAMPLE_ROWS = 80
+#: Rows examined for a header row.  A banner title, a merged caption and blank
+#: separator rows routinely push the real header below the first five rows.
+HEADER_SCAN_ROWS = 12
+
+
+# ---------------------------------------------------------------------------
+# Column value profiling
+# ---------------------------------------------------------------------------
+#
+# A header label is one witness; the values beneath it are another.  Profiling
+# measures what a column actually holds so a labelled column can be confirmed
+# ("the 邮箱 column really contains addresses") and an unlabelled one can be
+# reported ("column D holds eight addresses but nothing names it").  Data
+# shape alone never invents a field: it corroborates, contradicts or reports.
+
+@dataclass
+class _ColumnProfile:
+    index: int
+    header: str
+    filled: int
+    average_length: float
+    email_ratio: float
+    date_ratio: float
+    filename_ratio: float
+    unique_ratio: float
+    short_ratio: float
+    multiline_ratio: float
+    delimiter_ratio: float
+
+
+def profile_column(index: int, header: str, values) -> _ColumnProfile:
+    """Measure the value shape of one column from a bounded sample."""
+    sample = [str(value).strip() for value in values if value is not None and str(value).strip()]
+    sample = sample[:PROFILE_SAMPLE_ROWS]
+    if not sample:
+        return _ColumnProfile(index, header, 0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+    lengths = [len(text) for text in sample]
+    total = len(sample)
+    return _ColumnProfile(
+        index=index, header=header, filled=total,
+        average_length=sum(lengths) / total,
+        email_ratio=sum(1 for text in sample if email_address(text)) / total,
+        date_ratio=sum(1 for text in sample if DATE_VALUE_RE.search(text)) / total,
+        filename_ratio=sum(1 for text in sample if ATTACHMENT_VALUE_RE.match(text)) / total,
+        unique_ratio=len(set(sample)) / total,
+        short_ratio=sum(1 for length in lengths if length <= 24) / total,
+        multiline_ratio=sum(1 for text in sample if "\n" in text) / total,
+        delimiter_ratio=sum(1 for text in sample if LIST_VALUE_RE.search(text)) / total,
+    )
+
+
+#: How strongly a column's values support the semantic its header claims.
+#: Institution and supervisor columns have no reliable value shape, so they
+#: are judged by their label alone.
+FIELD_VALUE_EXPECTATIONS = {
+    "address": lambda profile: profile.email_ratio,
+    "recipient": lambda profile: profile.email_ratio,
+    "schedule": lambda profile: profile.date_ratio,
+    "attachment": lambda profile: profile.filename_ratio,
+    "body": lambda profile: min(1.0, profile.average_length / 120),
+}
+CONSISTENT_VALUE_RATIO = 0.5
+
+#: Semantics whose presence decides whether a sheet is a roster or a batch.
+CORE_FIELDS = ("institution", "supervisor", "address", "recipient",
+               "subject", "body", "schedule", "attachment")
+
+#: Header semantic -> alias set, in the order a column is claimed.  One column
+#: may legitimately satisfy two readings ("邮箱" is both a master address and
+#: a bulk recipient); the semantic that needs it decides how it is used.
+SEMANTIC_ALIASES = (
+    ("institution", MASTER_INSTITUTION), ("supervisor", MASTER_SUPERVISOR),
+    ("address", MASTER_ADDRESS), ("profile", MASTER_PROFILE),
+    ("research", MASTER_RESEARCH), ("program", PROGRAM_FIELDS),
+    ("workflow", WORKFLOW_FIELDS), ("recipient", BULK_RECIPIENT),
+    ("subject", BULK_SUBJECT), ("body", BULK_BODY),
+    ("schedule", BULK_SCHEDULE), ("attachment", BULK_ATTACHMENT),
+    ("id", BULK_ID),
+)
+
+
+def semantic_fields(header: dict[str, str]) -> dict[str, str]:
+    """Map each semantic onto the raw label of the leftmost column claiming it."""
+    fields: dict[str, str] = {}
+    for semantic, aliases in SEMANTIC_ALIASES:
+        for key, raw in header.items():
+            if key in aliases:
+                fields[semantic] = raw
+                break
+    return fields
+
+
+def field_columns(header: dict[str, str], raws: list[str]) -> dict[str, int]:
+    """Map each semantic onto the column index holding its claimed label."""
+    columns: dict[str, int] = {}
+    for semantic, label in semantic_fields(header).items():
+        for index, raw in enumerate(raws):
+            if raw == label:
+                columns[semantic] = index
+                break
+    return columns
+
+
+def data_field_hints(profile: _ColumnProfile) -> list[tuple[str, str]]:
+    """(semantic, reason) pairs a column's own values support, strongest first."""
+    if not profile.filled:
+        return []
+    hints: list[tuple[str, str]] = []
+    if profile.email_ratio >= 0.55:
+        hints.append(("address", f"{profile.email_ratio:.0%} of values are well-formed addresses"))
+    if profile.date_ratio >= 0.55:
+        hints.append(("schedule", f"{profile.date_ratio:.0%} of values parse as a date"))
+    if profile.filename_ratio >= 0.5:
+        hints.append(("attachment", f"{profile.filename_ratio:.0%} of values name a document file"))
+    if profile.average_length >= 120:
+        hints.append(("body", f"values average {profile.average_length:.0f} characters"))
+    elif profile.average_length >= 45 and profile.multiline_ratio >= 0.15:
+        hints.append(("body", "values are multi-line prose of message length"))
+    if (profile.unique_ratio > 0.85 and profile.short_ratio > 0.8
+            and profile.email_ratio < 0.2 and profile.date_ratio < 0.2):
+        hints.append(("id", "short unique values repeat no row"))
+    if (profile.delimiter_ratio >= 0.45 and profile.average_length <= 80
+            and profile.email_ratio < 0.2):
+        hints.append(("tags", "values are short delimited lists"))
+    return hints
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +648,9 @@ def recognize_bytes(name: str, data: bytes) -> dict:
         return _recognize_xlsx(name, data, digest)
     if kind == "zip":
         return _recognize_zip(name, data, digest)
-    if suffix == ".csv":
-        return _recognize_csv(name, data, digest)
+    if suffix in DELIMITED_SUFFIXES:
+        return _recognize_delimited(name, data, digest, suffix.lstrip("."),
+                                    DELIMITED_SUFFIXES[suffix])
     return _result(
         name, "unsupported", UNKNOWN, LOW, [],
         [f"Unsupported container '{suffix or 'no extension'}'."],
@@ -982,6 +1186,10 @@ class _SheetFeatures:
     rows: list[list[str]]
     header_row: int
     fields: dict[str, str]          # unique semantic field -> raw label
+    field_columns: dict[str, int]   # semantic field -> column index
+    profiles: list[_ColumnProfile]  # value shape of every column
+    consistent: dict[str, float]    # semantic field -> value-shape agreement
+    unlabelled: list[dict]          # columns carrying a field no header claimed
     program_labels: list[str]       # all program-schema header labels
     workflow_labels: list[str]      # all workflow-schema header labels
     data_rows: int
@@ -991,8 +1199,102 @@ class _SheetFeatures:
     instruction_text: bool
     banner_title: bool
 
+    def profile_for(self, semantic: str) -> _ColumnProfile | None:
+        index = self.field_columns.get(semantic)
+        if index is None or index >= len(self.profiles):
+            return None
+        return self.profiles[index]
+
+
+_SPREADSHEETML_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_RELATIONSHIP_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+
+def _column_index(reference: str) -> int:
+    """'C7' -> 2.  Returns -1 when the reference carries no column."""
+    letters = re.match(r"[A-Za-z]+", reference or "")
+    if not letters:
+        return -1
+    index = 0
+    for char in letters.group(0).upper():
+        index = index * 26 + ord(char) - 64
+    return index - 1
+
+
+def _resolve_part(base: str, target: str) -> str:
+    if target.startswith("/"):
+        return target.lstrip("/")
+    return posixpath.normpath(posixpath.join(posixpath.dirname(base), target)).replace("\\", "/")
+
+
+def _vertical_merge_ranges(data: bytes) -> dict[str, list[tuple[int, int, int]]]:
+    """Per-sheet (column, first_row, last_row) triples of vertical merges.
+
+    A merged range keeps its value in the top-left cell only, so a university
+    merged across its supervisors reaches the reader as one filled cell and a
+    column of blanks.  Reading the ranges back is positive evidence from the
+    workbook itself; guessing a blank's value would not be.  Horizontal
+    header merges are left alone -- they are presentation, not hierarchy.
+    """
+    ranges: dict[str, list[tuple[int, int, int]]] = {}
+    try:
+        with ZipFile(BytesIO(data)) as archive:
+            names = set(archive.namelist())
+            if "xl/workbook.xml" not in names or "xl/_rels/workbook.xml.rels" not in names:
+                return ranges
+            workbook = ElementTree.fromstring(archive.read("xl/workbook.xml"))
+            rels = ElementTree.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            targets = {rel.get("Id"): rel.get("Target") for rel in rels}
+            for sheet in workbook.iter(f"{{{_SPREADSHEETML_NS}}}sheet"):
+                title = sheet.get("name") or ""
+                target = targets.get(sheet.get(f"{{{_RELATIONSHIP_NS}}}id") or "")
+                if not target:
+                    continue
+                path = _resolve_part("xl/workbook.xml", target)
+                if path not in names:
+                    continue
+                found: list[tuple[int, int, int]] = []
+                for merge in ElementTree.fromstring(archive.read(path)).iter(
+                        f"{{{_SPREADSHEETML_NS}}}mergeCell"):
+                    parts = (merge.get("ref") or "").split(":")
+                    if len(parts) != 2:
+                        continue
+                    start, end = (re.match(r"^([A-Za-z]+)(\d+)$", part) for part in parts)
+                    if not start or not end:
+                        continue
+                    first_column, last_column = _column_index(start.group(1)), _column_index(end.group(1))
+                    if first_column < 0 or first_column != last_column:
+                        continue
+                    first_row, last_row = int(start.group(2)), int(end.group(2))
+                    if last_row > first_row:
+                        found.append((first_column, first_row, last_row))
+                if found:
+                    ranges[title] = found
+    except (BadZipFile, OSError, KeyError, ElementTree.ParseError, ValueError):
+        return ranges
+    return ranges
+
+
+def _expand_vertical_merges(rows: list[list[str]],
+                            ranges) -> None:
+    """Carry a merged value down its range into the blanks it covers."""
+    for column, first_row, last_row in ranges or ():
+        anchor = first_row - 1
+        if column < 0 or anchor >= len(rows):
+            continue
+        value = rows[anchor][column] if column < len(rows[anchor]) else ""
+        if not value:
+            continue
+        for index in range(first_row, min(last_row, len(rows))):
+            row = rows[index]
+            if column >= len(row):
+                row.extend([""] * (column - len(row) + 1))
+            if not row[column]:
+                row[column] = value
+
 
 def _normalized_rows(data: bytes):
+    merges = _vertical_merge_ranges(data)
     workbook = load_workbook(BytesIO(data), read_only=True, data_only=True)
     try:
         for worksheet in workbook.worksheets:
@@ -1003,6 +1305,7 @@ def _normalized_rows(data: bytes):
                 rows.append(cells)
                 if len(rows) >= MAX_SHEET_ROWS:
                     break
+            _expand_vertical_merges(rows, merges.get(worksheet.title))
             yield worksheet.title, rows
     finally:
         workbook.close()
@@ -1018,33 +1321,98 @@ def _field_hits(labels: set[str], *alias_sets: set[str]) -> dict[str, str]:
     return hits
 
 
+def _label_like_row(row: list[str]) -> bool:
+    """A header row holds short labels; data rows hold addresses, dates and URLs."""
+    cells = [cell.strip() for cell in row if cell and cell.strip()]
+    if not cells:
+        return False
+    return all(len(cell) <= 60 and not EMAIL_RE.search(cell) and not URL_RE.search(cell)
+               and not DATE_VALUE_RE.search(cell) for cell in cells)
+
+
+def _column_profiles(rows: list[list[str]], start: int, header_row: list[str]):
+    """Profile every column of the sample data window below a header row."""
+    window = rows[start:start + PROFILE_SAMPLE_ROWS]
+    width = max(len(header_row), *(len(row) for row in window), 0) if window else len(header_row)
+    return [
+        profile_column(
+            index,
+            header_row[index].strip() if index < len(header_row) else "",
+            [row[index] if index < len(row) else "" for row in window])
+        for index in range(width)]
+
+
+def _consistent_fields(fields: dict[str, str], columns: dict[str, int],
+                       profiles: list[_ColumnProfile]) -> dict[str, float]:
+    """Per claimed field, how far the column's own values support the claim."""
+    consistent: dict[str, float] = {}
+    for semantic, measure in FIELD_VALUE_EXPECTATIONS.items():
+        index = columns.get(semantic)
+        if semantic not in fields or index is None or index >= len(profiles):
+            continue
+        consistent[semantic] = measure(profiles[index])
+    return consistent
+
+
+def _header_row_score(fields: dict[str, str], consistent: dict[str, float],
+                      index: int) -> int:
+    """Score one candidate header row: breadth, core fields, value corroboration.
+
+    The row's own depth subtracts a small amount, so an early row wins a tie
+    and a data row full of incidental label words cannot outvote a real header
+    that sits above it.
+    """
+    core = sum(1 for key in CORE_FIELDS if key in fields)
+    confirmed = sum(1 for ratio in consistent.values() if ratio >= CONSISTENT_VALUE_RATIO)
+    return len(fields) * 3 + core * 3 + confirmed * 2 - index
+
+
+def _unlabelled_columns(fields: dict[str, str], profiles: list[_ColumnProfile]) -> list[dict]:
+    """Columns whose values clearly carry an outreach field no header claimed."""
+    reported = []
+    for profile in profiles:
+        if profile.header and normalize_header(profile.header) in {
+                normalize_header(label) for label in fields.values()}:
+            continue
+        for semantic, reason in data_field_hints(profile)[:1]:
+            reported.append({"column": profile.index, "field": semantic, "reason": reason,
+                             "header": profile.header, "filled": profile.filled})
+    return reported
+
+
 def _extract_sheet(title: str, rows: list[list[str]]) -> _SheetFeatures:
-    best_row, best_labels = -1, set()
-    for index, row in enumerate(rows[:5]):
-        labels = {cell.casefold() for cell in row if cell}
-        recognized = labels & (
-            MASTER_INSTITUTION | MASTER_SUPERVISOR | MASTER_ADDRESS
-            | PROGRAM_FIELDS | WORKFLOW_FIELDS | BULK_RECIPIENT | BULK_SUBJECT
-            | BULK_BODY | BULK_SCHEDULE | BULK_ATTACHMENT | BULK_ID)
-        if len(recognized) > len(best_labels):
-            best_row, best_labels = index, recognized
+    best_row, best_score = -1, 0
+    for index, row in enumerate(rows[:HEADER_SCAN_ROWS]):
+        if not _label_like_row(row):
+            continue
+        header = {normalize_header(cell): cell.strip() for cell in row if cell and cell.strip()}
+        if not header:
+            continue
+        fields = semantic_fields(header)
+        if not fields:
+            continue
+        raws = [cell.strip() for cell in row]
+        columns = field_columns(header, raws)
+        consistent = _consistent_fields(fields, columns, _column_profiles(rows, index + 1, raws))
+        score = _header_row_score(fields, consistent, index)
+        if score > best_score:
+            best_row, best_score = index, score
     fields: dict[str, str] = {}
+    columns: dict[str, int] = {}
+    program_labels: list[str] = []
+    workflow_labels: list[str] = []
     if best_row >= 0:
-        header = {cell.casefold(): cell for cell in rows[best_row] if cell}
-        for semantic, aliases in (
-            ("institution", MASTER_INSTITUTION), ("supervisor", MASTER_SUPERVISOR),
-            ("address", MASTER_ADDRESS), ("program", PROGRAM_FIELDS),
-            ("workflow", WORKFLOW_FIELDS), ("recipient", BULK_RECIPIENT),
-            ("subject", BULK_SUBJECT), ("body", BULK_BODY),
-            ("schedule", BULK_SCHEDULE), ("attachment", BULK_ATTACHMENT),
-            ("id", BULK_ID),
-        ):
-            for key, raw in header.items():
-                if key in aliases:
-                    fields[semantic] = raw
-                    break
-    program_labels = sorted(header[key] for key in best_labels & PROGRAM_FIELDS) if best_row >= 0 else []
-    workflow_labels = sorted(header[key] for key in best_labels & WORKFLOW_FIELDS) if best_row >= 0 else []
+        row = rows[best_row]
+        header = {normalize_header(cell): cell.strip() for cell in row if cell and cell.strip()}
+        raws = [cell.strip() for cell in row]
+        fields = semantic_fields(header)
+        columns = field_columns(header, raws)
+        program_labels = [raws[index] for index, raw in enumerate(raws)
+                          if normalize_header(raw) in PROGRAM_FIELDS]
+        workflow_labels = [raws[index] for index, raw in enumerate(raws)
+                           if normalize_header(raw) in WORKFLOW_FIELDS]
+    profiles = _column_profiles(rows, best_row + 1,
+                                rows[best_row] if best_row >= 0 else [])
     body_rows = rows[best_row + 1:] if best_row >= 0 else []
     nonempty = [row for row in body_rows if any(row)]
     flat = [cell for row in nonempty for cell in row if cell]
@@ -1058,6 +1426,9 @@ def _extract_sheet(title: str, rows: list[list[str]]) -> _SheetFeatures:
         and not any(cell.strip() for cell in rows[1 if best_row > 1 else 0]))
     return _SheetFeatures(
         title=title, rows=rows, header_row=best_row, fields=fields,
+        field_columns=columns, profiles=profiles,
+        consistent=_consistent_fields(fields, columns, profiles),
+        unlabelled=_unlabelled_columns(fields, profiles),
         program_labels=program_labels, workflow_labels=workflow_labels,
         data_rows=len(nonempty), emails=emails, urls=urls,
         placeholders=placeholders, instruction_text=instruction_text,
@@ -1086,7 +1457,10 @@ def _recognize_xlsx(name, data, digest):
                     "data_rows": s.data_rows, "fields": s.fields,
                     "program_labels": s.program_labels, "workflow_labels": s.workflow_labels,
                     "emails": len(s.emails), "placeholders": s.placeholders,
-                    "banner_title": s.banner_title} for s in sheets],
+                    "banner_title": s.banner_title,
+                    "value_agreement": {key: round(ratio, 2)
+                                        for key, ratio in s.consistent.items()},
+                    "unlabelled_columns": s.unlabelled} for s in sheets],
         "total_emails": total_emails, "total_placeholder_cells": total_placeholders,
     }
     identities = {}
@@ -1101,14 +1475,35 @@ def _recognize_xlsx(name, data, digest):
             f"outgoing-mail envelope columns {sorted(bulk_sheet.fields)}", BULK_IMPORT, 3))
         candidate.signals.append(Signal(
             f"{bulk_sheet.data_rows} message rows under the envelope header", BULK_IMPORT, 2))
+        recipient = bulk_sheet.profile_for("recipient")
+        if recipient and recipient.filled:
+            if recipient.email_ratio >= CONSISTENT_VALUE_RATIO:
+                candidate.signals.append(Signal(
+                    f"Recipient column '{bulk_sheet.fields['recipient']}': {recipient.filled} rows, "
+                    f"{recipient.email_ratio:.0%} well-formed addresses", BULK_IMPORT))
+            else:
+                candidate.signals.append(Signal(
+                    f"Recipient column '{bulk_sheet.fields['recipient']}' holds only "
+                    f"{recipient.email_ratio:.0%} well-formed addresses "
+                    f"({recipient.filled} rows)", BULK_IMPORT, caution=True))
+        body = bulk_sheet.profile_for("body")
+        if body and body.filled and body.average_length < 45:
+            candidate.signals.append(Signal(
+                f"Body column '{bulk_sheet.fields['body']}' averages "
+                f"{body.average_length:.0f} characters: rows may be stubs rather than "
+                "complete messages", BULK_IMPORT, caution=True))
         candidates.append(candidate)
+
+    def _roster_allowed(sheet) -> bool:
+        return (total_placeholders == 0
+                and not any("program" in s.fields for s in sheets)
+                and not any("workflow" in s.fields for s in sheets)
+                and "subject" not in sheet.fields and "body" not in sheet.fields)
 
     master_sheet = next((s for s in sheets
                          if {"institution", "supervisor", "address"} <= set(s.fields)), None)
     if master_sheet and total_emails >= 1 and master_sheet.data_rows >= 1:
-        program_veto = sum(1 for s in sheets if "program" in s.fields)
-        workflow_veto = any("workflow" in s.fields for s in sheets)
-        if program_veto == 0 and not workflow_veto and total_placeholders == 0:
+        if _roster_allowed(master_sheet):
             master = _Candidate(SUPERVISOR_MASTER)
             master.signals.append(Signal(
                 f"Sheet '{master_sheet.title}' header row {master_sheet.header_row + 1} "
@@ -1119,13 +1514,47 @@ def _recognize_xlsx(name, data, digest):
             master.signals.append(Signal(
                 f"{master_sheet.data_rows} supervisor rows; {total_emails} well-formed "
                 "recipient addresses identify send targets", SUPERVISOR_MASTER, 2))
+            _apply_address_evidence(master, master_sheet, total_emails)
             if "profile" in master_sheet.fields:
                 master.signals.append(Signal("Supervisor profile/URL column corroborates the roster",
                                              SUPERVISOR_MASTER))
+            if "research" in master_sheet.fields:
+                master.signals.append(Signal(
+                    f"Research-interest column '{master_sheet.fields['research']}' "
+                    "corroborates the roster", SUPERVISOR_MASTER))
             candidates.append(master)
             identities = {"row_count": master_sheet.data_rows,
                            "email_count": total_emails,
                            "sheet": master_sheet.title}
+
+    # An institution/address roster with no person column still identifies
+    # contactable rows; it is reported with the missing name as a caution
+    # rather than silently demoted to unknown.
+    partial_sheet = next((s for s in sheets
+                          if {"institution", "address"} <= set(s.fields)
+                          and "supervisor" not in s.fields), None)
+    if partial_sheet and partial_sheet.data_rows >= 2 and _roster_allowed(partial_sheet):
+        address = partial_sheet.profile_for("address")
+        if address and address.filled >= 2 and address.email_ratio >= CONSISTENT_VALUE_RATIO:
+            partial = _Candidate(SUPERVISOR_MASTER)
+            partial.signals.append(Signal(
+                f"Sheet '{partial_sheet.title}' header row {partial_sheet.header_row + 1} has "
+                f"institution and address columns ({partial_sheet.fields['institution']!r}, "
+                f"{partial_sheet.fields['address']!r}) but no supervisor column",
+                SUPERVISOR_MASTER, 2))
+            partial.signals.append(Signal(
+                f"{partial_sheet.data_rows} rows of which {address.email_ratio:.0%} carry a "
+                "well-formed address, so each row names a contactable institution",
+                SUPERVISOR_MASTER, 2))
+            partial.signals.append(Signal(
+                "No supervisor/name column: rows identify institutions and addresses, "
+                "not named supervisors; resolve the addressee before creating tasks",
+                SUPERVISOR_MASTER, caution=True))
+            candidates.append(partial)
+            if not identities:
+                identities = {"row_count": partial_sheet.data_rows,
+                               "email_count": address.filled,
+                               "sheet": partial_sheet.title}
 
     workflow_sheets = [s for s in sheets if "workflow" in s.fields]
     if workflow_sheets or total_placeholders or instruction_sheet:
@@ -1175,10 +1604,35 @@ def _recognize_xlsx(name, data, digest):
         if unrelated:
             candidates.append(unrelated)
 
+    unknown_reason = ("Headers and rows match neither supervisor, workflow, program "
+                      "nor outgoing-mail schemas.")
+    unlabelled = [item for sheet in sheets for item in sheet.unlabelled
+                  if item["field"] in ("address", "body", "attachment")]
+    if unlabelled:
+        unknown_reason += (
+            f" {len(unlabelled)} column(s) hold values of an outreach field "
+            f"({', '.join(sorted({item['field'] for item in unlabelled}))}) but no header "
+            "row names them, so the row entity stays unresolved.")
     return _adjudicate(
         name, "xlsx", candidates, evidence, identities=identities, sha256=digest,
-        unknown_reason="Headers and rows match neither supervisor, workflow, program "
-                       "nor outgoing-mail schemas.")
+        unknown_reason=unknown_reason)
+
+
+def _apply_address_evidence(candidate: _Candidate, sheet: _SheetFeatures, total_emails: int) -> None:
+    """Confirm or contradict an address column from the values it actually holds."""
+    address = sheet.profile_for("address")
+    if address is None or not address.filled:
+        return
+    if address.email_ratio >= CONSISTENT_VALUE_RATIO:
+        candidate.signals.append(Signal(
+            f"Address column '{sheet.fields['address']}': {address.filled} rows, "
+            f"{address.email_ratio:.0%} well-formed addresses -- the values confirm the label",
+            SUPERVISOR_MASTER))
+    else:
+        candidate.signals.append(Signal(
+            f"Address column '{sheet.fields['address']}' holds only {address.email_ratio:.0%} "
+            f"well-formed addresses ({address.filled} rows of {sheet.data_rows}); unfilled or "
+            "placeholder rows cannot be addressed", SUPERVISOR_MASTER, caution=True))
 
 
 def _unrelated_workbook(sheets: list[_SheetFeatures]) -> _Candidate | None:
@@ -1224,36 +1678,110 @@ def _unrelated_workbook(sheets: list[_SheetFeatures]) -> _Candidate | None:
 
 
 # ---------------------------------------------------------------------------
-# CSV rules
+# Delimited text rules (CSV / TSV / PSV / plain text tables)
 # ---------------------------------------------------------------------------
 
-def _recognize_csv(name, data, digest):
-    text = _decode_text(data)
+DELIMITER_CHOICES = (",", "\t", ";", "|")
+DELIMITER_SCAN_LINES = 12
+#: Suffix -> preferred delimiter.  ``None`` means "sniff it": a file named
+#: ``.csv`` is as often semicolon-separated as comma-separated.
+DELIMITED_SUFFIXES = {".csv": None, ".tsv": "\t", ".psv": "|", ".txt": None}
+
+
+def detect_delimiter(text: str, preferred: str | None = None) -> str:
+    """Choose the delimiter the text actually uses, by parsing with each one.
+
+    Counting separator characters directly is fooled by a comma inside
+    "Smith, John" and by a quoted field carrying newlines.  Parsing a bounded
+    window with each candidate and scoring the *column shape* it produces is
+    not: the real delimiter is the one that yields several stable columns, so
+    it is rewarded for width, for how many rows it splits and for how little
+    the width varies.
+    """
+    if preferred:
+        return preferred
+    best, best_score = ",", -1.0
+    for delimiter in DELIMITER_CHOICES:
+        try:
+            rows = []
+            for row in csv.reader(StringIO(text), delimiter=delimiter):
+                if any(cell.strip() for cell in row):
+                    rows.append(row)
+                if len(rows) >= DELIMITER_SCAN_LINES:
+                    break
+        except csv.Error:
+            continue
+        widths = [len(row) for row in rows]
+        if len(widths) < 2 or max(widths) < 2:
+            continue
+        coverage = sum(1 for width in widths if width > 1) / len(widths)
+        consistency = 1 - (max(widths) - min(widths)) / max(1, max(widths))
+        score = sum(widths) + coverage * 20 + consistency * 12
+        if score > best_score:
+            best, best_score = delimiter, score
+    return best
+
+
+def _parse_delimited(text: str, delimiter: str):
     try:
-        rows = list(csv.reader(StringIO(text)))
+        return list(csv.reader(StringIO(text), delimiter=delimiter))
     except csv.Error as error:
-        return _unreadable(name, "csv", digest, str(error))
+        raise ValueError(str(error)) from error
+
+
+def _delimited_header_row(rows: list[list[str]]) -> int:
+    """The first row that carries real field labels, not a title banner."""
+    for index, row in enumerate(rows[:HEADER_SCAN_ROWS]):
+        header = {normalize_header(cell): cell.strip() for cell in row if cell and cell.strip()}
+        if not header:
+            continue
+        fields = semantic_fields(header)
+        if len(fields) >= 2 or (set(fields) & {"recipient", "subject", "body", "address"}):
+            return index
+    return 0 if rows else -1
+
+
+def _recognize_delimited(name, data, digest, fmt, preferred=None):
+    text = _decode_text(data)
+    delimiter = detect_delimiter(text, preferred)
+    try:
+        rows = _parse_delimited(text, delimiter)
+    except ValueError as error:
+        return _unreadable(name, fmt, digest, str(error))
     rows = [row for row in rows if any(cell.strip() for cell in row)]
     if len(rows) < 2:
-        return _result(name, "csv", UNKNOWN, LOW, [],
-                       ["CSV has fewer than a header plus one data row."],
-                       {"rows": len(rows)}, sha256=digest)
-    header = [cell.strip().casefold() for cell in rows[0]]
-    fields: dict[str, int] = {}
-    for semantic, aliases in (
-        ("recipient", BULK_RECIPIENT), ("subject", BULK_SUBJECT),
-        ("body", BULK_BODY), ("schedule", BULK_SCHEDULE),
-        ("attachment", BULK_ATTACHMENT), ("id", BULK_ID),
-    ):
-        for index, label in enumerate(header):
-            if label in aliases:
-                fields[semantic] = index
-                break
-    body_rows = rows[1:]
-    evidence = {"rows": len(body_rows), "columns": len(header),
-                "header": rows[0], "fields": fields}
+        return _result(name, fmt, UNKNOWN, LOW, [],
+                       ["Delimited text has fewer than a header plus one data row."],
+                       {"rows": len(rows), "delimiter": delimiter}, sha256=digest)
+    header_row = _delimited_header_row(rows)
+    raw_header = [cell.strip() for cell in rows[header_row]]
+    if not any(raw_header):
+        return _result(name, fmt, UNKNOWN, LOW, [],
+                       ["Delimited text carries no header row with recognized fields."],
+                       {"rows": len(rows), "delimiter": delimiter}, sha256=digest)
+    normalized = {normalize_header(cell): cell.strip() for cell in raw_header if cell.strip()}
+    labels = semantic_fields(normalized)
+    fields = {semantic: index for semantic, index in
+              ((semantic, position) for semantic, label in labels.items()
+               for position, cell in enumerate(raw_header) if cell == label)}
+    body_rows = rows[header_row + 1:]
+    if len(raw_header) <= 1:
+        return _result(name, fmt, UNKNOWN, LOW, [],
+                       [f"Delimited text is single-column under delimiter "
+                        f"{delimiter!r}: no table to classify."],
+                       {"rows": len(body_rows), "delimiter": delimiter}, sha256=digest)
+    profiles = [profile_column(index, raw_header[index] if index < len(raw_header) else "",
+                               [row[index] if index < len(row) else "" for row in body_rows])
+                for index in range(len(raw_header))]
+    unlabelled = _unlabelled_columns(labels, profiles)
+    evidence = {"rows": len(body_rows), "columns": len(raw_header),
+                "header": raw_header, "header_row": header_row + 1,
+                "delimiter": delimiter, "fields": sorted(labels),
+                "unlabelled_columns": unlabelled}
 
-    if {"recipient", "subject", "body"} <= set(fields):
+    if {"recipient", "subject", "body"} <= set(labels):
+        recipient_col = fields["recipient"]
+        body_col = fields["body"]
         recipient_col = fields["recipient"]
         body_col = fields["body"]
         recipients = [(row[recipient_col].strip() if recipient_col < len(row) else "")
@@ -1299,6 +1827,12 @@ def _recognize_csv(name, data, digest):
             attachments = sorted({row[fields["attachment"]].strip() for row in body_rows
                                   if fields["attachment"] < len(row)
                                   and ATTACHMENT_VALUE_RE.match(row[fields["attachment"]].strip())})
+            attachment_profile = profiles[fields["attachment"]]
+            if attachment_profile.filled and attachment_profile.filename_ratio < CONSISTENT_VALUE_RATIO:
+                cautions.append(Signal(
+                    f"Attachment column '{raw_header[fields['attachment']]}' holds only "
+                    f"{attachment_profile.filename_ratio:.0%} document filenames "
+                    f"({attachment_profile.filled} rows)", BULK_IMPORT, caution=True))
         reasons = [s.reason for s in bulk.signals]
         confidence = HIGH if email_ratio >= 0.5 and saluted >= max(1, len(body_rows) // 2) else MEDIUM
         identities = {
@@ -1306,15 +1840,19 @@ def _recognize_csv(name, data, digest):
             "attachments": attachments,
             "scheduled_rows": len(schedules),
         }
-        return _result(name, "csv", BULK_IMPORT, confidence, reasons,
+        return _result(name, fmt, BULK_IMPORT, confidence, reasons,
                        [s.reason for s in cautions], evidence,
                        identities=identities, sha256=digest)
 
+    caution = (f"Delimited text header carries no outgoing-mail envelope "
+               f"(recipient/subject/body) under delimiter {delimiter!r}; "
+               "records exports are not outreach batches.")
+    if unlabelled:
+        caution += (f" {len(unlabelled)} column(s) hold values of an outreach field "
+                    f"({', '.join(sorted({item['field'] for item in unlabelled}))}) "
+                    "that no header names.")
     return _result(
-        name, "csv", UNKNOWN, MEDIUM, [],
-        ["CSV header does not carry an outgoing-mail envelope "
-         "(recipient/subject/body); records exports are not outreach batches."],
-        evidence, sha256=digest)
+        name, fmt, UNKNOWN, MEDIUM, [], [caution], evidence, sha256=digest)
 
 
 # ---------------------------------------------------------------------------
@@ -1331,7 +1869,7 @@ def _recognize_zip(name, data, digest):
                 member_name = item.filename.replace("\\", "/")
                 if PurePosixPath(member_name).is_absolute() or ".." in PurePosixPath(member_name).parts:
                     continue
-                if member_name.lower().endswith((".docx", ".xlsx", ".csv")):
+                if member_name.lower().endswith((".docx", ".xlsx", ".csv", ".tsv")):
                     members.append(recognize_bytes(PurePosixPath(member_name).name,
                                                    archive.read(item)))
     except (BadZipFile, OSError) as error:
@@ -1341,7 +1879,7 @@ def _recognize_zip(name, data, digest):
         counts[member["type"]] = counts.get(member["type"], 0) + 1
     if not members:
         return _result(name, "zip", UNKNOWN, LOW, ["Archive contains no supported members."],
-                       ["Only .docx, .xlsx and .csv members are recognized."],
+                       ["Only .docx, .xlsx, .csv and .tsv members are recognized."],
                        {"members": len(members)}, sha256=digest)
     return _result(
         name, "zip", BUNDLE, MEDIUM,
