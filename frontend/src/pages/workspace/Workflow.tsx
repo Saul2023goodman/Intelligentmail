@@ -15,26 +15,26 @@ const GATEWAY_COPY: Record<
 > = {
   unavailable: {
     dot: "gateway-dot grey",
-    hint: "网关未启用",
-    cta: "了解网关",
+    hint: "Gateway not enabled",
+    cta: "About the gateway",
     pulse: false,
   },
   disconnected: {
     dot: "gateway-dot amber",
-    hint: "未连接邮箱",
-    cta: "连接邮箱",
+    hint: "Mailbox not connected",
+    cta: "Connect mailbox",
     pulse: true,
   },
   mismatch: {
     dot: "gateway-dot amber",
-    hint: "连接了其他邮箱",
-    cta: "查看连接",
+    hint: "Connected to another mailbox",
+    cta: "View connection",
     pulse: true,
   },
   connected: {
     dot: "gateway-dot green",
-    hint: "网关已连接",
-    cta: "管理",
+    hint: "Gateway connected",
+    cta: "Manage",
     pulse: false,
   },
 };
@@ -98,7 +98,7 @@ export default function Workflow({
       >
         <div className="graph">
         <div className="lane intake-lane">
-          <span>00 / 读取 · 入库 · 来源任务</span>
+          <span>00 / OBSERVATION · INTAKE · SOURCE TASKS</span>
         </div>
         <div className="lane green-lane">
           <span>01 / PREPARE &amp; AUTHORIZE</span>
@@ -188,7 +188,7 @@ export default function Workflow({
                 role="button"
                 tabIndex={0}
                 title={stage.description}
-                aria-label={`${stage.label}：${gatewayCopy.hint}。打开网关管理`}
+                aria-label={`${stage.label}: ${gatewayCopy.hint}. Open gateway management`}
                 className={`workflow-node gateway-node ${selected === stage.id ? "selected" : ""}`}
                 style={positionStyle}
                 onClick={activate}

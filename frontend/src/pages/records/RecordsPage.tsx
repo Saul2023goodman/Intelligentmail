@@ -396,7 +396,7 @@ export default function RecordsPage() {
           meta={<span className="rc-readonly-badge"><Icon name="shield" size={13} /> Read-only · no editing or execution</span>}
           actions={
             <button className="rc-header-button" disabled={!student} onClick={() => setMailboxHistoryOpen(true)}>
-              <Icon name="mail" size={14} /> 邮箱监测历史 {mailboxSummary ? `· ${mailboxSummary.observation_count}` : ""}
+              <Icon name="mail" size={14} /> Mailbox observation history {mailboxSummary ? `· ${mailboxSummary.observation_count}` : ""}
             </button>
           }
         />
@@ -563,9 +563,9 @@ export default function RecordsPage() {
       </div>
       {mailboxHistoryOpen && (
         <RecordsDialog title="Observation & reconciliation history" close={() => setMailboxHistoryOpen(false)}>
-          <p className="rc-dialog-intro">Mailbox 页面只负责当前监测和触发；所有历史批次、覆盖范围与对账结果在这里作为只读证据保留。</p>
+          <p className="rc-dialog-intro">The Mailbox page only handles current observation and triggers; all past batches, coverage, and reconciliation results are retained here as read-only evidence.</p>
           {mailboxHistoryQuery.isLoading ? (
-            <div className="rc-empty"><Icon name="refresh" size={24} /><p>读取邮箱证据…</p></div>
+            <div className="rc-empty"><Icon name="refresh" size={24} /><p>Reading mailbox evidence…</p></div>
           ) : mailboxHistoryQuery.error ? (
             <div className="rc-notice rc-error">{mailboxHistoryQuery.error.message}</div>
           ) : mailboxHistoryQuery.data?.observations.length ? (
@@ -595,7 +595,7 @@ export default function RecordsPage() {
               })}
             </div>
           ) : (
-            <div className="rc-empty"><Icon name="mail" size={26} /><h2>尚无邮箱监测证据</h2><p>回到 Mailbox 页面连接网关并刷新监测。</p></div>
+            <div className="rc-empty"><Icon name="mail" size={26} /><h2>No mailbox observation evidence yet</h2><p>Go back to the Mailbox page to connect the gateway and refresh observations.</p></div>
           )}
         </RecordsDialog>
       )}

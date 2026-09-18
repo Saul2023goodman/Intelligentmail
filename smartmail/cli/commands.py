@@ -42,6 +42,8 @@ def dispatch(core, args):
             result = core.create_student(args.name, args.mailbox)
         elif args.action == "list":
             result = core.list_students()
+        elif args.action == "delete":
+            result = core.delete_student(args.id, args.mailbox)
         else:
             result = core.get_student(args.id)
     elif args.command == "import":

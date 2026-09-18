@@ -20,6 +20,22 @@ class UiBridgeTests(ExecutionTestCase):
                                    'campaign_id': campaign_id or self.campaign['id'],
                                    'student_id': self.student['id']})
 
+    def test_delete_student_removes_the_persisted_workspace_graph(self):
+        self.ready_preparation()
+        other = self.core.create_student("Other Student", "other@163.com")
+        deleted = dispatch(self.core, {
+            "command": "delete_student",
+            "student_id": self.student["id"],
+            "mailbox": "student@163.com",
+        })
+        self.assertTrue(deleted["deleted"])
+        workspace = dispatch(self.core, {"command": "workspace"})
+        self.assertEqual(
+            [mailbox["student_id"] for mailbox in workspace["mailboxes"]],
+            [other["id"]],
+        )
+        self.assertEqual(self.core._db.execute("PRAGMA foreign_key_check").fetchall(), [])
+
     def test_mailbox_workspace_keeps_local_work_without_claiming_a_match(self):
         preparation, _ = self.ready_preparation()
         view = self.mailbox_workspace()

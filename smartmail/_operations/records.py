@@ -92,6 +92,193 @@ class RecordsOperations:
             raise SmartMailError(f"Student not found: {student_id}")
         return {**dict(row), "campaign_id": self._student_campaign_id(student_id)}
 
+    def delete_student(self, student_id: str, mailbox_address: str) -> dict:
+        """Permanently remove one Student workspace and all of its local evidence.
+
+        The mailbox address is an explicit confirmation token. Active or unknown
+        external work blocks deletion because removing local evidence must never
+        abandon a possibly-live mailbox operation.
+        """
+        student = self.get_student(student_id)
+        mailbox = self._db.execute(
+            "SELECT * FROM mailboxes WHERE student_id = ?", (student_id,)
+        ).fetchone()
+        confirmed_address = email_address(mailbox_address)
+        if mailbox is None or not confirmed_address or confirmed_address != mailbox["address"]:
+            raise SmartMailError("Confirm deletion with the Student's exact Mailbox address")
+
+        unresolved = self._db.execute(
+            "SELECT a.id FROM execution_attempts a "
+            "JOIN tasks t ON t.id = a.task_id "
+            "WHERE t.student_id = ? AND a.state IN ('in_progress', 'unknown') LIMIT 1",
+            (student_id,),
+        ).fetchone()
+        active_schedule = self._db.execute(
+            "SELECT s.id FROM external_schedules s "
+            "JOIN tasks t ON t.id = s.task_id "
+            "WHERE t.student_id = ? "
+            "AND s.state IN ('placement_unknown', 'externally_scheduled', 'cancel_unknown') LIMIT 1",
+            (student_id,),
+        ).fetchone()
+        if unresolved or active_schedule:
+            raise SmartMailError(
+                "Resolve active or unknown external mailbox work before deleting this Student")
+
+        def ids(sql: str, parameters=()) -> list[str]:
+            return [row["id"] for row in self._db.execute(sql, parameters)]
+
+        def delete_ids(table: str, column: str, values: list[str]) -> None:
+            if not values:
+                return
+            marks = ",".join("?" for _ in values)
+            self._db.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", values)
+
+        campaign_ids = ids("SELECT id FROM campaigns WHERE student_id = ?", (student_id,))
+        if campaign_ids:
+            marks = ",".join("?" for _ in campaign_ids)
+            foreign_scope = self._db.execute(
+                f"SELECT id FROM tasks WHERE campaign_id IN ({marks}) AND student_id != ? "
+                "UNION ALL "
+                f"SELECT id FROM imports WHERE campaign_id IN ({marks}) AND student_id != ? LIMIT 1",
+                (*campaign_ids, student_id, *campaign_ids, student_id),
+            ).fetchone()
+            if foreign_scope:
+                raise SmartMailError(
+                    "Student Campaign contains another Student's records; repair the scope before deletion")
+
+        task_ids = ids("SELECT id FROM tasks WHERE student_id = ?", (student_id,))
+        preparation_ids = (
+            ids(f"SELECT id FROM preparations WHERE task_id IN ({','.join('?' for _ in task_ids)})",
+                task_ids) if task_ids else []
+        )
+        confirmation_ids = (
+            ids(f"SELECT id FROM confirmations WHERE task_id IN ({','.join('?' for _ in task_ids)})",
+                task_ids) if task_ids else []
+        )
+        attempt_ids = (
+            ids(f"SELECT id FROM execution_attempts WHERE task_id IN ({','.join('?' for _ in task_ids)})",
+                task_ids) if task_ids else []
+        )
+        sent_ids = (
+            ids(f"SELECT id FROM sent_records WHERE task_id IN ({','.join('?' for _ in task_ids)})",
+                task_ids) if task_ids else []
+        )
+        schedule_ids = (
+            ids(f"SELECT id FROM external_schedules WHERE task_id IN ({','.join('?' for _ in task_ids)})",
+                task_ids) if task_ids else []
+        )
+        import_ids = ids("SELECT id FROM imports WHERE student_id = ?", (student_id,))
+        source_ids = (
+            ids(f"SELECT id FROM sources WHERE import_id IN ({','.join('?' for _ in import_ids)})",
+                import_ids) if import_ids else []
+        )
+        mailbox_ids = ids("SELECT id FROM mailboxes WHERE student_id = ?", (student_id,))
+        observation_ids = (
+            ids(f"SELECT id FROM mailbox_observation_runs WHERE mailbox_id IN ({','.join('?' for _ in mailbox_ids)})",
+                mailbox_ids) if mailbox_ids else []
+        )
+        message_ids = (
+            ids(f"SELECT id FROM mailbox_message_observations WHERE run_id IN ({','.join('?' for _ in observation_ids)})",
+                observation_ids) if observation_ids else []
+        )
+        reconciliation_ids = (
+            ids(f"SELECT id FROM reconciliations WHERE mailbox_id IN ({','.join('?' for _ in mailbox_ids)})",
+                mailbox_ids) if mailbox_ids else []
+        )
+        plan_ids = (
+            ids(f"SELECT id FROM sending_plans WHERE campaign_id IN ({','.join('?' for _ in campaign_ids)})",
+                campaign_ids) if campaign_ids else []
+        )
+        run_ids = (
+            ids(f"SELECT id FROM execution_runs WHERE campaign_id IN ({','.join('?' for _ in campaign_ids)})",
+                campaign_ids) if campaign_ids else []
+        )
+
+        with self._db:
+            # Break self/cross references before deleting the graph bottom-up.
+            if preparation_ids:
+                marks = ",".join("?" for _ in preparation_ids)
+                self._db.execute(
+                    f"UPDATE preparations SET superseded_by = NULL, linked_sent_record_id = NULL "
+                    f"WHERE id IN ({marks})", preparation_ids)
+            if sent_ids:
+                marks = ",".join("?" for _ in sent_ids)
+                self._db.execute(
+                    f"UPDATE sent_records SET follows_sent_record_id = NULL WHERE id IN ({marks})",
+                    sent_ids)
+            if schedule_ids:
+                marks = ",".join("?" for _ in schedule_ids)
+                self._db.execute(
+                    f"UPDATE external_schedules SET replaces_schedule_id = NULL WHERE id IN ({marks})",
+                    schedule_ids)
+
+            delete_ids("external_operations", "schedule_id", schedule_ids)
+            delete_ids("external_operations", "confirmation_id", confirmation_ids)
+            delete_ids("execution_run_items", "run_id", run_ids)
+            delete_ids("execution_run_items", "attempt_id", attempt_ids)
+            delete_ids("execution_run_items", "confirmation_id", confirmation_ids)
+            delete_ids("sending_plan_proposals", "plan_id", plan_ids)
+            delete_ids("sending_plan_proposals", "preparation_id", preparation_ids)
+            delete_ids("follow_up_actions", "task_id", task_ids)
+            delete_ids("reply_associations", "task_id", task_ids)
+            delete_ids("reply_associations", "message_observation_id", message_ids)
+            self._db.execute("DELETE FROM reply_associations WHERE student_id = ?", (student_id,))
+            delete_ids("duplicate_checks", "task_id", task_ids)
+            delete_ids("sent_attachments", "sent_record_id", sent_ids)
+            delete_ids("external_schedules", "id", schedule_ids)
+            delete_ids("sent_records", "id", sent_ids)
+            delete_ids("execution_attempts", "id", attempt_ids)
+            delete_ids("confirmations", "id", confirmation_ids)
+            delete_ids("attachments", "slot_id", ids(
+                f"SELECT id FROM attachment_slots WHERE preparation_id IN ({','.join('?' for _ in preparation_ids)})",
+                preparation_ids) if preparation_ids else [])
+            for table in ("attachment_slots", "transformations", "readiness_findings", "corrections"):
+                delete_ids(table, "preparation_id", preparation_ids)
+            delete_ids("preparations", "id", preparation_ids)
+            delete_ids("exceptions", "task_id", task_ids)
+            delete_ids("source_associations", "task_id", task_ids)
+            delete_ids("tasks", "id", task_ids)
+
+            delete_ids("document_findings", "source_id", source_ids)
+            delete_ids("source_recognition", "source_id", source_ids)
+            delete_ids("exceptions", "source_id", source_ids)
+            delete_ids("source_associations", "source_id", source_ids)
+            delete_ids("sources", "id", source_ids)
+            delete_ids("imports", "id", import_ids)
+
+            delete_ids("reconciliation_findings", "reconciliation_id", reconciliation_ids)
+            delete_ids("reconciliation_findings", "message_observation_id", message_ids)
+            delete_ids("reconciliations", "id", reconciliation_ids)
+            delete_ids("mailbox_message_observations", "id", message_ids)
+            delete_ids("mailbox_observation_runs", "id", observation_ids)
+            delete_ids("mailbox_settings", "mailbox_id", mailbox_ids)
+            delete_ids("mailboxes", "id", mailbox_ids)
+
+            delete_ids("execution_runs", "id", run_ids)
+            delete_ids("sending_plans", "id", plan_ids)
+            for table in ("execution_flow", "follow_up_rules", "plan_configurations"):
+                delete_ids(table, "campaign_id", campaign_ids)
+            delete_ids("campaigns", "id", campaign_ids)
+            self._db.execute("DELETE FROM students WHERE id = ?", (student_id,))
+
+            # Supervisor and Institution identities are shared across Students;
+            # remove only identities that became unreferenced.
+            self._db.execute(
+                "DELETE FROM supervisor_addresses WHERE supervisor_id IN "
+                "(SELECT s.id FROM supervisors s LEFT JOIN tasks t ON t.supervisor_id = s.id "
+                "WHERE t.id IS NULL)")
+            self._db.execute(
+                "DELETE FROM supervisors WHERE NOT EXISTS "
+                "(SELECT 1 FROM tasks t WHERE t.supervisor_id = supervisors.id)")
+            self._db.execute(
+                "DELETE FROM institutions WHERE NOT EXISTS "
+                "(SELECT 1 FROM supervisors s WHERE s.institution_id = institutions.id)")
+
+        return {
+            "id": student["id"], "name": student["name"],
+            "mailbox": mailbox["address"], "campaign_ids": campaign_ids, "deleted": True,
+        }
+
     def import_master(self, campaign_id: str, student_id: str, path: Path) -> dict:
         self.get_campaign(campaign_id)
         self.get_student(student_id)

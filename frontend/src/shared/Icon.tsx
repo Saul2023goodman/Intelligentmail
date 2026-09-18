@@ -28,6 +28,7 @@ const paths = {
   book: "M3 4l9 2 9-2v16l-9 2-9-2z M12 6v16",
   fit: "M3 9V3h6 M15 3h6v6 M21 15v6h-6 M9 21H3v-6",
   close: "M6 6l12 12 M18 6L6 18",
+  trash: "M4 7h16 M9 7V4h6v3 M7 7l1 14h8l1-14 M10 11v6 M14 11v6",
 };
 export type IconName = keyof typeof paths;
 

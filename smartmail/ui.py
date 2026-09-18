@@ -106,6 +106,14 @@ def dispatch(core, request):
         address = next(m["address"] for m in core.list_mailboxes()
                        if m["student_id"] == student["id"])
         return {**student, "mailbox": address}
+    if command == "delete_student":
+        student_id = request.get("student_id")
+        mailbox = request.get("mailbox")
+        if not isinstance(student_id, str) or not student_id:
+            raise SmartMailError("A Student ID is required")
+        if not isinstance(mailbox, str):
+            raise SmartMailError("Confirm deletion with the Student's Mailbox address")
+        return core.delete_student(student_id, mailbox)
     if command == "check_duplicate":
         return core.check_duplicate(request["preparation_id"])
     if command == "mailbox_history":

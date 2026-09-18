@@ -56,12 +56,12 @@ type Candidate = {
 };
 
 const groups: { id: string; title: string; icon: IconName; color: string }[] = [
-  { id: "unresolved", title: "待判定", icon: "warning", color: "slate" },
-  { id: "master", title: "导师名单", icon: "source", color: "green" },
-  { id: "drafts", title: "外联草稿", icon: "file", color: "blue" },
-  { id: "attachments", title: "附件材料", icon: "clip", color: "purple" },
-  { id: "records", title: "既往外联记录", icon: "database", color: "amber" },
-  { id: "mailbox", title: "邮箱草稿箱", icon: "mail", color: "teal" },
+  { id: "unresolved", title: "Needs decision", icon: "warning", color: "slate" },
+  { id: "master", title: "Supervisor list", icon: "source", color: "green" },
+  { id: "drafts", title: "Outreach drafts", icon: "file", color: "blue" },
+  { id: "attachments", title: "Attachment materials", icon: "clip", color: "purple" },
+  { id: "records", title: "Past outreach records", icon: "database", color: "amber" },
+  { id: "mailbox", title: "Mailbox drafts", icon: "mail", color: "teal" },
 ];
 const categoryType: Record<string, RecognitionTypeId> = {
   master: "supervisor_master", drafts: "outreach_draft", attachments: "applicant_cv", records: "tracking_sheet",
@@ -181,8 +181,8 @@ export default function IntakePage() {
       name: draft.subject || "(no subject)",
       group: "mailbox",
       detail: draft.recipient
-        ? `${draft.recipient}${draft.attachment_count ? ` · ${draft.attachment_count} 附件` : ""}`
-        : "无可用收件人",
+        ? `${draft.recipient}${draft.attachment_count ? ` · ${draft.attachment_count} attachments` : ""}`
+        : "No usable recipient",
       confidence: draft.task_id ? "high" : "low",
       included: false,
       duplicate: false,
@@ -293,9 +293,9 @@ export default function IntakePage() {
     if (!review || !importability.ok) return;
     const result = await runImport(buildSelections(review), (rows, created) => {
       const createdText = created
-        ? `; ${created} 份 Preparation 已建立`
-        : rows ? "; 草稿将在下一步关联" : "; 参考材料已保留";
-      return `已导入 ${rows} 行${createdText}。`;
+        ? `; ${created} Preparations created`
+        : rows ? "; drafts will be linked in the next step" : "; reference materials retained";
+      return `Imported ${rows} rows${createdText}.`;
     });
     if (result) setReview(null);
   }
@@ -310,10 +310,10 @@ export default function IntakePage() {
   async function remapSource(source: SourceView, type: RecognitionTypeId) {
     const file = uploadedFiles.current.get(source.name);
     if (!file) {
-      setError(`映射需要原始文件：请重新拖入 ${source.name} 后再调整映射。`);
+      setError(`Remapping needs the original file: re-drop ${source.name}, then adjust the mapping.`);
       return;
     }
-    await runImport([{ file, included: true, type }], () => `已重新映射 ${source.name} → ${typeOption(type).label}。`);
+    await runImport([{ file, included: true, type }], () => `Remapped ${source.name} → ${typeOption(type).label}.`);
   }
   async function importDrafts() {
     if (!importableDrafts.length) return;
@@ -323,12 +323,12 @@ export default function IntakePage() {
         campaign_id: campaign, student_id: student, observation_ids: importableDrafts,
       });
       intakeQuery.setData(result.workspace);
-      const skipped = result.skipped.length ? `；${result.skipped.length} 封跳过：${result.skipped[0].reason}` : "";
-      setNotice(`已导入 ${result.imported.length} 封草稿为来源材料${skipped}`);
+      const skipped = result.skipped.length ? `; ${result.skipped.length} skipped: ${result.skipped[0].reason}` : "";
+      setNotice(`Imported ${result.imported.length} drafts as source materials${skipped}`);
       setSelectedDrafts([]);
       void draftQuery.refresh();
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Core 无法导入所选草稿");
+      setError(caught instanceof Error ? caught.message : "Core could not import the selected drafts");
     } finally { setBusy(false); }
   }
   async function observeMailbox() {
@@ -337,7 +337,7 @@ export default function IntakePage() {
     try {
       const result = await core("refresh_mailbox", { student_id: student });
       await Promise.all([mailboxQuery.refresh(), draftQuery.refresh(), workspaceQuery.refresh()]);
-      setNotice(`邮箱证据已更新（${result.observation.status}，${result.observation.messages?.length ?? 0} 封观察）。`);
+      setNotice(`Mailbox evidence refreshed (${result.observation.status}, ${result.observation.messages?.length ?? 0} messages observed).`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Mailbox observation failed");
     } finally { setObserving(false); }
@@ -350,24 +350,24 @@ export default function IntakePage() {
   const onDrop = (event: DragEvent) => { if (hasFiles(event)) { event.preventDefault(); dragDepth.current = 0; setDragging(false); void ingest(Array.from(event.dataTransfer.files)); } };
 
   const stages: { icon: IconName; tone: string; title: string; value: string; sub: string; filter: MapFilter | null }[] = [
-    { icon: "folder", tone: "slate", title: "采集", value: String(counts.acquired), sub: `${sources.length} 上传 · ${draftCandidates.length} 草稿箱`, filter: null },
-    { icon: "branch", tone: "blue", title: "识别", value: String(counts.recognized), sub: "Core 按结构与来源判定类型", filter: null },
-    { icon: "filter", tone: "amber", title: "查重", value: String(counts.duplicates), sub: "与已存来源、批次内重复比对", filter: "duplicate" },
-    { icon: "database", tone: "rose", title: "冲突", value: String(counts.conflicts), sub: "既有外联记录与未匹配草稿", filter: "conflict" },
-    { icon: "source", tone: "green", title: "落库", value: String(counts.resolved), sub: `${activeCount} 已有邮箱`, filter: null },
+    { icon: "folder", tone: "slate", title: "Acquire", value: String(counts.acquired), sub: `${sources.length} uploads · ${draftCandidates.length} mailbox drafts`, filter: null },
+    { icon: "branch", tone: "blue", title: "Recognize", value: String(counts.recognized), sub: "Core decides types by structure and provenance", filter: null },
+    { icon: "filter", tone: "amber", title: "Duplicates", value: String(counts.duplicates), sub: "Checked against stored sources and within the batch", filter: "duplicate" },
+    { icon: "database", tone: "rose", title: "Conflicts", value: String(counts.conflicts), sub: "Existing outreach records and unmatched drafts", filter: "conflict" },
+    { icon: "source", tone: "green", title: "Stored", value: String(counts.resolved), sub: `${activeCount} with email`, filter: null },
   ];
 
   return <AppShell className="sm-app" activeRoute="sources">
     <div className="workspace" onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <Topbar className="sm-topbar" breadcrumb="Source mapping" homeHref="#workflow">
-        <SearchField label="Search candidates and tasks" value={query} onChange={setQuery} placeholder="搜索候选材料或已解析任务…" iconSize={16} />
+        <SearchField label="Search candidates and tasks" value={query} onChange={setQuery} placeholder="Search candidate materials or resolved tasks…" iconSize={16} />
       </Topbar>
       <div className="sm-stages" role="list" aria-label="Intake pipeline">
         {stages.map((stage, index) => <Fragment key={stage.title}>
           {index > 0 && <span className="sm-stage-link" aria-hidden="true" />}
           <button role="listitem" className={`sm-stage ${stage.filter && mapFilter === stage.filter ? "is-active" : ""}`}
             onClick={() => setMapFilter(stage.filter && mapFilter === stage.filter ? "all" : stage.filter ?? "all")}
-            disabled={!stage.filter} title={stage.filter ? "筛选映射行" : stage.sub}>
+            disabled={!stage.filter} title={stage.filter ? "Filter mapping rows" : stage.sub}>
             <span className={`sm-stage-icon ${stage.tone}`}><Icon name={stage.icon} size={13} /></span>
             <span className="sm-stage-copy"><b>{stage.title}</b><small>{stage.sub}</small></span>
             <em>{stage.value}</em>
@@ -378,12 +378,12 @@ export default function IntakePage() {
 
       <main className="sm-board">
         <section className="sm-sources">
-          <div className="sm-column-heading"><Icon name="folder" size={16} /><h2>候选集</h2><span>{candidates.length}</span></div>
+          <div className="sm-column-heading"><Icon name="folder" size={16} /><h2>Candidate set</h2><span>{candidates.length}</span></div>
           <div className="sm-observe">
-            <button className="primary full" disabled={!gateway.canObserve || observing} onClick={() => void observeMailbox()} title={gateway.canObserve ? "只读读取邮箱证据，草稿箱内容会作为候选出现" : "需要连接当前学生的邮箱标签页"}>
-              <Icon name="refresh" size={14} />{observing ? "读取中…" : "读取邮箱草稿箱"}
+            <button className="primary full" disabled={!gateway.canObserve || observing} onClick={() => void observeMailbox()} title={gateway.canObserve ? "Read mailbox evidence read-only; drafts appear as candidates" : "Requires connecting the current student's mailbox tab"}>
+              <Icon name="refresh" size={14} />{observing ? "Reading…" : "Read mailbox drafts"}
             </button>
-            <p className="sm-observe-state"><i className={`sm-dot ${gateway.state === "connected" ? "ready" : ""}`} />{gateway.studentAddress || "未选择学生邮箱"} · {gateway.state === "connected" ? "网关已连接" : gateway.state === "mismatch" ? "网关连着其他邮箱" : gateway.state === "disconnected" ? "网关未连接" : "网关未启用"}</p>
+            <p className="sm-observe-state"><i className={`sm-dot ${gateway.state === "connected" ? "ready" : ""}`} />{gateway.studentAddress || "No student mailbox selected"} · {gateway.state === "connected" ? "Gateway connected" : gateway.state === "mismatch" ? "Gateway connected to another mailbox" : gateway.state === "disconnected" ? "Gateway not connected" : "Gateway not enabled"}</p>
           </div>
           <div className="sm-source-list">
             {grouped.map((group) => <div className="sm-group" key={group.id}>
@@ -396,46 +396,46 @@ export default function IntakePage() {
                 <span className="sm-source-copy">
                   <strong title={candidate.name}>{candidate.name}</strong>
                   <span className="sm-source-meta-line">
-                    <em className={`sm-channel ${candidate.channel}`}>{candidate.channel === "draft" ? "草稿箱" : "上传"}</em>
+                    <em className={`sm-channel ${candidate.channel}`}>{candidate.channel === "draft" ? "Drafts" : "Upload"}</em>
                     <i title={candidate.detail}>{candidate.detail}</i>
                   </span>
                 </span>
-                {candidate.conflict && <span className="sm-flag is-conflict" title="存在阻塞项">!</span>}
-                {candidate.unmatched && !candidate.conflict && <span className="sm-flag" title="尚未匹配">?</span>}
+                {candidate.conflict && <span className="sm-flag is-conflict" title="Blocking issue present">!</span>}
+                {candidate.unmatched && !candidate.conflict && <span className="sm-flag" title="Not yet matched">?</span>}
               </button>)}
             </div>)}
-            {!loading && !grouped.length && <p className="sm-empty">{query ? "没有匹配的候选。" : "拖入来源集，或读取邮箱草稿箱。"}</p>}
-            <button className="sm-add-source" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} />{recognizing ? "识别中…" : "拖入或选择来源集"}<span>{recognizing ? "请稍候" : "浏览文件"}</span></button>
+            {!loading && !grouped.length && <p className="sm-empty">{query ? "No matching candidates." : "Drop a source set, or read the mailbox drafts."}</p>}
+            <button className="sm-add-source" disabled={busy || recognizing || !campaign || !student} onClick={() => fileInput.current?.click()} title="Import a supported .xlsx or .zip source set"><Icon name="plus" size={17} />{recognizing ? "Recognizing…" : "Drop or choose a source set"}<span>{recognizing ? "Please wait" : "Browse files"}</span></button>
           </div>
         </section>
 
         <section className="sm-mapping">
           {review ? <>
-            <div className="sm-column-heading"><Icon name="branch" size={16} /><h2>识别批次 · {review.rows.length} 个来源</h2>
-              <button className="sm-review-close" aria-label="取消本次识别" disabled={busy} onClick={() => setReview(null)}><Icon name="close" size={15} /></button></div>
+            <div className="sm-column-heading"><Icon name="branch" size={16} /><h2>Recognition batch · {review.rows.length} sources</h2>
+              <button className="sm-review-close" aria-label="Cancel this recognition" disabled={busy} onClick={() => setReview(null)}><Icon name="close" size={15} /></button></div>
             <div className="sm-review-rows">
               {review.rows.map((row) => {
                 const option = typeOption(row.type);
                 const revised = row.type !== row.result.type;
                 const tone = confidenceTone(row.result.confidence);
                 const summary = identitySummary({ ...row.result, type: row.type });
-                const evidence = row.result.reasons[0] ?? "无结构证据，需人工判定。";
+                const evidence = row.result.reasons[0] ?? "No structural evidence; needs a manual decision.";
                 return <article key={row.key} className={`sm-review-row ${row.included ? "is-included" : "is-excluded"}`}>
                   <div className="sm-review-head">
-                    <label className="sm-review-check" title={row.included ? "排除" : "纳入"}>
+                    <label className="sm-review-check" title={row.included ? "Exclude" : "Include"}>
                       <input type="checkbox" checked={row.included} disabled={busy} onChange={() => toggleRow(row.key)} />
                     </label>
                     <span className={`sm-review-icon ${row.included ? "" : "is-off"}`}><Icon name={option.icon} size={15} /></span>
-                    <strong title={row.name}>{row.name}{revised && <b className="sm-revised-tag">已修订</b>}</strong>
+                    <strong title={row.name}>{row.name}{revised && <b className="sm-revised-tag">Revised</b>}</strong>
                     <span className={`sm-review-confidence ${tone}`}><i className={`sm-dot ${tone === "ready" ? "ready" : ""}`} />{row.result.confidence}</span>
                   </div>
                   <small className="sm-review-meta">{row.container && <span className="sm-container-tag">{row.container}</span>}{summary ? `${summary} · ` : ""}{Math.max(1, Math.round(row.size / 1024))} KB</small>
                   <em title={[...row.result.reasons, ...row.result.cautions].join("\n")}>{evidence}</em>
-                  <select aria-label={`修订 ${row.name} 的类型`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.key, event.target.value as RecognitionTypeId)}>
-                    <optgroup label="产生外联工作">
+                  <select aria-label={`Revise the type of ${row.name}`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.key, event.target.value as RecognitionTypeId)}>
+                    <optgroup label="Creates outreach work">
                       {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                     </optgroup>
-                    <optgroup label="参考 / 待判定">
+                    <optgroup label="Reference / needs decision">
                       {recognitionTypeOptions.filter((item) => !item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                     </optgroup>
                   </select>
@@ -445,21 +445,21 @@ export default function IntakePage() {
             <div className="sm-review-footer">
               <div className="sm-review-note" role={importability.ok ? "status" : "alert"}>
                 {importability.ok
-                  ? <><Icon name="check" size={14} /><span>{includedCount} / {review.rows.length} 将导入{importability.advisories.length ? ` · ${importability.advisories[0]}` : ""}</span></>
+                  ? <><Icon name="check" size={14} /><span>{includedCount} / {review.rows.length} will be imported{importability.advisories.length ? ` · ${importability.advisories[0]}` : ""}</span></>
                   : <><Icon name="warning" size={14} /><span title={importability.issues.join("\n")}>{importability.issues[0]}{importability.issues.length > 1 ? ` (+${importability.issues.length - 1})` : ""}</span></>}
               </div>
               <div className="sm-review-actions">
-                <button className="sm-button" disabled={busy} onClick={() => setReview(null)}>取消</button>
-                <button className="primary" disabled={busy || !importability.ok} onClick={() => void confirmReviewImport()}>{busy ? "导入中…" : `导入 ${includedCount} 个来源`}</button>
+                <button className="sm-button" disabled={busy} onClick={() => setReview(null)}>Cancel</button>
+                <button className="primary" disabled={busy || !importability.ok} onClick={() => void confirmReviewImport()}>{busy ? "Importing…" : `Import ${includedCount} sources`}</button>
               </div>
             </div>
           </> : <>
-            <div className="sm-column-heading"><Icon name="link" size={16} /><h2>映射工作台</h2>
+            <div className="sm-column-heading"><Icon name="link" size={16} /><h2>Mapping workspace</h2>
               <div className="sm-map-filters" role="group" aria-label="Filter mapping rows">
-                <button className={mapFilter === "all" ? "is-on" : ""} onClick={() => setMapFilter("all")}>全部 {mappingRows.length}</button>
-                <button className={mapFilter === "duplicate" ? "is-on" : ""} onClick={() => setMapFilter("duplicate")}>重复 {counts.duplicates}</button>
-                <button className={mapFilter === "conflict" ? "is-on" : ""} onClick={() => setMapFilter("conflict")}>冲突 {counts.conflicts}</button>
-                <button className={mapFilter === "unmatched" ? "is-on" : ""} onClick={() => setMapFilter("unmatched")}>未匹配 {candidates.filter((candidate) => candidate.unmatched).length}</button>
+                <button className={mapFilter === "all" ? "is-on" : ""} onClick={() => setMapFilter("all")}>All {mappingRows.length}</button>
+                <button className={mapFilter === "duplicate" ? "is-on" : ""} onClick={() => setMapFilter("duplicate")}>Duplicates {counts.duplicates}</button>
+                <button className={mapFilter === "conflict" ? "is-on" : ""} onClick={() => setMapFilter("conflict")}>Conflicts {counts.conflicts}</button>
+                <button className={mapFilter === "unmatched" ? "is-on" : ""} onClick={() => setMapFilter("unmatched")}>Unmatched {candidates.filter((candidate) => candidate.unmatched).length}</button>
               </div></div>
             <div className="sm-flow">
               {mappingRows.map((candidate) => {
@@ -468,17 +468,17 @@ export default function IntakePage() {
                   const checked = selectedDrafts.includes(draft.id);
                   return <article key={candidate.key} className={`sm-map-row ${draft.taskId ? "" : "is-unmatched"} ${candidate.key === focused ? "is-focused" : ""}`}>
                     <div className="sm-map-side">
-                      <span className="sm-compare-tag">草稿箱</span>
+                      <span className="sm-compare-tag">Drafts</span>
                       <strong title={draft.subject}>{draft.subject || "(no subject)"}</strong>
-                      <small>{draft.recipient || "无可用收件人"}{draft.attachmentCount ? ` · ${draft.attachmentCount} 附件` : ""}{draft.bodyAvailable ? "" : " · 正文未采集"}</small>
+                      <small>{draft.recipient || "No usable recipient"}{draft.attachmentCount ? ` · ${draft.attachmentCount} attachments` : ""}{draft.bodyAvailable ? "" : " · body not captured"}</small>
                     </div>
                     <span className="sm-map-arrow" aria-hidden="true"><Icon name="link" size={13} /></span>
                     <div className="sm-map-side">
-                      <span className="sm-compare-tag">数据库</span>
-                      <strong>{draft.taskId ? draft.supervisor || "已匹配任务" : "无匹配任务"}</strong>
-                      <small>{draft.taskId ? "将建立 Preparation" : "先导入导师名单以建立任务"}</small>
+                      <span className="sm-compare-tag">Database</span>
+                      <strong>{draft.taskId ? draft.supervisor || "Matched task" : "No matching task"}</strong>
+                      <small>{draft.taskId ? "A Preparation will be created" : "Import a supervisor list first to create tasks"}</small>
                     </div>
-                    <label className="sm-map-pick" title={draft.taskId && draft.bodyAvailable ? "纳入本次导入" : "该草稿尚不可导入"}>
+                    <label className="sm-map-pick" title={draft.taskId && draft.bodyAvailable ? "Include in this import" : "This draft is not importable yet"}>
                       <input type="checkbox" checked={checked} disabled={!draft.taskId || !draft.bodyAvailable}
                         onChange={() => setSelectedDrafts((current) => checked ? current.filter((id) => id !== draft.id) : [...current, draft.id])} />
                     </label>
@@ -489,21 +489,21 @@ export default function IntakePage() {
                 return <article key={candidate.key} className={`sm-map-row ${candidate.conflict ? "is-conflict" : ""} ${candidate.key === focused ? "is-focused" : ""}`}
                   onFocus={() => setFocused(candidate.key)}>
                   <div className="sm-map-side">
-                    <span className="sm-compare-tag">上传</span>
+                    <span className="sm-compare-tag">Upload</span>
                     <strong title={source.name}>{source.name}</strong>
                     <small>{Math.max(1, Math.round(source.size / 1024))} KB{candidate.confidence ? ` · ${candidate.confidence}` : ""}</small>
                   </div>
                   <span className="sm-map-arrow" aria-hidden="true"><Icon name="link" size={13} /></span>
                   <div className="sm-map-side">
-                    <span className="sm-compare-tag">映射</span>
-                    <select aria-label={`重新映射 ${source.name}`} value={typeOfSource(source)}
+                    <span className="sm-compare-tag">Mapping</span>
+                    <select aria-label={`Remap ${source.name}`} value={typeOfSource(source)}
                       disabled={busy || !heldFiles.includes(source.name)}
-                      title={heldFiles.includes(source.name) ? "改动会以原字节重新导入（幂等）" : "原始字节不在本次会话，需重新拖入"}
+                      title={heldFiles.includes(source.name) ? "Changes re-import the original bytes (idempotent)" : "Original bytes are not in this session; re-drop the file"}
                       onChange={(event) => void remapSource(source, event.target.value as RecognitionTypeId)}>
-                      <optgroup label="产生外联工作">
+                      <optgroup label="Creates outreach work">
                         {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                       </optgroup>
-                      <optgroup label="参考 / 待判定">
+                      <optgroup label="Reference / needs decision">
                         {recognitionTypeOptions.filter((item) => !item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                       </optgroup>
                     </select>
@@ -511,20 +511,20 @@ export default function IntakePage() {
                   </div>
                 </article>;
               })}
-              {!loading && !mappingRows.length && <p className="sm-empty">{candidates.length ? "该筛选下没有映射行。" : "拖入来源集或读取邮箱草稿箱后，这里会出现映射行。"}</p>}
+              {!loading && !mappingRows.length && <p className="sm-empty">{candidates.length ? "No mapping rows under this filter." : "Mapping rows appear here after you drop a source set or read the mailbox drafts."}</p>}
             </div>
             <div className="sm-review-footer">
               <div className="sm-review-note" role="status">
                 <Icon name="shield" size={14} />
                 <span>{importableDrafts.length
-                  ? `${importableDrafts.length} 封草稿可导入为来源材料`
+                  ? `${importableDrafts.length} drafts can be imported as source materials`
                   : lastImport
-                    ? `上次导入 ${lastImport.rows} 行，${lastImport.duplicate} 重复，${lastImport.conflicts} 冲突`
-                    : "草稿箱与上传是同一条管线：识别 → 查重 → 冲突 → 落库"}</span>
+                    ? `Last import: ${lastImport.rows} rows, ${lastImport.duplicate} duplicates, ${lastImport.conflicts} conflicts`
+                    : "Mailbox drafts and uploads share one pipeline: recognize → duplicate check → conflicts → store"}</span>
               </div>
               <div className="sm-review-actions">
                 <button className="primary" disabled={busy || !importableDrafts.length} onClick={() => void importDrafts()}>
-                  {busy ? "导入中…" : `导入 ${importableDrafts.length} 封草稿`}</button>
+                  {busy ? "Importing…" : `Import ${importableDrafts.length} drafts`}</button>
               </div>
             </div>
           </>}
@@ -561,15 +561,15 @@ export default function IntakePage() {
                     : taskDetail?.task.exceptions.length
                       ? `Exceptions: ${taskDetail.task.exceptions.map((entry) => human(entry.code)).join(", ")}`
                       : "No exceptions recorded."}</p>
-                  <button className="primary full" onClick={() => { window.location.hash = "#review"; }}>打开 Readiness 审查</button>
+                  <button className="primary full" onClick={() => { window.location.hash = "#review"; }}>Open Readiness review</button>
                 </div>}
               </div>;
             })}
-            {!loading && !tasks.length && <div className="sm-empty"><Icon name="search" size={25} /><p>{data?.tasks.length ? "没有匹配的外联任务。" : "导入来源集或草稿箱邮件后，这里会出现任务。"}</p><button className="sm-button" onClick={() => { setQuery(""); setTaskFilter("all"); }}>Clear task filters</button></div>}
+            {!loading && !tasks.length && <div className="sm-empty"><Icon name="search" size={25} /><p>{data?.tasks.length ? "No matching outreach tasks." : "Tasks appear here after you import a source set or mailbox drafts."}</p><button className="sm-button" onClick={() => { setQuery(""); setTaskFilter("all"); }}>Clear task filters</button></div>}
           </div>
         </section>
       </main>
-      {dragging && <div className="sm-drop-overlay" aria-hidden="true"><div className="sm-drop-card"><span className="sm-drop-icon"><Icon name="file" size={26} /><Icon name="mail" size={26} /></span><strong>放入即由 Core 识别</strong><span>上传文件与邮箱草稿走同一条管线：识别 → 查重 → 冲突 → 落库。类型可在中列修订后再导入。</span></div></div>}
+      {dragging && <div className="sm-drop-overlay" aria-hidden="true"><div className="sm-drop-card"><span className="sm-drop-icon"><Icon name="file" size={26} /><Icon name="mail" size={26} /></span><strong>Dropping hands it to Core for recognition</strong><span>Uploaded files and mailbox drafts run through one pipeline: recognize → duplicate check → conflicts → store. Types can be revised in the middle column before import.</span></div></div>}
     </div>
     <input ref={fileInput} type="file" multiple accept=".xlsx,.zip,.docx,.pdf,.csv" hidden onChange={(event) => { void ingest(Array.from(event.target.files ?? [])); event.target.value = ""; }} />
   </AppShell>;

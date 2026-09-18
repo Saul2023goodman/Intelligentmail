@@ -12,13 +12,13 @@ import { useWorkspaceScope } from "../../app/scope";
 import "./Workspace.css";
 
 const GATEWAY_STATE_LABEL: Record<string, string> = {
-  connected: "已连接",
-  disconnected: "未连接",
-  mismatch: "连接作用域不符",
-  unavailable: "网关未启用",
+  connected: "Connected",
+  disconnected: "Not connected",
+  mismatch: "Connection scope mismatch",
+  unavailable: "Gateway not enabled",
 };
 const formatTime = (value: null | string) =>
-  value ? new Date(value).toLocaleString() : "尚未观察";
+  value ? new Date(value).toLocaleString() : "Not yet observed";
 
 export default function WorkspacePage({ route }: { route: Route }) {
   const { scope, setScope } = useWorkspaceScope();
@@ -122,7 +122,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
       await reload();
       const count = result.observation.messages?.length ?? 0;
       setNotice(
-        `邮箱证据已更新（${result.observation.status}，${count} 封邮件观察）。可在 Mailbox 对账工作区查看。`,
+        `Mailbox evidence refreshed (${result.observation.status}, ${count} messages observed). View it in the Mailbox reconciliation workspace.`,
       );
       setGatewayPanel(false);
     } catch (e) {
@@ -203,7 +203,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
                 <span className="context-sep" aria-hidden="true">
                   ·
                 </span>
-                <span>{studentMailbox.observation_count} 次邮箱读取</span>
+                <span>{studentMailbox.observation_count} mailbox observations</span>
                 <span className="context-sep" aria-hidden="true">
                   ·
                 </span>
@@ -212,22 +212,22 @@ export default function WorkspacePage({ route }: { route: Route }) {
                   type="button"
                   className={`gateway-pill ${gateway.state}`}
                   onClick={openGateway}
-                  title="管理邮箱网关连接"
+                  title="Manage mailbox gateway connection"
                 >
                   <i className={gateway.state === "disconnected" ? "pulse" : ""} />
                   {gateway.state === "connected"
-                    ? "网关已连接"
+                    ? "Gateway connected"
                     : gateway.state === "mismatch"
-                      ? "网关作用域不符"
+                      ? "Gateway scope mismatch"
                       : gateway.state === "disconnected"
-                        ? "连接邮箱"
-                        : "邮箱网关"}
+                        ? "Connect mailbox"
+                        : "Mailbox gateway"}
                   <Icon name="chevron" size={11} />
                 </button>
               </>
             ) : (
               <span className="context-empty">
-                在右上角的学生工作区切换器中选择或新增学生
+                Select or add a student in the student workspace switcher at the top right
               </span>
             )}
           </div>
@@ -247,18 +247,20 @@ export default function WorkspacePage({ route }: { route: Route }) {
                 <span className="workflow-empty-icon">
                   <Icon name="mail" size={28} />
                 </span>
-                <h2>设定第一位学生</h2>
+                <h2>Set up your first student</h2>
                 <p>
-                  学生即本页的工作流空间（Campaign）。添加学生姓名与其 163
-                  邮箱后，在工作流起点的<strong>邮箱网关</strong>连接专用扩展，
-                  即可只读观察邮箱证据并导入来源材料；网关是外部执行基础设施，不单独占用设置页。
+                  Each student is this page's workflow space (Campaign). After adding the
+                  student's name and their 163 mailbox, connect the dedicated extension at the
+                  <strong> Mailbox gateway</strong> at the start of the workflow to observe
+                  mailbox evidence read-only and import source materials; the gateway is external
+                  execution infrastructure and does not have its own settings page.
                 </p>
                 <button
                   className="primary"
                   disabled={busy}
                   onClick={() => setNewStudent(true)}
                 >
-                  <Icon name="plus" size={17} /> 新增学生
+                  <Icon name="plus" size={17} /> Add student
                 </button>
               </div>
             )}
@@ -283,7 +285,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
           onClose={() => setNewStudent(false)}
           onCreated={(value) =>
             setNotice(
-              `已添加学生 ${value.name}（${value.mailbox}）。通过 Core CLI 导入来源材料后，任务将出现在工作流中。`,
+              `Added student ${value.name} (${value.mailbox}). After importing source materials via the Core CLI, tasks will appear in the workflow.`,
             )
           }
         />
@@ -312,11 +314,12 @@ export default function WorkspacePage({ route }: { route: Route }) {
               </button>
               <div className="eyebrow">EXTERNAL EXECUTION INFRASTRUCTURE</div>
               <h2 id="gateway-title">
-                邮箱网关 <span>Mailbox Gateway</span>
+                Mailbox gateway <span>Mailbox Gateway</span>
               </h2>
               <p>
-                网关是 SmartMail 观察邮箱与执行已确认操作的唯一通道。它连接一个已登录的
-                163 邮箱标签页；观察始终只读，读取不会授权发送。
+                The gateway is SmartMail's only channel for observing mailboxes and executing
+                confirmed actions. It connects one signed-in 163 mailbox tab; observation is
+                always read-only, and reading never authorizes sending.
               </p>
 
               <div className={`gateway-status ${gateway.state}`}>
@@ -325,45 +328,45 @@ export default function WorkspacePage({ route }: { route: Route }) {
                   <strong>{GATEWAY_STATE_LABEL[gateway.state]}</strong>
                   <small>
                     {gateway.state === "connected"
-                      ? `已连接 ${gateway.connectedAddress}`
+                      ? `Connected to ${gateway.connectedAddress}`
                       : gateway.state === "mismatch"
-                        ? `当前连接 ${gateway.connectedAddress || "—"}，与学生邮箱不一致`
+                        ? `Currently connected to ${gateway.connectedAddress || "—"}, which does not match the student mailbox`
                         : gateway.state === "disconnected"
-                          ? "扩展未连接邮箱标签页"
-                          : "未启用 163 邮箱扩展适配器"}
+                          ? "The extension is not connected to a mailbox tab"
+                          : "The 163 mailbox extension adapter is not enabled"}
                   </small>
                 </div>
               </div>
 
               <dl className="gateway-facts">
                 <div>
-                  <dt>适配器</dt>
+                  <dt>Adapter</dt>
                   <dd>{data?.mailbox_capabilities.adapter || "unavailable"}</dd>
                 </div>
                 <div>
-                  <dt>桥接协议</dt>
+                  <dt>Bridge protocol</dt>
                   <dd>
                     v{(gatewayQuery.data ?? data?.mailbox_capabilities.gateway)?.protocol ?? 0}
                   </dd>
                 </div>
                 <div>
-                  <dt>已连接邮箱</dt>
+                  <dt>Connected mailbox</dt>
                   <dd>{gateway.connectedAddress || "—"}</dd>
                 </div>
                 <div>
-                  <dt>当前学生邮箱</dt>
-                  <dd>{gateway.studentAddress || "尚未选择学生"}</dd>
+                  <dt>Current student mailbox</dt>
+                  <dd>{gateway.studentAddress || "No student selected"}</dd>
                 </div>
                 <div>
-                  <dt>最近观察</dt>
+                  <dt>Latest observation</dt>
                   <dd>
                     {studentMailbox?.latest
                       ? `${formatTime(studentMailbox.latest.observed_at)} · ${studentMailbox.latest.status}`
-                      : "尚未观察"}
+                      : "Not yet observed"}
                   </dd>
                 </div>
                 <div>
-                  <dt>观察批次 / 邮件</dt>
+                  <dt>Observation batches / messages</dt>
                   <dd>
                     {studentMailbox
                       ? `${studentMailbox.observation_count} · ${studentMailbox.message_count}`
@@ -374,21 +377,23 @@ export default function WorkspacePage({ route }: { route: Route }) {
 
               {gateway.state === "disconnected" && (
                 <ol className="gateway-steps">
-                  <li>在浏览器中登录目标 163 邮箱并进入邮箱主页。</li>
-                  <li>扩展会自动发现并连接；页面刷新或桥接抖动后也会自动恢复。</li>
-                  <li>只有同时打开多个邮箱页时，才需在目标页面点扩展图标选择。</li>
+                  <li>Sign in to the target 163 mailbox in the browser and open the mailbox home.</li>
+                  <li>The extension discovers and connects automatically; it also recovers after page refreshes or bridge jitter.</li>
+                  <li>Only when several mailbox pages are open at once do you need to pick the target page via the extension icon.</li>
                 </ol>
               )}
               {gateway.state === "mismatch" && (
                 <p className="gateway-note">
-                  扩展同时只能连接一个标签页。请在扩展中断开当前邮箱，重新连接
-                  <strong> {gateway.studentAddress || "该学生的邮箱"} </strong>
-                  后再读取。
+                  The extension can only connect one tab at a time. Disconnect the current mailbox
+                  in the extension and reconnect
+                  <strong> {gateway.studentAddress || "this student's mailbox"} </strong>
+                  before reading.
                 </p>
               )}
               {gateway.state === "unavailable" && (
                 <p className="gateway-note">
-                  Core 未启用专用扩展适配器。安装并注册扩展、连接邮箱标签页后，网关会变为可用。
+                  Core has not enabled the dedicated extension adapter. The gateway becomes available
+                  once the extension is installed, registered, and connected to a mailbox tab.
                 </p>
               )}
 
@@ -398,10 +403,10 @@ export default function WorkspacePage({ route }: { route: Route }) {
                   className="primary"
                   disabled={!gateway.canObserve || observing}
                   onClick={observeMailbox}
-                  title={gateway.canObserve ? "只读观察邮箱并由 Core 保存对账" : "需要连接到当前学生的邮箱"}
+                  title={gateway.canObserve ? "Observe the mailbox read-only and let Core persist and reconcile" : "Requires a connection to the current student's mailbox"}
                 >
                   <Icon name="refresh" size={15} />
-                  {observing ? "正在观察邮箱…" : "刷新邮箱证据"}
+                  {observing ? "Observing mailbox…" : "Refresh mailbox evidence"}
                 </button>
                 <button
                   type="button"
@@ -412,7 +417,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
                     navigate("mailbox");
                   }}
                 >
-                  管理对账 <Icon name="arrow" size={14} />
+                  Manage reconciliation <Icon name="arrow" size={14} />
                 </button>
                 <button
                   type="button"
@@ -420,12 +425,12 @@ export default function WorkspacePage({ route }: { route: Route }) {
                   disabled={observing || busy}
                   onClick={reload}
                 >
-                  立即检查状态
+                  Check status now
                 </button>
               </div>
               <p className="gateway-foot">
                 <Icon name="shield" size={13} />
-                每次观察经 Core 持久化并对账；观察不创建任务、不授权发送。
+                Every observation is persisted and reconciled by Core; observation creates no tasks and grants no sending authority.
               </p>
             </section>
           </div>

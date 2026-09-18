@@ -143,6 +143,10 @@ export type Commands = {
     args: { name: string; mailbox: string };
     result: import("./types").StudentWorkspace;
   };
+  delete_student: {
+    args: { student_id: string; mailbox: string };
+    result: import("./types").DeletedStudentWorkspace;
+  };
   check_duplicate: {
     args: { preparation_id: string };
     result: { finding: string };
@@ -217,6 +221,7 @@ const MUTATING_COMMANDS = new Set<CommandName>([
   "execution_run",
   "create_campaign",
   "create_student",
+  "delete_student",
   "check_duplicate",
   "refresh_mailbox",
   "update_preparation",

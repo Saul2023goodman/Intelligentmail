@@ -36,6 +36,29 @@ class CampaignTests(unittest.TestCase):
                 self.assertEqual(campaign["name"], "Autumn outreach")
                 self.assertEqual(restarted.get_campaign(campaign["id"]), campaign)
 
+    def test_student_workspace_is_durable_and_can_be_deleted_explicitly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            with SmartMail(home) as core:
+                kept = core.create_student("Kept Student", "kept@163.com")
+                removed = core.create_student("Removed Student", "removed@163.com")
+                self.assertEqual(core._db.execute("PRAGMA journal_mode").fetchone()[0], "wal")
+
+            with SmartMail(home) as restarted:
+                self.assertEqual(
+                    [student["id"] for student in restarted.list_students()],
+                    [kept["id"], removed["id"]],
+                )
+                with self.assertRaisesRegex(SmartMailError, "exact Mailbox address"):
+                    restarted.delete_student(removed["id"], "wrong@163.com")
+                result = restarted.delete_student(removed["id"], "removed@163.com")
+                self.assertTrue(result["deleted"])
+
+            with SmartMail(home) as reopened:
+                self.assertEqual(reopened.list_students(), [kept])
+                self.assertEqual(
+                    reopened._db.execute("PRAGMA foreign_key_check").fetchall(), [])
+
     def test_student_owns_one_campaign_and_names_never_decide_scope(self):
         with tempfile.TemporaryDirectory() as directory:
             with SmartMail(Path(directory)) as core:

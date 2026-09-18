@@ -5,6 +5,13 @@ export type StudentWorkspace = {
   mailbox: string;
   campaign_id: string;
 };
+export type DeletedStudentWorkspace = {
+  id: string;
+  name: string;
+  mailbox: string;
+  campaign_ids: string[];
+  deleted: true;
+};
 export type Task = {
   task_id: string;
   student_name: string;

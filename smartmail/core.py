@@ -51,8 +51,15 @@ class SmartMail(
         #: The controlled time this store reasons with. Replacing it makes every
         #: date-dependent decision (planning windows, expiry) reproducible.
         self._clock = clock or (lambda: datetime.now(timezone.utc))
-        self._db = sqlite3.connect(self.home / "smartmail.sqlite3")
+        self.store_path = self.home / "smartmail.sqlite3"
+        self._db = sqlite3.connect(self.store_path, timeout=10)
         self._db.row_factory = sqlite3.Row
+        # The store is the durable system of record, not a process-local cache.
+        # WAL keeps committed records recoverable across normal application
+        # shutdowns while allowing the extension bridge to read concurrently.
+        self._db.execute("PRAGMA journal_mode = WAL")
+        self._db.execute("PRAGMA synchronous = FULL")
+        self._db.execute("PRAGMA busy_timeout = 10000")
         self._db.execute("PRAGMA foreign_keys = ON")
         self._db.execute(
             "CREATE TABLE IF NOT EXISTS campaigns ("

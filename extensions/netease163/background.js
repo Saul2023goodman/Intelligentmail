@@ -19,7 +19,7 @@ let polling = false;
 let connecting = false;
 let autoConnect = false;
 let retryAttempt = 0;
-let lastError = "正在自动查找已登录的 163 邮箱…";
+let lastError = "Auto-discovering a signed-in 163 mailbox…";
 const waiting = new Map();
 
 function publicStatus() {
@@ -73,12 +73,12 @@ async function setAutoConnect(value) {
 
 function rpc(type, payload = {}) {
   return new Promise((resolve, reject) => {
-    if (!port) return reject(new Error("本机桥接未连接"));
+    if (!port) return reject(new Error("Native bridge not connected"));
     const selectedPort = port;
     const id = crypto.randomUUID();
     const timeout = setTimeout(() => {
       waiting.delete(id);
-      reject(new Error("本机桥接响应超时"));
+      reject(new Error("Native bridge response timed out"));
     }, 10000);
     waiting.set(id, {
       resolve: value => { clearTimeout(timeout); resolve(value); },
@@ -143,7 +143,7 @@ function scheduleRetry(detail) {
 function bridgeLost(selected, selectedPort, detail) {
   if (connection !== selected || port !== selectedPort) return;
   closePort(detail);
-  scheduleRetry(`${detail}；正在自动重连`);
+  scheduleRetry(`${detail}; auto-reconnecting`);
 }
 
 function startPolling(selected, selectedPort) {
@@ -185,15 +185,15 @@ async function connectBridge() {
   port = selectedPort;
   bridgeReady = false;
   selectedPort.onMessage.addListener(message => {
-    if (message.protocol !== PROTOCOL) return bridgeLost(selected, selectedPort, "本机桥接版本不兼容");
+    if (message.protocol !== PROTOCOL) return bridgeLost(selected, selectedPort, "Native bridge protocol mismatch");
     const callback = waiting.get(message.id);
     if (!callback) return;
     waiting.delete(message.id);
     if (message.ok) callback.resolve(message.result);
-    else callback.reject(new Error(message.error || "本机桥接拒绝请求"));
+    else callback.reject(new Error(message.error || "Native bridge rejected the request"));
   });
   selectedPort.onDisconnect.addListener(() => {
-    const detail = chrome.runtime.lastError?.message || "本机桥接已关闭";
+    const detail = chrome.runtime.lastError?.message || "Native bridge closed";
     bridgeLost(selected, selectedPort, detail);
   });
   try {
@@ -213,7 +213,7 @@ async function probeTab(tabId) {
   const tab = await chrome.tabs.get(tabId);
   const url = new URL(tab.url || "");
   if (url.origin !== "https://mail.163.com" || url.pathname !== "/js6/main.jsp")
-    throw new Error("请先登录 163 邮箱；扩展会在邮箱主页自动连接");
+    throw new Error("Sign in to 163 Mail first; the extension auto-connects on the mailbox home page");
   await chrome.scripting.executeScript({ target: { tabId }, world: "MAIN", files: ["reader.js"] });
   await chrome.scripting.executeScript({
     target: { tabId }, world: "ISOLATED", files: ["common.js", "observe.js", "compose.js", "schedule.js"],
@@ -228,20 +228,20 @@ async function probeTab(tabId) {
     });
   }
   const mailboxAddress = mailboxIdentity(identity);
-  if (!mailboxAddress) throw new Error("邮箱仍在登录或加载中；扩展将自动重试");
+  if (!mailboxAddress) throw new Error("Mailbox is still signing in or loading; the extension will retry automatically");
   return { tabId, documentId: identity[0].documentId, mailbox_address: mailboxAddress };
 }
 
 async function connectTab(tabId) {
-  if (busy) throw new Error("操作尚未结束；请等待或检查执行台账");
+  if (busy) throw new Error("An operation is still running; wait or check the execution ledger");
   if (connection?.tabId === tabId) {
     if (!port) await connectBridge();
     return publicStatus();
   }
   const target = await probeTab(tabId);
-  clearTarget("正在切换邮箱标签页");
+  clearTarget("Switching mailbox tab");
   connection = target;
-  lastError = "已识别邮箱，正在连接本机桥接…";
+  lastError = "Mailbox identified; connecting to the native bridge…";
   await connectBridge();
   return publicStatus();
 }
@@ -259,8 +259,8 @@ async function ensureConnection(preferredTabId = null) {
     const tab = selectMailboxTab(tabs, preferredTabId);
     if (!tab) {
       lastError = tabs.length > 1
-        ? "检测到多个 163 邮箱标签页；请在要使用的页面点一次扩展图标"
-        : "未发现已登录的 163 邮箱主页；打开邮箱后会自动连接";
+        ? "Multiple 163 mailbox tabs detected; click the extension icon once on the page to use"
+        : "No signed-in 163 mailbox home page found; it connects automatically once the mailbox is open";
       return publicStatus();
     }
     return await connectTab(tab.id);
@@ -279,7 +279,7 @@ async function resumeAndConnect(tabId = null) {
 
 async function pause() {
   await setAutoConnect(false);
-  clearTarget("自动连接已暂停");
+  clearTarget("Auto-connect paused");
   return publicStatus();
 }
 
@@ -314,7 +314,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (message.type === "openMailbox") {
       await setAutoConnect(true);
       await chrome.tabs.create({ url: "https://mail.163.com/" });
-      lastError = "请完成登录；进入邮箱主页后将自动连接";
+      lastError = "Complete sign-in; the extension auto-connects once the mailbox home page loads";
       return publicStatus();
     }
     if (message.type !== "status") throw new Error("Unsupported extension action");
@@ -325,12 +325,12 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
 
 chrome.tabs.onRemoved.addListener(tabId => {
   if (connection?.tabId !== tabId) return;
-  clearTarget("邮箱标签页已关闭；正在查找其他邮箱页");
+  clearTarget("Mailbox tab closed; looking for another mailbox page");
   void ensureConnection().catch(error => scheduleRetry(String(error.message || error)));
 });
 chrome.tabs.onUpdated.addListener((tabId, change) => {
   if (connection?.tabId === tabId && change.status === "loading")
-    clearTarget("邮箱页面正在重新载入；完成后将自动重连");
+    clearTarget("Mailbox page is reloading; it reconnects automatically when done");
   if (change.status === "complete")
     void ensureConnection(tabId).catch(error => scheduleRetry(String(error.message || error)));
 });

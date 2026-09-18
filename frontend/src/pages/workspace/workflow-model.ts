@@ -16,36 +16,36 @@ export function fitScale(width: number, height: number, padding = 40): number {
 export const stages = [
   {
     id: "mailbox",
-    label: "邮箱网关",
-    caption: "Mailbox gateway · 连接状态",
+    label: "Mailbox gateway",
+    caption: "Mailbox gateway · connection status",
     icon: "mail",
     color: "blue",
     x: 55,
     y: 60,
     description:
-      "外部执行基础设施：经专用 163 邮箱扩展与本机桥接连接一个已登录邮箱标签页，观察与已确认发送都走这条总线。点击查看连接健康状态、读取邮箱证据或进行连接管理；观察为只读，不会授权发送。",
+      "External execution infrastructure: connects one signed-in mailbox tab via the dedicated 163 mail extension and the native bridge; observation and confirmed sending both go through this bus. Click to view connection health, read mailbox evidence, or manage the connection; observation is read-only and never authorizes sending.",
   },
   {
     id: "database",
-    label: "SmartMail 数据库",
-    caption: "持久化记录与证据",
+    label: "SmartMail database",
+    caption: "Persistent records & evidence",
     icon: "database",
     color: "purple",
     x: 295,
     y: 60,
     description:
-      "保存邮箱观察批次、来源材料、任务、草稿版本和执行证据。外部观察与本地 Preparation 分开存储；后续比对和查重使用这些记录。",
+      "Stores mailbox observation batches, source materials, tasks, preparation versions, and execution evidence. External observations and local Preparations are stored separately; later Reconciliation and duplicate checks use these records.",
   },
   {
     id: "comparison",
-    label: "比对与查重",
-    caption: "任务匹配 · 历史发送检查",
+    label: "Reconciliation & duplicate check",
+    caption: "Task matching · historical send check",
     icon: "filter",
     color: "amber",
     x: 55,
     y: 213,
     description:
-      "读取入库时 Core 对账并关联可识别的证据；选中已有 Preparation 的任务可执行查重，检查本 Campaign 内的发送记录及该学生邮箱的观察历史。重复疑似进入人工处理，覆盖不足会明确展示。",
+      "During observation intake, Core reconciles and links identifiable evidence; tasks with an existing Preparation can run a duplicate check against send records in this Campaign and the student mailbox's observation history. Duplicate suspicions go to manual handling, and insufficient coverage is shown explicitly.",
   },
   {
     id: "intake",
@@ -60,14 +60,14 @@ export const stages = [
   },
   {
     id: "preparation",
-    label: "更新 / 调整草稿",
-    caption: "本地 Preparation · 保留历史",
+    label: "Update / adjust draft",
+    caption: "Local Preparation · history retained",
     icon: "mail",
     color: "blue",
     x: 295,
     y: 213,
     description:
-      "选择任务后可调整主题、收件人，或通过修订来源文档 Rewrite 正文。修改后重新校验、重新查重和确认；外部草稿观察不会自动覆盖本地内容。",
+      "After selecting a task you can adjust the subject and recipients, or Rewrite the body by revising the source document. Changes trigger revalidation, a new duplicate check, and renewed Confirmation; external draft observations never automatically overwrite local content.",
   },
   {
     id: "ready",
@@ -218,7 +218,7 @@ export function stageMetric(
   data: Workspace | null,
 ): { count: number | string; unit: string } {
   if (stage === "mailbox")
-    return { count: data?.mailboxes.length ?? "—", unit: "学生邮箱" };
+    return { count: data?.mailboxes.length ?? "—", unit: "student mailboxes" };
   if (stage === "database")
     return {
       count: data
@@ -227,7 +227,7 @@ export function stageMetric(
             0,
           )
         : "—",
-      unit: "读取批次",
+      unit: "observation batches",
     };
   return { count: data ? tasksFor(stage, data).length : "—", unit: "tasks" };
 }

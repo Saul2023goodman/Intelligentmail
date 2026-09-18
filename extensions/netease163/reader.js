@@ -246,7 +246,7 @@
     const name = String(item?.filename || item?.name || item?.fileName || "").trim();
     if (!part && !name) return null;
     return {
-      part, name: name || `附件 ${part}`,
+      part, name: name || `Attachment ${part}`,
       size: Number(item?.size ?? item?.contentLength ?? 0) || 0,
       content_type: String(item?.contentType || item?.mimeType || "").trim(),
       content_id: String(item?.contentId || item?.cid || "").trim(),

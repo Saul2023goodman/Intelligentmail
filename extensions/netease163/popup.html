@@ -1,13 +1,13 @@
 <!doctype html>
-<html lang="zh-CN">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SmartMail 邮箱连接</title><link rel="stylesheet" href="popup.css"></head>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>SmartMail Mailbox Connection</title><link rel="stylesheet" href="popup.css"></head>
 <body>
-  <h1>SmartMail · 163 邮箱</h1>
-  <p id="status" role="status" aria-live="polite">正在读取连接状态…</p>
-  <p>扩展会自动发现、连接并恢复已登录的邮箱主页。只有多个邮箱页无法判定时才需要手动选择。</p>
-  <button id="connect">连接当前邮箱</button><button id="disconnect" class="secondary">暂停自动连接</button>
-  <p class="note">连接不代表发送授权。首次使用须安装本机桥接；自动恢复不会重放已领取的操作。</p>
-  <details><summary>安装时使用的扩展 ID</summary><code id="extension-id"></code></details>
+  <h1>SmartMail · 163 Mailbox</h1>
+  <p id="status" role="status" aria-live="polite">Reading connection status…</p>
+  <p>The extension automatically discovers, connects to, and restores your signed-in mailbox page. Manual selection is only needed when multiple mailbox tabs can't be distinguished.</p>
+  <button id="connect">Connect current mailbox</button><button id="disconnect" class="secondary">Pause auto-connect</button>
+  <p class="note">Connecting does not authorize sending. The native bridge must be installed on first use; automatic recovery never replays claimed operations.</p>
+  <details><summary>Extension ID used at install time</summary><code id="extension-id"></code></details>
   <script src="popup.js"></script>
 </body>
 </html>

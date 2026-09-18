@@ -128,23 +128,23 @@ export function StudentDialog({
         </button>
         <form onSubmit={submit}>
           <div className="eyebrow">STUDENT WORKSPACE</div>
-          <h2 id="student-dialog-title">设定学生</h2>
+          <h2 id="student-dialog-title">Set up student</h2>
           <p>
             {intro ??
-              "一位学生绑定一个发件邮箱与一个 Campaign。读取、比对查重与跟进都在该学生的工作区内进行。"}
+              "Each student is bound to one sending mailbox and one Campaign. Observation, reconciliation & duplicate check, and follow-up all happen inside that student's workspace."}
           </p>
           <label className="field">
-            学生姓名
+            Student name
             <input
               required
               maxLength={200}
               value={name}
               onChange={(event) => setName(event.target.value)}
-              placeholder="例如：Zhang Wei"
+              placeholder="e.g. Zhang Wei"
             />
           </label>
           <label className="field">
-            163 邮箱地址
+            163 mailbox address
             <input
               required
               type="email"
@@ -163,7 +163,7 @@ export function StudentDialog({
             className="primary full"
             disabled={busy || !name.trim() || !mailboxAddress.trim()}
           >
-            {busy ? "添加中…" : "添加学生"}
+            {busy ? "Adding…" : "Add student"}
             <Icon name="arrow" size={16} />
           </button>
         </form>

@@ -33,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     create.add_argument("--mailbox", required=True)
     student.add_parser("list")
     student.add_parser("show").add_argument("id")
+    delete_student = student.add_parser(
+        "delete", help="Permanently delete one Student workspace and its local records")
+    delete_student.add_argument("id")
+    delete_student.add_argument(
+        "--mailbox", required=True, help="Exact Mailbox address used to confirm deletion")
 
     intake = commands.add_parser("import", help="Import an existing .xlsx or .zip bundle")
     intake.add_argument("path", type=Path)

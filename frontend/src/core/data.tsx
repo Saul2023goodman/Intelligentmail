@@ -16,6 +16,7 @@ import { subscribeCoreMutations, type CoreMutation } from "./events.ts";
 const MUTATION_IMPACTS: Record<string, string[]> = {
   create_campaign: ["workspace"],
   create_student: ["workspace"],
+  delete_student: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "mailbox_workspace", "mailbox_history", "followup_workspace", "records_workspace", "records_task"],
   intake_import: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
   confirm_attachment: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],
   set_attachment_source: ["workspace", "intake_workspace", "review_workspace", "execution_workspace", "records_workspace", "task", "records_task"],

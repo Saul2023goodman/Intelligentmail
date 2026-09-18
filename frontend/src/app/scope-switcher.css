@@ -124,9 +124,8 @@
 }
 .scope-row {
   width: 100%;
-  justify-content: flex-start;
-  gap: 10px;
-  padding: 9px 10px;
+  display: flex;
+  align-items: center;
   border: 1px solid transparent;
   border-radius: 9px;
   background: transparent;
@@ -139,6 +138,48 @@
 .scope-row.current {
   border-color: #cfe0fb;
   background: #f5f9ff;
+}
+.scope-row-select {
+  min-width: 0;
+  flex: 1;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 9px 8px 9px 10px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+.scope-row-select:hover:not(:disabled) {
+  filter: none;
+}
+.scope-row-delete {
+  width: 30px;
+  height: 30px;
+  margin-right: 5px;
+  flex: 0 0 30px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: #a3aebf;
+  opacity: 0;
+}
+.scope-row:hover .scope-row-delete,
+.scope-row:focus-within .scope-row-delete {
+  opacity: 1;
+}
+.scope-row-delete:hover:not(:disabled) {
+  color: #c34150;
+  background: #fff0f2;
+  filter: none;
+}
+.scope-delete-error {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff0f2;
+  color: #a72c3c;
+  font-size: 11px;
+  line-height: 1.5;
 }
 .scope-row-avatar {
   width: 30px;

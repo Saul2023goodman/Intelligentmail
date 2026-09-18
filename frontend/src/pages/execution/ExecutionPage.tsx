@@ -80,7 +80,7 @@ const OUTCOME_TONE: Record<string, string> = {
 };
 const DAY_TOKENS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 const DAY_SHORT: Record<string, string> = {
-  SUN: "日", MON: "一", TUE: "二", WED: "三", THU: "四", FRI: "五", SAT: "六",
+  SUN: "Su", MON: "Mo", TUE: "Tu", WED: "We", THU: "Th", FRI: "Fr", SAT: "Sa",
 };
 const COMMON_ZONES = [
   "Asia/Shanghai", "Asia/Tokyo", "Asia/Singapore", "Australia/Sydney",
@@ -137,10 +137,10 @@ function project(
 }
 function countdown(epoch: number, now: number) {
   const minutes = Math.round((epoch - now) / 60000);
-  if (minutes <= 0) return "已到";
-  if (minutes < 60) return `${minutes} 分钟后`;
-  if (minutes < 1440) return `${Math.round(minutes / 60)} 小时后`;
-  return `${Math.round(minutes / 1440)} 天后`;
+  if (minutes <= 0) return "Due now";
+  if (minutes < 60) return `in ${minutes} min`;
+  if (minutes < 1440) return `in ${Math.round(minutes / 60)} hr`;
+  return `in ${Math.round(minutes / 1440)} days`;
 }
 
 function Empty({ icon = "mail", children }: { icon?: IconName; children: ReactNode }) {
@@ -285,7 +285,7 @@ function PlanSettings({
     <div className="ex-settings">
       <div className="ex-settings-rules">
         <label>
-          时区（IANA）
+          Timezone (IANA)
           <input
             list="ex-zones"
             value={timezone}
@@ -298,7 +298,7 @@ function PlanSettings({
         </datalist>
 
         <div className="ex-field">
-          <span>允许窗口 · 每个窗口在某个星期几出现一次，就是一个档期</span>
+          <span>Allowed windows · each window occurrence on a weekday is one session</span>
           {windows.map((window, index) => (
             <div className="ex-window" key={index}>
               <div className="ex-days">
@@ -348,58 +348,58 @@ function PlanSettings({
           ))}
           <div className="ex-window-add">
             <button type="button" className="ex-button" onClick={() => addWindow(["MON"])}>
-              <Icon name="plus" size={14} /> 添加窗口
+              <Icon name="plus" size={14} /> Add window
             </button>
             <button
               type="button"
               className="ex-button"
               onClick={() => addWindow(DAY_TOKENS.slice(1, 6))}
             >
-              工作日
+              Weekdays
             </button>
             <button type="button" className="ex-button" onClick={() => addWindow(DAY_TOKENS)}>
-              每天
+              Every day
             </button>
             <button
               type="button"
               className="ex-button"
               onClick={() => addWindow(["SAT", "SUN"])}
             >
-              周末
+              Weekends
             </button>
           </div>
         </div>
 
         <div className="ex-rule-numbers">
           <label>
-            间隔（分钟）
+            Spacing (minutes)
             <input type="number" min="1" value={spacing}
               onChange={(e) => setSpacing(e.target.value)} />
           </label>
           <label>
-            每日上限
+            Daily limit
             <input type="number" min="1" value={daily}
               onChange={(e) => setDaily(e.target.value)} />
           </label>
           <label>
-            视野（天）
+            Horizon (days)
             <input type="number" min="1" value={horizon}
               onChange={(e) => setHorizon(e.target.value)} />
           </label>
         </div>
 
         <div className="ex-field ex-pace">
-          <span>同校节奏</span>
+          <span>Same-institution pacing</span>
           <p>
-            同一所院校的导师会互相交流。把间隔设得再大，也挡不住同一档期里出现两位同校导师——
-            只有这条规则能。
+            Supervisors at the same institution talk to each other. No spacing is large
+            enough to stop two same-school supervisors landing in one session — only this rule does.
           </p>
           <div className="ex-pace-row">
-            <span>同一档期内同一院校最多</span>
+            <span>At most per institution in one session</span>
             <select value={limit} onChange={(e) => setLimit(e.target.value)}>
-              <option value="1">1 位导师（最安全）</option>
-              <option value="2">2 位导师</option>
-              <option value="3">3 位导师</option>
+              <option value="1">1 supervisor (safest)</option>
+              <option value="2">2 supervisors</option>
+              <option value="3">3 supervisors</option>
             </select>
           </div>
         </div>
@@ -407,32 +407,32 @@ function PlanSettings({
       </div>
 
       <div className="ex-settings-preview">
-        <h3>这套规则会排出什么</h3>
+        <h3>What these rules would schedule</h3>
         <dl className="ex-projection">
-          <dt>视野内档期</dt>
-          <dd>{preview.sessions.length} 个</dd>
-          <dt>排完需要</dt>
-          <dd>{sessionsNeeded} 个档期</dd>
-          <dt>就绪动作</dt>
-          <dd>{preview.total} 位导师</dd>
-          <dt>最后一批</dt>
+          <dt>Sessions in horizon</dt>
+          <dd>{preview.sessions.length}</dd>
+          <dt>Needed to schedule all</dt>
+          <dd>{sessionsNeeded} sessions</dd>
+          <dt>Ready actions</dt>
+          <dd>{preview.total} supervisors</dd>
+          <dt>Last batch</dt>
           <dd>{sessionsNeeded ? preview.finish(sessionsNeeded) : "—"}</dd>
         </dl>
         {sessionsNeeded > preview.sessions.length ? (
           <p className="ex-banner ex-error">
-            视野内只有 {preview.sessions.length} 个档期，排完需要 {sessionsNeeded} 个：
-            有 {preview.total - preview.placed.reduce((s, n) => s + n, 0)} 位排不下。
-            加大视野天数、增加窗口，或放宽同校节奏。
+            Only {preview.sessions.length} sessions fit in the horizon but {sessionsNeeded} are needed:
+            {preview.total - preview.placed.reduce((s, n) => s + n, 0)} supervisors cannot be placed.
+            Increase the horizon days, add windows, or relax the same-institution pacing.
           </p>
         ) : (
           <p className="ex-banner">
-            这套规则能在视野内排下全部 {preview.total} 位导师，
-            且不会有两个同校导师落在同一档期。
+            These rules fit all {preview.total} supervisors within the horizon,
+            and no two same-institution supervisors land in the same session.
           </p>
         )}
         {preview.crowded && (
           <p className="ex-banner ex-error">
-            每日上限 {draft.daily_limit} 小于某个档期想容纳的院校数，多出来的会顺延到下一档期。
+            The daily limit {draft.daily_limit} is below the institutions some session wants to hold; the overflow rolls into the next session.
           </p>
         )}
         <div className="ex-mini">
@@ -451,18 +451,18 @@ function PlanSettings({
             ))}
           </div>
           {preview.sessions.length > 8 && (
-            <small>仅预览前 8 个档期</small>
+            <small>Preview of the first 8 sessions only</small>
           )}
         </div>
         <p className="ex-hint">
-          保存规则不会改动已经生成的排期。保存后重新生成排期才会应用；
-          改期一个已确认的时间会让那次确认失效。
+          Saving rules never changes an existing schedule. Regenerate the plan after saving to apply them;
+          rescheduling a confirmed time invalidates that Confirmation.
         </p>
       </div>
       <div className="ex-dialog-actions ex-settings-actions">
-        <span>Core 会校验每一项约束，拒绝时指名具体约束</span>
+        <span>Core validates every constraint and names the specific one when it refuses</span>
         <button className="ex-button ex-primary" disabled={busy} onClick={submit}>
-          {busy ? "Saving…" : "保存规则"}
+          {busy ? "Saving…" : "Save rules"}
         </button>
       </div>
     </div>
@@ -738,12 +738,12 @@ export default function ExecutionPage() {
             }}
           >
             <Icon name="filter" size={16} />
-            排期设置
+            Schedule settings
           </button>
           {configuration && (
             <span className="ex-timezone">
-              {configuration.timezone} · 间隔 {configuration.spacing_minutes} 分钟 ·
-              每日 {configuration.daily_limit} · 同校每档期 {configuration.institution_limit} 位
+              {configuration.timezone} · Spacing {configuration.spacing_minutes} min ·
+              Daily {configuration.daily_limit} · {configuration.institution_limit} per institution per session
             </span>
           )}
         </div>
@@ -847,7 +847,7 @@ export default function ExecutionPage() {
                 )}
                 {blocked(queue).length > 0 && (
                   <section className="ex-pool-group ex-pool-blocked">
-                    <h3>未就绪 · 不进队列 <span>{blocked(queue).length}</span></h3>
+                    <h3>Not ready · not queued <span>{blocked(queue).length}</span></h3>
                     {blocked(queue).map((row) => (
                       <div className="ex-task is-blocked" key={row.preparation_id}>
                         <span className="ex-task-content">
@@ -873,7 +873,7 @@ export default function ExecutionPage() {
                   }, true)}
                 >
                   <Icon name="send" size={14} />
-                  立即发送 {picked.length}
+                  Send now {picked.length}
                 </button>
               </div>
             </>,
@@ -885,7 +885,7 @@ export default function ExecutionPage() {
             <>
               <div className="ex-panel-sub ex-timeline-sub">
                 <span className="ex-scale">
-                  {rows.length} 校 × {sessions.length} 档期 · {plan ? human(plan.status) : "无排期"}
+                  {rows.length} institutions × {sessions.length} sessions · {plan ? human(plan.status) : "No plan"}
                 </span>
                 <span className="ex-sub-tools">
                   <span className="ex-legend">
@@ -896,7 +896,7 @@ export default function ExecutionPage() {
                       </span>
                     ))}
                   </span>
-                  <span className="ex-density" role="group" aria-label="网格密度">
+                  <span className="ex-density" role="group" aria-label="Grid density">
                     {DENSITIES.map((option) => (
                       <button
                         key={option.key}
@@ -938,7 +938,7 @@ export default function ExecutionPage() {
               )}
               {excluded.length > 0 && (
                   <div className="ex-excluded">
-                    <h3>未进入排期 {excluded.length}</h3>
+                    <h3>Not in plan {excluded.length}</h3>
                     {excluded.map((item) => (
                       <article className="ex-card ex-muted" key={item.preparation_id}>
                         <strong>{item.institution_name || taskName(item.task_id)}</strong>
@@ -949,7 +949,7 @@ export default function ExecutionPage() {
                   </div>
                 )}
               <div className="ex-panel-foot">
-                <span>行内串行 · 列间并行 · 一格一位导师</span>
+                <span>Serial within a row · parallel across columns · one supervisor per cell</span>
                 <span className="ex-foot-actions">
                   <button
                     className="ex-button"
@@ -960,7 +960,7 @@ export default function ExecutionPage() {
                     )}
                   >
                     <Icon name="plus" size={14} />
-                    生成排期
+                    Generate plan
                   </button>
                   <button
                     className="ex-button ex-primary"
@@ -969,7 +969,7 @@ export default function ExecutionPage() {
                     onClick={() => plan && review({ kind: "plan", plan_id: plan.id }, false)}
                   >
                     <Icon name="shield" size={14} />
-                    确认入队
+                    Confirm &amp; queue
                   </button>
                 </span>
               </div>
@@ -979,7 +979,7 @@ export default function ExecutionPage() {
               type="button"
               className={`ex-icon-button${focused ? " is-active" : ""}`}
               aria-pressed={focused}
-              title={focused ? "退出专注（Esc）" : "专注时间线"}
+              title={focused ? "Exit focus (Esc)" : "Focus timeline"}
               onClick={() => setFocused(!focused)}
             >
               <Icon name="fit" size={14} />
@@ -993,7 +993,7 @@ export default function ExecutionPage() {
               <div className="ex-panel-sub">
                 <span>Confirmed actions, earliest first</span>
                 <span className="ex-legend">
-                  <span className="ex-chip ex-chip-amber">已到 {scheduledDue.length + immediateDue.length}</span>
+                  <span className="ex-chip ex-chip-amber">Due {scheduledDue.length + immediateDue.length}</span>
                 </span>
               </div>
               <div className="ex-scroll">
@@ -1049,7 +1049,7 @@ export default function ExecutionPage() {
               <div className="ex-panel-foot">
                 <span>
                   {!available("scheduled") && (
-                    <span className="ex-note">定时投放：{basis("scheduled")}</span>
+                    <span className="ex-note">Scheduled placement: {basis("scheduled")}</span>
                   )}
                 </span>
                 <button
@@ -1061,7 +1061,7 @@ export default function ExecutionPage() {
                   })}
                 >
                   <Icon name="clock" size={14} />
-                  投放到期定时 {scheduledDue.length}
+                  Place due scheduled {scheduledDue.length}
                 </button>
               </div>
             </>,
@@ -1085,7 +1085,7 @@ export default function ExecutionPage() {
             dialog.type === "result"
               ? `Execution run ${human(dialog.run.state)}`
               : dialog.type === "rules"
-                ? "排期设置"
+                ? "Schedule settings"
                 : dialog.type === "adjust"
                   ? "Adjust proposed time"
                   : dialog.type === "slot"
@@ -1161,23 +1161,23 @@ export default function ExecutionPage() {
                 <Message item={reviewById.get(dialog.slot.proposal.preparation_id)
                   ?? dialog.slot.proposal} />
                 <dl>
-                  <dt>院校</dt>
+                  <dt>Institution</dt>
                   <dd>{dialog.slot.institution}</dd>
-                  <dt>档期</dt>
+                  <dt>Session</dt>
                   <dd>
                     {dialog.slot.date} {DAY_LABEL[dialog.slot.weekday] ?? ""} ·{" "}
-                    {dialog.slot.session === null ? "档期" :
+                    {dialog.slot.session === null ? "Session" :
                       `${configuration?.windows[dialog.slot.session]?.start ?? ""}–${configuration?.windows[dialog.slot.session]?.end ?? ""}`}
                   </dd>
-                  <dt>状态</dt>
-                  <dd>{dialog.slot.proposal.confirmation_id ? "已入队" : "已排期"}</dd>
+                  <dt>Status</dt>
+                  <dd>{dialog.slot.proposal.confirmation_id ? "Queued" : "Scheduled"}</dd>
                 </dl>
                 <p className="ex-hint">
-                  Core 会校验窗口、间隔、每日上限，以及同一档期内该校是否已有另一位导师。
+                  Core checks the windows, spacing, and daily limit, plus whether this institution already has another supervisor in the same session.
                 </p>
               </div>
               <div className="ex-dialog-actions">
-                <span>改期一个已确认的时间会让那次确认失效</span>
+                <span>Rescheduling a confirmed time invalidates that Confirmation</span>
                 <button
                   className="ex-button"
                   onClick={() => setDialog({
@@ -1188,7 +1188,7 @@ export default function ExecutionPage() {
                     plan: dialog.plan,
                   })}
                 >
-                  改期
+                  Reschedule
                 </button>
               </div>
             </>

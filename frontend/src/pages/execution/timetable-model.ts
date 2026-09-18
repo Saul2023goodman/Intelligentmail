@@ -4,7 +4,7 @@ const WEEKDAY_TOKEN: Record<string, string> = {
   Sun: "SUN", Mon: "MON", Tue: "TUE", Wed: "WED", Thu: "THU", Fri: "FRI", Sat: "SAT",
 };
 export const DAY_LABEL: Record<string, string> = {
-  SUN: "周日", MON: "周一", TUE: "周二", WED: "周三", THU: "周四", FRI: "周五", SAT: "周六",
+  SUN: "Sun", MON: "Mon", TUE: "Tue", WED: "Wed", THU: "Thu", FRI: "Fri", SAT: "Sat",
 };
 export { WEEKDAY_TOKEN };
 
@@ -19,21 +19,21 @@ export type Tone =
   | "unknown"
   | "expired";
 export const SLOT_LABEL: Record<Tone, string> = {
-  proposed: "已排期",
-  queued: "已入队",
-  placed: "已投放",
-  sending: "发送中",
-  sent: "已发送",
-  failed: "发送失败",
-  unknown: "待对账",
-  expired: "需改期",
+  proposed: "Scheduled",
+  queued: "Queued",
+  placed: "Placed",
+  sending: "Sending",
+  sent: "Sent",
+  failed: "Failed",
+  unknown: "Unknown outcome",
+  expired: "Needs reschedule",
 };
 /** Rendering density. Wider grids need narrower columns to stay readable. */
 export type Density = "comfy" | "compact" | "micro";
 export const DENSITIES: { key: Density; label: string; hint: string }[] = [
-  { key: "comfy", label: "宽松", hint: "完整状态文字" },
-  { key: "compact", label: "紧凑", hint: "状态用色点" },
-  { key: "micro", label: "超密", hint: "最大列数" },
+  { key: "comfy", label: "Comfortable", hint: "Full status text" },
+  { key: "compact", label: "Compact", hint: "Status as color dots" },
+  { key: "micro", label: "Micro", hint: "Maximum columns" },
 ];
 
 /** One planned action placed in the institution × session grid. */

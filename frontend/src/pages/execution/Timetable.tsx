@@ -96,7 +96,7 @@ export default function Timetable({
           {showBands && (
             <tr className="ex-bandrow">
               <th className="ex-grid-corner" scope="col">
-                <span className="ex-corner-title">院校</span>
+                <span className="ex-corner-title">Institution</span>
               </th>
               {bands.map((band) => (
                 <th
@@ -112,7 +112,7 @@ export default function Timetable({
           )}
           <tr>
             <th className="ex-grid-corner" scope="col">
-              <span className="ex-corner-title">{showBands ? "档期" : "院校 / 档期"}</span>
+              <span className="ex-corner-title">{showBands ? "Session" : "Institution / Session"}</span>
             </th>
             {sessions.map((session) => (
               <th
@@ -131,11 +131,11 @@ export default function Timetable({
                   {session.dayStart || !showBands
                     ? `${session.date.slice(5).replace("-", "/")} ${DAY_LABEL[session.weekday] ?? ""}`
                     : DAY_LABEL[session.weekday] ?? ""}
-                  {session.date === today && <em className="ex-now-pill">今天</em>}
-                  {session.key === nowKey && <em className="ex-now-flag">现在</em>}
+                  {session.date === today && <em className="ex-now-pill">Today</em>}
+                  {session.key === nowKey && <em className="ex-now-flag">Now</em>}
                 </span>
                 <span className="ex-col-window">
-                  {session.start && session.end ? `${session.start}–${session.end}` : "档期"}
+                  {session.start && session.end ? `${session.start}–${session.end}` : "Session"}
                 </span>
                 <span className={`ex-col-count${session.count ? "" : " is-zero"}`}>
                   {session.count}
@@ -172,8 +172,8 @@ export default function Timetable({
                       data-row={row.institution}
                       data-col={session.key}
                     >
-                      <span className="ex-gap" aria-hidden="true"><i>不投</i></span>
-                      <span className="ex-sr-only">{row.institution} 该档期不投</span>
+                      <span className="ex-gap" aria-hidden="true"><i>Skip</i></span>
+                      <span className="ex-sr-only">{row.institution} skip this session</span>
                     </td>
                   );
                 }
@@ -190,7 +190,7 @@ export default function Timetable({
                       type="button"
                       className={`ex-slot is-${tone}${due ? " is-due" : ""}`}
                       title={`${row.institution} · ${slot.supervisor} · ${slot.time}`}
-                      aria-label={`${row.institution} ${slot.supervisor}，${session.date} ${slot.time}，${SLOT_LABEL[tone]}`}
+                      aria-label={`${row.institution} ${slot.supervisor}, ${session.date} ${slot.time}, ${SLOT_LABEL[tone]}`}
                       onClick={() => onPick(slot)}
                     >
                       <span className="ex-slot-head">
@@ -201,7 +201,7 @@ export default function Timetable({
                       {density === "comfy" && (
                         <span className="ex-slot-state">{SLOT_LABEL[tone]}</span>
                       )}
-                      {due && density === "comfy" && <em className="ex-slot-due">已到</em>}
+                      {due && density === "comfy" && <em className="ex-slot-due">Due</em>}
                     </button>
                   </td>
                 );

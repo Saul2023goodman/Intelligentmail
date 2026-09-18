@@ -14,14 +14,14 @@ const ZONES = [
 ];
 
 const STATE_LABEL: Record<string, string> = {
-  rule_not_configured: "未配置",
-  no_initial_send: "等待首封",
-  ordinary_reply_received: "已有普通回复",
-  reply_review_required: "回复待核对",
-  follow_up_open: "已进入 Ready Pool",
-  maximum_reached: "已达上限",
-  due: "触发到期",
-  waiting: "等待触发",
+  rule_not_configured: "Not configured",
+  no_initial_send: "Awaiting first send",
+  ordinary_reply_received: "Ordinary reply received",
+  reply_review_required: "Reply needs review",
+  follow_up_open: "In Ready Pool",
+  maximum_reached: "Maximum reached",
+  due: "Trigger due",
+  waiting: "Waiting to trigger",
 };
 const STATE_TONE: Record<string, string> = {
   due: "amber",
@@ -47,11 +47,11 @@ function StatusRow({ item }: { item: FollowUpStatus }) {
       <span className={`fu-state-dot is-${tone}`} />
       <span className="fu-task-copy">
         <strong>{item.supervisor_name}</strong>
-        <small>{item.institution_name} · {item.recipient_addresses[0] || "未记录收件地址"}</small>
+        <small>{item.institution_name} · {item.recipient_addresses[0] || "No recipient address recorded"}</small>
       </span>
       <span className="fu-task-time">
         <strong>{STATE_LABEL[item.state] ?? human(item.state)}</strong>
-        <small>{item.due_at ? formatTime(item.due_at) : `第 ${item.next_sequence} 次`}</small>
+        <small>{item.due_at ? formatTime(item.due_at) : `Follow-up #${item.next_sequence}`}</small>
       </span>
     </article>
   );
@@ -155,12 +155,12 @@ export default function MailboxPage() {
         query.setData(processed.workspace);
         setNotice(
           processed.state === "ready_pool"
-            ? `触发策略已确认；${processed.ready_preparation_ids.length} 个动作已进入 Batch execution 的 Ready Pool。`
-            : "触发策略已确认，系统已完成一次到期检查。",
+            ? `Trigger policy confirmed; ${processed.ready_preparation_ids.length} actions entered the Ready Pool for Batch execution.`
+            : "Trigger policy confirmed; the system completed one due check.",
         );
       } else {
         query.setData(configured.workspace);
-        setNotice("自动 Follow-up 已停用；不会派生新的动作。 ");
+        setNotice("Automatic Follow-up is disabled; no new actions will be derived. ");
       }
       setConfigOpen(false);
     } catch (reason) {
@@ -181,7 +181,7 @@ export default function MailboxPage() {
       query.setData(processed.workspace);
       await Promise.all([workspaceQuery.refresh(), mailboxQuery.refresh()]);
       setNotice(
-        `邮箱监测已更新：${human(result.observation.status)}。新回复已参与 Follow-up 触发判断。`,
+        `Mailbox observation refreshed: ${human(result.observation.status)}. New replies have entered Follow-up trigger evaluation.`,
       );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -209,10 +209,10 @@ export default function MailboxPage() {
           subtitle="Mailbox evidence drives one Follow-up trigger; Batch execution owns every send."
           badge={rule?.enabled ? `Trigger v${rule.revision}` : "Trigger off"}
           actions={<>
-            <button className="fu-button" onClick={() => setConfigOpen(true)}><Icon name="filter" size={15} /> 配置 Follow-up 触发</button>
-            <button className="fu-button" onClick={() => navigate("records")}><Icon name="book" size={15} /> 历史证据</button>
+            <button className="fu-button" onClick={() => setConfigOpen(true)}><Icon name="filter" size={15} /> Configure Follow-up trigger</button>
+            <button className="fu-button" onClick={() => navigate("records")}><Icon name="book" size={15} /> Historical evidence</button>
             <button className="fu-button fu-primary" disabled={loading || refreshing || !canRead} onClick={refreshMailbox}>
-              <Icon name="refresh" size={15} /> {refreshing ? "监测中…" : "刷新邮箱"}
+              <Icon name="refresh" size={15} /> {refreshing ? "Observing…" : "Refresh mailbox"}
             </button>
           </>}
         />
@@ -288,11 +288,11 @@ export default function MailboxPage() {
           <form className="fu-config" onSubmit={save}>
             <header className="mm-dialog-head"><div><span>FOLLOW-UP TRIGGER</span><h2>Configure deterministic handoff</h2><p>Saving confirms trigger creation only; it never confirms a send.</p></div><button type="button" aria-label="Close trigger configuration" onClick={() => setConfigOpen(false)}><Icon name="close" /></button></header>
             <div className="fu-config-scroll">
-              <section className="fu-section mm-enable-row"><div><h3>Trigger automation</h3><p>Evaluate on mailbox refresh and background scheduler ticks.</p></div><label className="fu-switch"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span />{enabled ? "启用" : "停用"}</label></section>
-              <section className="fu-section"><h3>Eligibility and timing</h3><div className="fu-fixed-rules"><span><Icon name="check" size={13} /> 无普通回复</span><span><Icon name="check" size={13} /> 自动回复不阻断</span><span><Icon name="check" size={13} /> 歧义回复暂停</span></div><div className="fu-fields two"><label>上次发送后<span className="fu-suffix"><input type="number" min="0" required value={delay} onChange={(e) => setDelay(e.target.value)} /> 天</span></label><label>最多 Follow-up<span className="fu-suffix"><input type="number" min="1" required value={maximum} onChange={(e) => setMaximum(e.target.value)} /> 次</span></label><label>触发时间<input type="time" required value={sendTime} onChange={(e) => setSendTime(e.target.value)} /></label><label>时区<select value={timezone} onChange={(e) => setTimezone(e.target.value)}>{ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></label></div></section>
-              <section className="fu-section fu-template"><h3>Ready Preparation template</h3><p>允许字段：supervisor_name、student_name、institution、original_subject</p><label>主题模板<input required={enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Re: {original_subject}" /></label><label>正文模板<textarea required={enabled} rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Dear {supervisor_name}, …" /></label></section>
+              <section className="fu-section mm-enable-row"><div><h3>Trigger automation</h3><p>Evaluate on mailbox refresh and background scheduler ticks.</p></div><label className="fu-switch"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span />{enabled ? "Enabled" : "Disabled"}</label></section>
+              <section className="fu-section"><h3>Eligibility and timing</h3><div className="fu-fixed-rules"><span><Icon name="check" size={13} /> No ordinary reply</span><span><Icon name="check" size={13} /> Automatic replies do not block</span><span><Icon name="check" size={13} /> Ambiguous replies pause</span></div><div className="fu-fields two"><label>After last send<span className="fu-suffix"><input type="number" min="0" required value={delay} onChange={(e) => setDelay(e.target.value)} /> days</span></label><label>Maximum Follow-ups<span className="fu-suffix"><input type="number" min="1" required value={maximum} onChange={(e) => setMaximum(e.target.value)} /> times</span></label><label>Trigger time<input type="time" required value={sendTime} onChange={(e) => setSendTime(e.target.value)} /></label><label>Timezone<select value={timezone} onChange={(e) => setTimezone(e.target.value)}>{ZONES.map((zone) => <option key={zone}>{zone}</option>)}</select></label></div></section>
+              <section className="fu-section fu-template"><h3>Ready Preparation template</h3><p>Allowed fields: supervisor_name, student_name, institution, original_subject</p><label>Subject template<input required={enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Re: {original_subject}" /></label><label>Body template<textarea required={enabled} rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Dear {supervisor_name}, …" /></label></section>
             </div>
-            <footer className="fu-config-foot"><span><Icon name="database" size={13} /> Triggered content enters Batch execution as Ready, never directly Sent</span><button className="fu-button fu-primary" disabled={busy || !campaignId}>{busy ? "保存中…" : enabled ? "保存并确认触发策略" : "保存停用状态"}</button></footer>
+            <footer className="fu-config-foot"><span><Icon name="database" size={13} /> Triggered content enters Batch execution as Ready, never directly Sent</span><button className="fu-button fu-primary" disabled={busy || !campaignId}>{busy ? "Saving…" : enabled ? "Save & confirm trigger policy" : "Save disabled state"}</button></footer>
           </form>
         </ConfigDialog>
       )}
