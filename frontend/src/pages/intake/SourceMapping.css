@@ -3,9 +3,8 @@
   color: #34445c;
 }
 .sm-topbar {
-  height: 65px;
-  padding-inline: 22px;
-  gap: 14px;
+  padding-inline: var(--page-inset);
+  gap: clamp(8px, 1.2vw, 18px);
 }
 .sm-topbar .search {
   width: 240px;
@@ -81,12 +80,12 @@
   overflow: hidden;
 }
 .sm-column-heading {
-  height: 45px;
+  height: var(--toolbar-height);
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  padding: 0 16px;
-  gap: 9px;
+  padding: 0 12px;
+  gap: 8px;
   border-bottom: 1px solid #eaf0f7;
   background: #f5f7fb;
   color: #7b8ba4;
@@ -577,7 +576,7 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  padding: 8px 16px 10px;
+  padding: 7px 12px 8px;
   color: #93a4bb;
   font-size: 9px;
   line-height: 1.6;
@@ -640,7 +639,7 @@
   flex-shrink: 0;
   background: #f1f7ff;
   color: #6a84a9;
-  padding: 10px var(--page-inset);
+  padding: 7px var(--page-inset);
   display: flex;
   align-items: center;
   gap: 9px;

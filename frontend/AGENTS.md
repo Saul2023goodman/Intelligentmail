@@ -7,6 +7,7 @@ Read `README.md` and `../docs/frontend-foundation.md` before changing the fronte
 - Keep page state, fixtures, dialogs, domain presentation, and styles in that page's directory. Do not import one page's implementation from another page.
 - Reuse `src/app/` for shell/navigation/routing and `src/shared/` for tokens, icons, search, and primitive styles. Existing page work should not require editing `App.tsx`, `main.tsx`, global styles, or the other page.
 - Scope new page CSS under its page root or use CSS modules. Do not add global element selectors in page CSS.
+- Open every page with the shared `PageHeader` (`src/app/page-header.tsx`) and size chrome from the `src/app/viewport.css` density variables. Do not add a page-local title block, page-title sizing, or fixed pixel header/toolbar padding.
 - Call Core through `src/core/`. Keep the command contract aligned with `smartmail/ui.py`; do not implement domain decisions or direct mailbox access in pages.
 - Shared interface changes require coordination across page worktrees. Register new top-level routes in `src/app/routes.ts` and compose them in `src/App.tsx` as an integration change.
 - Preserve the desktop layouts and existing behavior unless the task explicitly requests a change.

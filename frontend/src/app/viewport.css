@@ -1,30 +1,45 @@
 /* Global viewport contract. Import after page styles so density is consistent. */
 .app-shell {
-  --page-inset: clamp(10px, 2vw, 30px);
-  --heading-block: clamp(10px, 2.6dvh, 28px);
-  --bar-height: clamp(40px, 6.5dvh, 69px);
-  --toolbar-height: clamp(36px, 5.5dvh, 56px);
-  --region-inset: clamp(10px, 1.8dvh, 22px);
+  --page-inset: clamp(10px, 1.6vw, 24px);
+  --heading-block: clamp(7px, 1.4dvh, 16px);
+  --bar-height: clamp(38px, 5.2dvh, 52px);
+  --toolbar-height: clamp(34px, 5dvh, 46px);
+  --region-inset: clamp(8px, 1.4dvh, 16px);
+  --page-gap: clamp(8px, 1vw, 16px);
+  --page-title: clamp(15px, 0.4vw + 1.3dvh, 19px);
 }
 .app-shell .topbar {
   height: var(--bar-height);
   padding-inline: var(--page-inset);
-  gap: clamp(8px, 1.6vw, 24px);
+  gap: clamp(8px, 1.2vw, 18px);
 }
 .app-shell .search {
   min-width: 0;
   max-width: 285px;
   flex: 0 1 285px;
+  padding-block: 6px;
 }
 .app-shell .search input {
   width: 100%;
 }
 .app-shell .wordmark {
   flex-shrink: 0;
+  font-size: clamp(15px, 1.1vw + 0.4dvh, 18px);
+}
+.app-shell .workspace-scope-indicator {
+  height: clamp(30px, 4.4dvh, 38px);
+  padding-block: 3px;
+  gap: 7px;
+}
+.app-shell .workspace-scope-avatar {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  font-size: 10px;
 }
 .workspace > footer {
-  min-height: 26px;
-  padding: 5px var(--page-inset);
+  min-height: 24px;
+  padding: 4px var(--page-inset);
   gap: 8px;
   flex-wrap: wrap;
 }
@@ -37,9 +52,6 @@
   .app-shell .brand-mark {
     margin-bottom: 8px;
   }
-  .app-shell h1 {
-    font-size: 22px;
-  }
   .app-shell .eyebrow {
     margin-bottom: 5px;
   }
@@ -48,7 +60,7 @@
   .app-shell .topbar {
     flex-wrap: wrap;
     height: auto;
-    padding-block: 7px;
+    padding-block: 6px;
   }
   .app-shell .search {
     flex: 1 1 150px;

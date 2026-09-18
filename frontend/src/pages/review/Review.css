@@ -26,57 +26,28 @@
   border-radius: 50%;
   background: #678dd6;
 }
-.review-page .rv-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: var(--heading-block) var(--page-inset);
-  gap: 16px;
-}
 .review-page .rv-eyebrow {
   color: #7a8ca7;
   font-size: 9px;
   font-weight: 700;
   letter-spacing: 1.6px;
-  margin-bottom: 7px;
-}
-.review-page h1 {
-  font-size: 27px;
-  font-weight: 650;
-  letter-spacing: -1px;
-  display: flex;
-  align-items: center;
-  gap: 13px;
-}
-.review-page h1 > span {
-  font-size: 10px;
-  letter-spacing: 0;
-  color: #4775bf;
-  border: 1px solid #d8e5fc;
-  background: #ecf3ff;
-  padding: 4px 9px;
-  border-radius: 5px;
-}
-.review-page .rv-heading p {
-  margin-top: 8px;
-  font-size: 11px;
-  color: #78869a;
 }
 .review-page .rv-heading-count {
   display: flex;
   align-items: flex-end;
   flex-direction: column;
-  gap: 3px;
+  gap: 1px;
   white-space: nowrap;
 }
 .review-page .rv-heading-count strong {
-  font-size: 27px;
+  font-size: 20px;
+  line-height: 1.1;
   color: #1a9d79;
   font-weight: 600;
 }
 .review-page .rv-heading-count strong span {
   color: #a2adbd;
-  font-size: 18px;
+  font-size: 14px;
 }
 .review-page .rv-heading-count > span {
   font-size: 10px;
@@ -88,8 +59,8 @@
       285px,
       1.08fr
     );
-  gap: 17px;
-  padding: 0 var(--page-inset) 16px;
+  gap: 12px;
+  padding: 0 var(--page-inset) 10px;
 }
 .review-page .rv-left,
 .review-page .rv-right,
@@ -923,9 +894,6 @@
   .review-page .rv-show-checks .rv-right {
     display: flex;
   }
-  .review-page .rv-heading {
-    padding-block: 15px;
-  }
   .review-page .rv-demo {
     display: none;
   }
@@ -934,17 +902,6 @@
   }
 }
 @media (max-width: 550px) {
-  .review-page h1 {
-    font-size: 21px;
-    display: block;
-  }
-  .review-page h1 > span {
-    display: none;
-  }
-  .review-page .rv-heading p {
-    font-size: 10px;
-    line-height: 1.6;
-  }
   .review-page .rv-heading-count {
     display: none;
   }
@@ -979,15 +936,8 @@
   }
 }
 @media (max-height: 650px) {
-  .review-page .rv-heading {
-    padding-block: 10px;
-  }
-  .review-page .rv-heading p,
-  .review-page .rv-heading .rv-eyebrow {
-    display: none;
-  }
   .review-page .rv-heading-count strong {
-    font-size: 22px;
+    font-size: 17px;
   }
   .review-page .rv-mobile-tabs {
     margin-bottom: 6px;

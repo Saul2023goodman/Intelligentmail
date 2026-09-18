@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, Topbar } from "../../app/shell";
+import { PageHeader } from "../../app/page-header";
 import { navigate } from "../../app/routes";
 import { useWorkspaceScope } from "../../app/scope";
 import { useCoreQuery } from "../../core/data";
@@ -98,9 +99,13 @@ export default function ReviewPage() {
       <Topbar breadcrumb="Review" homeHref="#workflow">
         <span className="rv-demo"><span /> CORE WORKSPACE</span>
       </Topbar>
-      <div className="rv-heading"><div><div className="rv-eyebrow">PREPARE WITH CONFIDENCE</div><h1>Readiness workbench<span>Review</span></h1><p>Inspect Core evidence and resolve blockers before separate sending confirmation.</p></div>
-        <div className="rv-heading-count"><strong>{ready}<span> / {data?.rows.length ?? 0}</span></strong><span>preparations ready</span></div>
-      </div>
+      <PageHeader
+        className="rv-heading"
+        eyebrow="Prepare with confidence"
+        title="Readiness workbench"
+        badge="Review"
+        meta={<div className="rv-heading-count"><strong>{ready}<span> / {data?.rows.length ?? 0}</span></strong><span>preparations ready</span></div>}
+      />
       <div className="rv-mobile-tabs" aria-label="Workbench panels">{["queue", "message", "checks"].map((tab) => <button key={tab} className={mobile === tab ? "active" : ""} onClick={() => setMobile(tab)}>{tab === "queue" ? "Preparations" : tab === "message" ? "Message" : "Readiness"}</button>)}</div>
       {displayError && <div className="rv-status-banner blocked" role="alert"><Signal tone="blocked" /><div><strong>{displayError}</strong><p>Nothing was treated as successful.</p></div></div>}
       <main className={`rv-layout rv-show-${mobile}`}>

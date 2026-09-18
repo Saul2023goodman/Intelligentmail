@@ -15,8 +15,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 15px 24px 2px;
+  gap: 5px;
+  padding: 10px var(--page-inset) 2px;
 }
 :where(.workspace-page) .student-chips {
   display: flex;

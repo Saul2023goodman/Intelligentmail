@@ -5,7 +5,9 @@
   const selectors = {
     recipient: '.nui-editableAddr-ipt, input[name="to"], #to, textarea[name="to"]',
     subject: 'input[id$="_subjectInput"], input[name="subject"], #subject',
-    body: 'body[contenteditable="true"], div[contenteditable="true"], textarea[name="content"], textarea.APP-editor-textarea'
+    richBody: 'body[contenteditable="true"], div[contenteditable="true"]',
+    plainBody: 'textarea[name="content"], textarea.APP-editor-textarea',
+    plainTextCheckbox: "span.js-component-checkbox[role='checkbox']"
   };
   const one = (root, selector) => {
     const nodes = Array.from(root.querySelectorAll(selector)).filter(api.visible);
@@ -21,19 +23,78 @@
     node.dispatchEvent(new window.Event("input", { bubbles: true }));
     node.dispatchEvent(new window.Event("change", { bubbles: true }));
   };
-  const bodyEditor = () => {
+  const frameRoots = () => {
     const roots = [document];
     for (const frame of document.querySelectorAll("iframe")) {
-      try { if (api.visible(frame) && frame.contentDocument) roots.push(frame.contentDocument); } catch { /* Cross-origin editor is unsupported. */ }
+      try { if (api.visible(frame) && frame.contentDocument) roots.push(frame.contentDocument); }
+      catch { /* Cross-origin editor is unsupported. */ }
     }
-    const nodes = roots.flatMap(root => Array.from(root.querySelectorAll(selectors.body)).filter(api.visible));
-    if (nodes.length !== 1) throw new Error("A single accessible message editor is required");
-    return nodes[0];
+    return roots;
   };
-  const textValue = node => "value" in node ? node.value : node.innerText;
+  const matching = selector =>
+    frameRoots().flatMap(root => Array.from(root.querySelectorAll(selector)).filter(api.visible));
+  const richEditor = () => {
+    const nodes = matching(selectors.richBody);
+    return nodes.length === 1 ? nodes[0] : null;
+  };
+  const plainEditor = () => {
+    const nodes = matching(selectors.plainBody);
+    return nodes.length === 1 ? nodes[0] : null;
+  };
+  // Fresh compose may open in the operator's saved plain-text mode. Switch it
+  // back to the rich HTML editor; the editor is empty at fill time, so the
+  // official "convert to plain text loses formatting" dialog never appears.
+  const enableRichEditor = async deadline => {
+    const checkbox = Array.from(document.querySelectorAll(selectors.plainTextCheckbox))
+      .filter(api.visible)
+      .find(node => /纯文本/.test(node.textContent || "")
+        && node.getAttribute("aria-checked") === "true");
+    if (checkbox) checkbox.click();
+    while (Date.now() < deadline) {
+      const editor = richEditor();
+      if (editor) return editor;
+      await api.delay(250);
+    }
+    return null;
+  };
+  // Resolve one body editor, preferring rich HTML so italics, font sizes and
+  // paragraph structure survive. Returns the node and its format.
+  const resolveBodyEditor = async deadline => {
+    let rich = richEditor();
+    if (!rich) {
+      const checkbox = Array.from(document.querySelectorAll(selectors.plainTextCheckbox))
+        .filter(api.visible)
+        .find(node => /纯文本/.test(node.textContent || "")
+          && node.getAttribute("aria-checked") === "true");
+      // Only wait for a rich editor when a plain-text mode toggle can be
+      // switched. Layouts without either control fall back to plain at once.
+      if (checkbox) rich = await enableRichEditor(deadline);
+    }
+    if (rich) return { node: rich, format: "html" };
+    const plain = plainEditor();
+    if (plain) return { node: plain, format: "plain" };
+    throw new Error("A single accessible message editor is required");
+  };
+  const setRichHtml = (node, html) => {
+    const doc = node.ownerDocument;
+    node.innerHTML = html;
+    node.dispatchEvent(new doc.defaultView.Event("input", { bubbles: true }));
+    node.dispatchEvent(new doc.defaultView.Event("change", { bubbles: true }));
+    const keyboard = type => node.dispatchEvent(
+      new doc.defaultView.KeyboardEvent(type, { bubbles: true, key: "a" }));
+    keyboard("keyup");
+    keyboard("keydown");
+  };
+  const textValue = node => ("value" in node ? node.value : node.innerText);
+  // The exact plain text the confirmed body projects to in a rich editor.
+  const expectedBodyText = request => {
+    const html = request.body_html || "";
+    if (html) return api.htmlToPlainText(html);
+    return api.looksLikeHtml(request.body) ? api.htmlToPlainText(request.body) : request.body;
+  };
   const normalize = text => String(text).replace(/\r\n/g, "\n");
   const verify = state => {
-    const { request, recipient, subject, body } = state;
+    const { request, recipient, subject, body, bodyFormat } = state;
     if (api.account() !== request.sender.toLowerCase()) throw new Error("Connected Mailbox changed");
     if (![recipient, subject, body].every(node => node.isConnected)) throw new Error("Compose document changed");
     const chips = Array.from(document.querySelectorAll('[class*="nui-addr-email"]')).map(node => node.textContent).join(" ");
@@ -41,7 +102,10 @@
     const extras = Array.from(document.querySelectorAll('input[name="cc"], input[name="bcc"], textarea[name="cc"], textarea[name="bcc"]'));
     if (addresses.length !== 1 || addresses[0] !== request.recipient.toLowerCase() || extras.some(node => node.value.trim()))
       throw new Error("Compose recipients differ from Confirmation");
-    if (subject.value !== request.subject || normalize(textValue(body)) !== normalize(request.body))
+    const bodyMatches = bodyFormat === "html"
+      ? api.sameText(textValue(body), expectedBodyText(request))
+      : normalize(textValue(body)) === normalize(request.body);
+    if (subject.value !== request.subject || !bodyMatches)
       throw new Error("Compose content differs from Confirmation");
     const uploads = Array.from(document.querySelectorAll('input[type="file"]')).flatMap(node => Array.from(node.files || []));
     if (uploads.length !== state.files.length || uploads.some((file, index) =>
@@ -60,11 +124,15 @@
     const compose = controls.filter(api.visible).find(node => /^写\s*信$/.test(node.textContent.trim()));
     if (!compose) throw new Error("Supported in-page compose control was not found");
     compose.click();
-    let recipient, subject, body;
-    const until = Math.min(command.deadline, Date.now() + 15000);
+    let recipient, subject, body, bodyFormat;
+    const until = Math.min(command.deadline, Date.now() + 20000);
     while (Date.now() < until) {
-      try { recipient = one(document, selectors.recipient); subject = one(document, selectors.subject); body = bodyEditor(); break; }
-      catch { await api.delay(250); }
+      try {
+        recipient = one(document, selectors.recipient);
+        subject = one(document, selectors.subject);
+        ({ node: body, format: bodyFormat } = await resolveBodyEditor(until));
+        break;
+      } catch { await api.delay(250); }
     }
     if (!recipient || !subject || !body) throw new Error("Compose layout is unsupported; popup or cross-origin editors require operator handling");
     if (Array.from(document.querySelectorAll('input[type="file"]')).some(node => node.files?.length))
@@ -73,7 +141,31 @@
     recipient.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
     recipient.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
     setValue(subject, request.subject);
-    setValue(body, request.body);
+    // Write HTML into the rich editor so the message keeps its formatting
+    // (paragraphs, italics, font sizes). The editor re-renders while compose
+    // initializes and can escape a write that lands too early, so fill until
+    // the text projection matches the confirmed content. Plain-text layouts
+    // fall back to the exact confirmed text.
+    if (bodyFormat === "html") {
+      const html = api.composeBodyHtml({ html: request.body_html, text: request.body });
+      const fillUntil = Math.min(command.deadline, Date.now() + 8000);
+      let established = false;
+      while (Date.now() < fillUntil) {
+        if (!body.isConnected) body = richEditor();
+        if (!body) body = await enableRichEditor(fillUntil);
+        if (!body) break;
+        setRichHtml(body, html);
+        await api.delay(350);
+        if (body.isConnected && api.sameText(textValue(body), expectedBodyText(request))) {
+          established = true;
+          break;
+        }
+        await api.delay(250);
+      }
+      if (!established) throw new Error("Compose content could not be established in the rich HTML editor");
+    } else {
+      setValue(body, request.body);
+    }
     const files = [];
     for (let index = 0; index < encodedFiles.length; index++) {
       const descriptor = request.attachments[index];
@@ -102,7 +194,7 @@
       }
       if (!complete) throw new Error("Attachment upload completion could not be established");
     }
-    const state = { request, recipient, subject, body, files, previous, clicked: false };
+    const state = { request, recipient, subject, body, bodyFormat, files, previous, clicked: false };
     verify(state);
     api.assertDeadline(command.deadline);
     states.set(command.id, state);

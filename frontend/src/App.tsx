@@ -8,6 +8,7 @@ import RecordsPage from "./pages/records/RecordsPage";
 import { WorkspaceScopeProvider } from "./app/scope";
 import { CoreDataProvider } from "./core/data";
 import "./app/shell.css";
+import "./app/page-header.css";
 import "./shared/primitives.css";
 import "./app/viewport.css";
 

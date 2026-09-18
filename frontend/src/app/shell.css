@@ -6,21 +6,21 @@
   overflow: hidden;
 }
 .rail {
-  width: 66px;
+  width: 58px;
   background: var(--rail);
   display: flex;
   align-items: center;
   flex-direction: column;
-  gap: 15px;
-  padding: 22px 10px;
+  gap: 12px;
+  padding: 16px 8px;
   color: #abb9ce;
   flex-shrink: 0;
 }
 .brand-mark {
-  height: 35px;
+  height: 30px;
   display: flex;
   gap: 3px;
-  margin-bottom: 24px;
+  margin-bottom: 14px;
 }
 .brand-mark span {
   display: block;
@@ -38,8 +38,8 @@
   border: 0;
   background: transparent;
   color: inherit;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 9px;
 }
 .rail button.active {
@@ -184,10 +184,11 @@
 }
 .breadcrumb {
   color: #9aa4b4;
-  font-size: 12px;
+  font-size: 11px;
+  white-space: nowrap;
 }
 .breadcrumb span {
-  margin: 0 13px;
+  margin: 0 10px;
   color: #c6ccda;
 }
 .search {
@@ -258,7 +259,7 @@
     display: none;
   }
   .rail {
-    width: 54px;
+    width: 50px;
     padding-inline: 6px;
   }
   .topbar {
@@ -279,11 +280,11 @@
 }
 @media (max-width: 550px) {
   .rail {
-    width: 46px;
+    width: 44px;
   }
   .rail button {
-    width: 34px;
-    height: 36px;
+    width: 32px;
+    height: 34px;
   }
   .topbar {
     gap: 8px;

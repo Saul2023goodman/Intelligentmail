@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { AppShell, Topbar } from '../../app/shell';
+import { PageHeader } from '../../app/page-header';
 import { useWorkspaceScope } from '../../app/scope';
 import { useCoreQuery } from '../../core/data';
 import { core, human, type ComparisonRow } from '../../core';
@@ -52,8 +53,12 @@ export default function MailboxPage() {
   return <AppShell className="mailbox-page" activeRoute="mailbox">
     <div className="workspace">
       <Topbar breadcrumb="Mailbox" homeHref="#workflow"><span className="mb-top-note"><Icon name="shield" size={15} /> Observation & reconciliation</span></Topbar>
-      <section className="mb-heading"><div><div className="mb-eyebrow">COMMUNICATION OPERATIONS</div><h1>Mailbox <span>Reconciliation workspace</span></h1><p>What SmartMail expects. What the mailbox shows.</p></div><div className="mb-heading-actions"><button className="mb-button" onClick={() => setHistory(true)}><Icon name="clock" size={16} /> Observation history</button><button className="mb-button mb-primary" disabled={!student || !campaign || !canRead || loading || refreshing} onClick={refresh}><Icon name="refresh" size={16} />{refreshing ? 'Observing mailbox…' : 'Refresh evidence'}</button></div></section>
-      <section className="mb-controls" aria-label="Mailbox evidence status"><div className="mb-observed-at"><i className={observation?.status === 'complete' ? 'complete' : ''} /><span>{observation ? `Last observation · ${date(observation.observed_at)}` : 'No mailbox observation yet'}<small>{canRead ? 'Read-only observation available' : 'Connect the dedicated 163 extension to refresh'}</small></span></div></section>
+      <PageHeader
+        eyebrow="Communication operations"
+        title="Mailbox reconciliation"
+        meta={<div className="mb-observed-at" aria-label="Mailbox evidence status"><i className={observation?.status === 'complete' ? 'complete' : ''} /><span>{observation ? `Last observation · ${date(observation.observed_at)}` : 'No mailbox observation yet'}</span><small>{canRead ? 'Read-only observation available' : 'Connect the dedicated 163 extension to refresh'}</small></div>}
+        actions={<><button className="mb-button" onClick={() => setHistory(true)}><Icon name="clock" size={15} /> Observation history</button><button className="mb-button mb-primary" disabled={!student || !campaign || !canRead || loading || refreshing} onClick={refresh}><Icon name="refresh" size={15} />{refreshing ? 'Observing mailbox…' : 'Refresh evidence'}</button></>}
+      />
       <section className="mb-stats" aria-label="Reconciliation filters">{(['all', 'matched', 'discrepancy', 'unknown', 'external', 'reply'] as const).map(key => <button key={key} aria-pressed={status === key} className={`mb-stat ${key} ${status === key ? 'selected' : ''}`} onClick={() => setStatus(key)}><span>{key === 'all' ? 'All comparisons' : statuses[key].label}</span><strong>{loading ? '—' : key === 'all' ? rows.length : count(key)}</strong><small>{key === 'all' ? 'Current evidence' : key === 'matched' ? 'Established by Core' : key === 'discrepancy' ? 'External change detected' : key === 'unknown' ? 'Needs more evidence' : key === 'external' ? 'No local association' : 'Associated & unassociated'}</small></button>)}</section>
       {displayError && <div className="mb-notice mb-error" role="alert"><Icon name="warning" size={16} /><span>{displayError}</span><button onClick={() => { void workspaceQuery.refresh(); void mailboxQuery.refresh(); }}>Retry loading</button></div>}
       {notice && <div className="mb-notice" role="status">{notice}</div>}

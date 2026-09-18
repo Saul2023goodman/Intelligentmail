@@ -57,8 +57,12 @@
         attrs: {
           account: payload.sender.toLowerCase(),
           to: [payload.recipient.toLowerCase()], cc: [], bcc: [],
-          subject: payload.subject, content: payload.body,
-          isHtml: false, priority: 3, requestReadReceipt: false,
+          subject: payload.subject,
+          // Send as HTML so paragraph structure and inline formatting in the
+          // confirmed body (italics, font size, color) survive. Plain text is
+          // escaped with one block per line and projects back exactly.
+          content: api.composeBodyHtml({ html: payload.body_html, text: payload.body }),
+          isHtml: true, priority: 3, requestReadReceipt: false,
           saveSentCopy: true, charset: "GBK",
           scheduleDate: new Date(epoch),
           attachments: attachmentIds

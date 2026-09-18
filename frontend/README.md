@@ -58,8 +58,12 @@ Restart Vite after editing Python Core code so its long-lived stdio worker reloa
 ## Page ownership and shared foundation
 
 Workspace code lives in `src/pages/workspace/`; Intake (Source mapping) lives in
-`src/pages/intake/`. Shared shell, global scope, navigation and hash routing live in `src/app/`,
+`src/pages/intake/`. Shared shell, global scope, navigation, hash routing, the shared
+page header and the density variables live in `src/app/`,
 tokens/icons/primitives in `src/shared/`, and the typed Core bridge in `src/core/`.
+Every page opens with the shared `PageHeader` and sizes its chrome from the shared
+density variables, so routes keep one header rhythm and give the remaining height to
+operational content.
 Keep page development within its directory. See
 [foundation interfaces and state lifetime](../docs/frontend-foundation.md) and
 [frontend agent guidance](AGENTS.md) before starting page worktrees.

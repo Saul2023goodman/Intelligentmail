@@ -1,5 +1,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { AppShell, Topbar } from "../../app/shell";
+import { PageHeader } from "../../app/page-header";
 import { useWorkspaceScope } from "../../app/scope";
 import { useCoreQuery } from "../../core/data";
 import Icon, { type IconName } from "../../shared/Icon";
@@ -363,15 +364,12 @@ export default function RecordsPage() {
         <Topbar breadcrumb="Records" homeHref="#workflow">
           <span className="rc-top-note"><Icon name="book" size={15} /> Immutable evidence ledger</span>
         </Topbar>
-        <section className="rc-heading">
-          <div>
-            <div className="rc-eyebrow">HISTORICAL EVIDENCE</div>
-            <h1>Records <span>lineage &amp; traceability</span></h1>
-          </div>
-          <div className="rc-scope">
-            <span className="rc-readonly-badge"><Icon name="shield" size={13} /> Read-only · no editing or execution</span>
-          </div>
-        </section>
+        <PageHeader
+          eyebrow="Historical evidence"
+          title="Records"
+          subtitle="lineage &amp; traceability"
+          meta={<span className="rc-readonly-badge"><Icon name="shield" size={13} /> Read-only · no editing or execution</span>}
+        />
         <section className="rc-filters" aria-label="Evidence filters">
           <div className="rc-chips">
             {statusChips.map((chip) => (

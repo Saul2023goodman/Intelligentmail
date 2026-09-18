@@ -24,6 +24,23 @@ Use `navigate()` for route changes and `NavigationItem` for rail destinations.
 New top-level pages need one coordinated route registration and App composition
 change; ordinary page features need neither.
 
+### Shared page header
+
+Every page that opens with a title band composes `PageHeader` from
+`src/app/page-header.tsx`, passing `eyebrow`, `title`, an optional `badge` or
+`subtitle`, read-only live `meta`, and its own `actions`. `src/app/page-header.css`
+owns that band's typography, spacing, wrapping and responsive hiding; pages own only
+the widgets they hand in.
+
+The band is a single row on wide windows: eyebrow and title share one baseline, meta
+and actions sit on the right. It reduces to the title plus actions on narrow or short
+windows rather than truncating the title — when the row cannot fit, meta and actions
+wrap below instead. Pages must not reintroduce a bespoke heading block, a stacked
+eyebrow/headline/deck combination, a second heading row, or their own page-title
+sizing. Workflow and Source mapping have no title band; they begin with their own
+first-level section headings and consume the same density variables so their rhythm
+still matches the other routes.
+
 `AppShell` preserves the outer rail and page layout without adding wrappers around
 page content or dialogs. `Topbar` provides the wordmark and breadcrumb. `SearchField`
 preserves the controlled search interface. Shared CSS classes include primary and
@@ -56,6 +73,12 @@ non-responsive layout guidance.
 - `src/app/viewport.css` owns shared responsive density variables (page inset,
   heading spacing, bar heights and region spacing), loaded after page styles.
   Pages consume these variables and own their internal width/height breakpoints.
+- Those variables are the shared chrome budget: `--bar-height` for the topbar,
+  `--heading-block` for the page header band, `--toolbar-height` for first-level
+  section and column headings, `--region-inset` for panel interiors and
+  `--page-inset` for horizontal insets. Chrome must size itself from them rather
+  than from fixed pixel paddings, so every route keeps the same density and the
+  remaining height belongs to operational content.
 - Overflow belongs to bounded lists, tables, diagrams, inspectors or dialogs.
   Do not merely hide excess content: all controls and content must remain reachable
   through internal scrolling, reflow or zoom. Toolbars may scroll internally when

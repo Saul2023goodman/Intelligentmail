@@ -39,6 +39,69 @@
   api.xmlDocument = async response => new DOMParser().parseFromString(
     new TextDecoder("utf-8").decode(await response.arrayBuffer()), "application/xml");
   api.codeOf = xml => xml.querySelector("code")?.textContent || "";
+
+  /* ----- HTML message body helpers -------------------------------------
+   * Confirmed content is bound as exact plain text. Rendering it as HTML is
+   * a presentation transform: plain text is escaped and mapped one line to
+   * one block, so nothing is invented. When the confirmed body itself carries
+   * HTML (or an explicit body_html is supplied), its tags and inline styles
+   * (italics, font size, color) are preserved verbatim. */
+  const HTML_TAG_RE = /<\s*(?:p|div|br|span|b|strong|i|em|u|s|strike|ul|ol|li|font|h[1-6]|a|blockquote|hr|img|table|thead|tbody|tr|td|th)\b[^>]*>/i;
+  api.looksLikeHtml = value => HTML_TAG_RE.test(String(value || ""));
+  api.escapeHtml = value => String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+  // 163 renders the editor body with this root wrapper. Newlines map to <br>
+  // inside one block; element.innerText then projects back to the exact text.
+  api.plainToHtml = text => {
+    const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
+    const html = lines.map(line => (line === "" ? "<br />" : api.escapeHtml(line)))
+      .join("<br />");
+    return '<div data-ntes="ntes_mail_body_root" '
+      + 'style="line-height:1.7;color:#000000;font-size:14px;font-family:Arial">'
+      + html + "</div>";
+  };
+  api.composeBodyHtml = ({ html = "", text = "" } = {}) => {
+    if (html && api.looksLikeHtml(html)) return html;
+    return api.looksLikeHtml(text) ? text : api.plainToHtml(text);
+  };
+  api.htmlToPlainText = html => {
+    const raw = String(html || "");
+    if (!raw) return "";
+    try {
+      const doc = new DOMParser().parseFromString(raw, "text/html");
+      doc.querySelectorAll("script,style,noscript").forEach(node => node.remove());
+      const block = doc.createElement("div");
+      block.innerHTML = doc.body ? doc.body.innerHTML : raw;
+      block.querySelectorAll("br").forEach(br => br.replaceWith("\n"));
+      block.querySelectorAll("p,div,li,tr,h1,h2,h3,h4,h5,h6")
+        .forEach(node => node.append("\n"));
+      return String(block.textContent || "")
+        .replace(/ /g, " ")
+        .replace(/[ \t]+\n/g, "\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .replace(/^\n+|\s+$/g, "");
+    } catch {
+      return raw.replace(/<br\s*\/?>(\n)?/gi, "\n")
+        .replace(/<\/(?:p|div|li|tr|h[1-6])>/gi, "\n")
+        .replace(/<[^>]+>/g, "").trim();
+    }
+  };
+  // Compare a rich editor's text projection with the confirmed body. Line
+  // endings and trailing whitespace differ between text nodes and innerText,
+  // and block-level tags render with varying numbers of blank lines, so runs
+  // of blank lines are treated as a single paragraph separation.
+  api.sameText = (left, right) => {
+    const norm = value => String(value ?? "").replace(/\r\n?/g, "\n")
+      .split("\n").map(line => line.replace(/[ \t]+$/g, ""))
+      .join("\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\n+|\n+$/g, "");
+    return norm(left) === norm(right);
+  };
   api.post = async (operation, xml) => {
     if (!["mbox:listMessages", "mbox:readMessage"].includes(operation)) throw new Error("Unsupported mailbox read");
     const sid = new URL(location.href).searchParams.get("sid");

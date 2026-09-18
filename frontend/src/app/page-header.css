@@ -1,0 +1,105 @@
+/* Shared page header rhythm. Pages compose it; only the shell sizes it. */
+.app-shell .page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--heading-block) var(--page-gap);
+  flex-shrink: 0;
+  min-width: 0;
+  padding: var(--heading-block) var(--page-inset);
+}
+.app-shell .page-header-copy {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  /* Never truncate the page title; let meta and actions wrap instead. */
+  flex: 1 1 auto;
+  min-width: min-content;
+}
+.app-shell .page-header h1 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  font-size: var(--page-title);
+  font-weight: 650;
+  letter-spacing: -0.5px;
+  color: #26364f;
+}
+.app-shell .page-eyebrow {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #93a0b4;
+  white-space: nowrap;
+}
+.app-shell .page-title {
+  white-space: nowrap;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+}
+.app-shell .page-badge {
+  flex-shrink: 0;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: #4775bf;
+  background: #ecf3ff;
+  border: 1px solid #d8e5fc;
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+.app-shell .page-subtitle {
+  min-width: 0;
+  max-width: 40ch;
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0;
+  color: #8b98ab;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-shell .page-header-meta {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-left: auto;
+  min-width: 0;
+}
+.app-shell .page-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+@media (max-width: 1150px) {
+  .app-shell .page-subtitle,
+  .app-shell .page-eyebrow {
+    display: none;
+  }
+}
+@media (max-height: 620px) {
+  .app-shell .page-header {
+    padding-block: 5px;
+  }
+  .app-shell .page-subtitle {
+    display: none;
+  }
+}

@@ -6,6 +6,7 @@ import {
   type ReactNode,
 } from "react";
 import { AppShell, Topbar } from "../../app/shell";
+import { PageHeader } from "../../app/page-header";
 import { useWorkspaceScope } from "../../app/scope";
 import { useCoreQuery } from "../../core/data";
 import {
@@ -397,25 +398,24 @@ export default function ExecutionPage() {
                 : "Core unavailable"}
           </span>
         </Topbar>
-        <div className="ex-heading">
-          <div>
-            <div className="ex-eyebrow">OUTREACH OPERATIONS / 04</div>
-            <h1>
-              Batch execution
-              <span>From ready to sent, with you in control.</span>
-            </h1>
-          </div>
-          <button
-            className="ex-button"
-            disabled={disabled}
-            onClick={() =>
-              perform(() => refresh(), "Workspace refreshed", false)
-            }
-          >
-            <Icon name="refresh" size={16} />
-            Refresh
-          </button>
-        </div>
+        <PageHeader
+          className="ex-heading"
+          eyebrow="Outreach operations / 04"
+          title="Batch execution"
+          subtitle="From ready to sent, with you in control."
+          actions={
+            <button
+              className="ex-button"
+              disabled={disabled}
+              onClick={() =>
+                perform(() => refresh(), "Workspace refreshed", false)
+              }
+            >
+              <Icon name="refresh" size={15} />
+              Refresh
+            </button>
+          }
+        />
         <div className="ex-toolbar">
           <label className="ex-search">
             <Icon name="search" size={16} />
