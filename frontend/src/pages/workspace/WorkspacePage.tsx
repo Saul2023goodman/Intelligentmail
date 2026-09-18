@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { core } from "../../core";
-import type { Workspace } from "../../core";
+import { gatewayHealth } from "../../core/gateway";
 import { useCoreQuery } from "../../core/data";
-import { fitScale, gatewayHealth } from "./workflow-model";
+import { fitScale } from "./workflow-model";
 import Workflow from "./Workflow";
 import Icon from "../../shared/Icon";
 import { AppShell, Topbar } from "../../app/shell";
+import { StudentDialog } from "../../app/student-dialog";
 import { navigate, type Route } from "../../app/routes";
 import { useWorkspaceScope } from "../../app/scope";
 import "./Workspace.css";
-
-const STUDENT_KEY = "smartmail.selectedStudent";
 
 const GATEWAY_STATE_LABEL: Record<string, string> = {
   connected: "已连接",
@@ -23,10 +22,8 @@ const formatTime = (value: null | string) =>
 
 export default function WorkspacePage({ route }: { route: Route }) {
   const { scope, setScope } = useWorkspaceScope();
-  const [studentId, setStudentId] = useState(
-    () => scope?.studentId || localStorage.getItem(STUDENT_KEY) || "",
-  );
-  const [campaignId, setCampaignId] = useState(scope?.campaignId || "");
+  const studentId = scope?.studentId ?? "";
+  const campaignId = scope?.campaignId ?? "";
   const workspaceQuery = useCoreQuery(
     "workspace",
     campaignId ? { campaign_id: campaignId } : {},
@@ -40,17 +37,12 @@ export default function WorkspacePage({ route }: { route: Route }) {
   const [selected, setSelected] = useState("mailbox");
   const [scale, setScale] = useState(1);
   const [error, setError] = useState("");
-  const [actionBusy, setActionBusy] = useState(false);
   const [notice, setNotice] = useState("");
   const [newStudent, setNewStudent] = useState(false);
   const [gatewayPanel, setGatewayPanel] = useState(false);
   const [observing, setObserving] = useState(false);
-  const [name, setName] = useState("");
-  const [mailboxAddress, setMailboxAddress] = useState("");
   const view = route;
   const frame = useRef<HTMLDivElement>(null);
-  const modal = useRef<HTMLElement>(null);
-  const activeChip = useRef<HTMLButtonElement>(null);
   const studentMailbox =
     data?.mailboxes.find((mailbox) => mailbox.student_id === studentId) ??
     null;
@@ -58,54 +50,54 @@ export default function WorkspacePage({ route }: { route: Route }) {
     () => gatewayHealth(gatewayQuery.data ?? data?.mailbox_capabilities.gateway, studentMailbox),
     [data?.mailbox_capabilities.gateway, gatewayQuery.data, studentMailbox],
   );
-  const campaignFor = useCallback(
-    (id: string, workspace: Workspace | null) =>
-      workspace?.mailboxes.find((item) => item.student_id === id)?.campaign_id ??
-      "",
-    [],
-  );
   const refreshWorkspace = workspaceQuery.refresh;
   const refreshGateway = gatewayQuery.refresh;
+  // The scope is written only by the global switcher and by first-run
+  // selection; this effect never re-points an operator's chosen Student.
   useEffect(() => {
-    if (!data) return;
-    if (!studentId || !data.mailboxes.some((mailbox) => mailbox.student_id === studentId)) {
-      const first = data.mailboxes[0]?.student_id ?? "";
-      if (first) {
-        // oxlint-disable-next-line react/set-state-in-effect -- Pick the initial Student once the Core's mailbox list arrives.
-        setStudentId(first);
-        localStorage.setItem(STUDENT_KEY, first);
-      }
-      return;
-    }
-    const selectedCampaignId = campaignFor(studentId, data);
-    if (selectedCampaignId && selectedCampaignId !== campaignId) {
-      setCampaignId(selectedCampaignId);
-    }
-    if (selectedCampaignId && selectedCampaignId !== data.report?.campaign.id) {
-      return;
-    }
+    if (!data || scope) return;
+    const first = data.mailboxes[0];
+    if (!first) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Pick the initial Student once the Core mailbox list arrives.
+    setScope({
+      studentId: first.student_id,
+      studentName: first.student_name,
+      mailbox: first.address,
+      campaignId: first.campaign_id,
+      campaignName:
+        data.campaigns.find((campaign) => campaign.id === first.campaign_id)
+          ?.name ?? "",
+    });
+  }, [data, scope, setScope]);
+  // Keep the scope's descriptive labels aligned with Core's own records.
+  useEffect(() => {
+    if (!data || !studentId) return;
     const mailbox = data.mailboxes.find((item) => item.student_id === studentId);
-    const campaign = data.campaigns.find((item) => item.id === selectedCampaignId) ?? data.report?.campaign;
-    if (mailbox && selectedCampaignId) {
-      setScope({
-        studentId,
-        studentName: mailbox.student_name,
-        mailbox: mailbox.address,
-        campaignId: selectedCampaignId,
-        campaignName: campaign?.name ?? "",
-      });
-    }
-  }, [campaignId, data, studentId, campaignFor, setScope]);
-  const switchStudent = (id: string) => {
-    setStudentId(id);
-    setCampaignId(campaignFor(id, data));
-    localStorage.setItem(STUDENT_KEY, id);
-  };
+    if (!mailbox) return;
+    const campaignName =
+      data.campaigns.find((campaign) => campaign.id === mailbox.campaign_id)
+        ?.name ?? "";
+    if (
+      mailbox.address === scope?.mailbox &&
+      mailbox.student_name === scope?.studentName &&
+      mailbox.campaign_id === scope?.campaignId &&
+      campaignName === scope?.campaignName
+    )
+      return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Reflect renamed Core records in the shared scope label.
+    setScope({
+      studentId,
+      studentName: mailbox.student_name,
+      mailbox: mailbox.address,
+      campaignId: mailbox.campaign_id,
+      campaignName,
+    });
+  }, [data, scope, setScope, studentId]);
   const reload = useCallback(
     () => Promise.all([refreshWorkspace(), refreshGateway()]),
     [refreshGateway, refreshWorkspace],
   );
-  const busy = actionBusy;
+  const busy = observing;
   const displayError = error || workspaceQuery.error?.message || "";
   const openGateway = useCallback(() => {
     setError("");
@@ -139,42 +131,6 @@ export default function WorkspacePage({ route }: { route: Route }) {
       setObserving(false);
     }
   }, [studentId, gateway.canObserve, reload]);
-  const openDialog = () => {
-    setError("");
-    setNewStudent(true);
-  };
-  useEffect(() => {
-    if (!newStudent) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const element = modal.current;
-    const focusable = () =>
-      Array.from(
-        element?.querySelectorAll<HTMLElement>(
-          'button:not(:disabled), input, [tabindex="0"]',
-        ) ?? [],
-      );
-    (
-      element?.querySelector<HTMLInputElement>("input") ?? focusable()[0]
-    )?.focus();
-    const trap = (event: KeyboardEvent) => {
-      if (event.key !== "Tab") return;
-      const targets = focusable();
-      const first = targets[0];
-      const last = targets[targets.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last?.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first?.focus();
-      }
-    };
-    element?.addEventListener("keydown", trap);
-    return () => {
-      element?.removeEventListener("keydown", trap);
-      previous?.focus();
-    };
-  }, [newStudent]);
   const hasMailboxes = !!data?.mailboxes.length;
   useEffect(() => {
     const el = frame.current;
@@ -185,37 +141,6 @@ export default function WorkspacePage({ route }: { route: Route }) {
     observer.observe(el);
     return () => observer.disconnect();
   }, [hasMailboxes]);
-  useEffect(() => {
-    activeChip.current?.scrollIntoView({ inline: "center", block: "nearest" });
-  }, [studentId, hasMailboxes]);
-  const createStudent = async (event: React.SubmitEvent) => {
-    event.preventDefault();
-    setActionBusy(true);
-    setError("");
-    try {
-      const value = await core("create_student", {
-        name: name.trim(),
-        mailbox: mailboxAddress.trim(),
-      });
-      setNewStudent(false);
-      setName("");
-      setMailboxAddress("");
-      setStudentId(value.id);
-      setCampaignId(value.campaign_id);
-      localStorage.setItem(STUDENT_KEY, value.id);
-      setNotice(
-        `已添加学生 ${value.name}（${value.mailbox}）。通过 Core CLI 导入来源材料后，任务将出现在工作流中。`,
-      );
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setActionBusy(false);
-    }
-  };
-  const closeDialog = () => {
-    setNewStudent(false);
-    setError("");
-  };
   // Remain mounted while other pages are active, preserving scope state.
   if (view !== "workflow") return null;
   const banners = (
@@ -245,7 +170,7 @@ export default function WorkspacePage({ route }: { route: Route }) {
       activeRoute="workflow"
     >
       <div className="workspace">
-        <Topbar breadcrumb="Workflow" homeHref="/" showScope={false}>
+        <Topbar breadcrumb="Workflow" homeHref="/">
           <span className={`connection ${displayError ? "offline" : ""}`}>
             <i />
             {displayError
@@ -265,66 +190,46 @@ export default function WorkspacePage({ route }: { route: Route }) {
           </button>
         </Topbar>
         <main className="workflow-stage" aria-label="Outreach workflow">
-          <div className="student-bar">
-            <div className="student-chips" role="group" aria-label="Student switcher">
-              {data?.mailboxes.map((mailbox) => {
-                const active = mailbox.student_id === studentId;
-                return (
-                  <button
-                    key={mailbox.id}
-                    ref={active ? activeChip : undefined}
-                    type="button"
-                    className={`student-chip${active ? " active" : ""}`}
-                    aria-pressed={active}
-                    title={`${mailbox.student_name} · ${mailbox.address}`}
-                    onClick={() => switchStudent(mailbox.student_id)}
-                  >
-                    <span className="student-avatar" aria-hidden="true">
-                      {mailbox.student_name.slice(0, 1)}
-                    </span>
-                    <span className="student-name">{mailbox.student_name}</span>
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                className="student-chip student-chip-add"
-                title="新增学生"
-                aria-label="新增学生"
-                onClick={openDialog}
-              >
-                <Icon name="plus" size={14} />
-                <span className="student-name">新增学生</span>
-              </button>
-            </div>
-            <p className="student-meta">
-              {studentMailbox ? (
-                <>
-                  <span>
-                    {studentMailbox.address} · {studentMailbox.observation_count} 次邮箱读取 ·{" "}
-                    {data?.report?.counts.tasks ?? 0} outreach tasks
-                  </span>
-                  <button
-                    type="button"
-                    className={`gateway-pill ${gateway.state}`}
-                    onClick={openGateway}
-                    title="管理邮箱网关连接"
-                  >
-                    <i className={gateway.state === "disconnected" ? "pulse" : ""} />
-                    {gateway.state === "connected"
-                      ? "网关已连接"
-                      : gateway.state === "mismatch"
-                        ? "网关作用域不符"
-                        : gateway.state === "disconnected"
-                          ? "连接邮箱"
-                          : "邮箱网关"}
-                    <Icon name="chevron" size={11} />
-                  </button>
-                </>
-              ) : (
-                "添加学生以开始工作流"
-              )}
-            </p>
+          <div className="workspace-context">
+            {studentMailbox ? (
+              <>
+                <span className="context-campaign">
+                  {scope?.campaignName || "Campaign"}
+                </span>
+                <span className="context-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span>{studentMailbox.address}</span>
+                <span className="context-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span>{studentMailbox.observation_count} 次邮箱读取</span>
+                <span className="context-sep" aria-hidden="true">
+                  ·
+                </span>
+                <span>{data?.report?.counts.tasks ?? 0} outreach tasks</span>
+                <button
+                  type="button"
+                  className={`gateway-pill ${gateway.state}`}
+                  onClick={openGateway}
+                  title="管理邮箱网关连接"
+                >
+                  <i className={gateway.state === "disconnected" ? "pulse" : ""} />
+                  {gateway.state === "connected"
+                    ? "网关已连接"
+                    : gateway.state === "mismatch"
+                      ? "网关作用域不符"
+                      : gateway.state === "disconnected"
+                        ? "连接邮箱"
+                        : "邮箱网关"}
+                  <Icon name="chevron" size={11} />
+                </button>
+              </>
+            ) : (
+              <span className="context-empty">
+                在右上角的学生工作区切换器中选择或新增学生
+              </span>
+            )}
           </div>
           {banners}
           <div className="workflow-frame" ref={frame}>
@@ -348,7 +253,11 @@ export default function WorkspacePage({ route }: { route: Route }) {
                   邮箱后，在工作流起点的<strong>邮箱网关</strong>连接专用扩展，
                   即可只读观察邮箱证据并导入来源材料；网关是外部执行基础设施，不单独占用设置页。
                 </p>
-                <button className="primary" disabled={busy} onClick={openDialog}>
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => setNewStudent(true)}
+                >
                   <Icon name="plus" size={17} /> 新增学生
                 </button>
               </div>
@@ -369,75 +278,15 @@ export default function WorkspacePage({ route }: { route: Route }) {
             </div>
           </div>
         </main>
-        {newStudent && (
-          <div
-            className="modal-backdrop"
-            onClick={(e) => {
-              if (e.target === e.currentTarget) closeDialog();
-            }}
-          >
-            <section
-              ref={modal}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="dialog-title"
-              className="modal"
-              onKeyDown={(e) => {
-                if (e.key === "Escape") closeDialog();
-              }}
-            >
-              <button
-                className="modal-close icon-button"
-                aria-label="Close dialog"
-                onClick={closeDialog}
-              >
-                <Icon name="close" />
-              </button>
-              <form onSubmit={createStudent}>
-                <div className="eyebrow">STUDENT WORKSPACE</div>
-                <h2 id="dialog-title">设定学生（Campaign）</h2>
-                <p>
-                  一位学生对应一个工作流空间，绑定其 163
-                  发件邮箱。读取、比对查重与跟进都在该学生范围内进行。
-                </p>
-                <label className="field">
-                  学生姓名
-                  <input
-                    autoFocus
-                    required
-                    maxLength={200}
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="例如：Zhang Wei"
-                  />
-                </label>
-                <label className="field">
-                  163 邮箱地址
-                  <input
-                    required
-                    type="email"
-                    maxLength={200}
-                    value={mailboxAddress}
-                    onChange={(e) => setMailboxAddress(e.target.value)}
-                    placeholder="student@163.com"
-                  />
-                </label>
-                {error && (
-                  <p role="alert" className="finding">
-                    {error}
-                  </p>
-                )}
-                <button
-                  className="primary full"
-                  disabled={busy || !name.trim() || !mailboxAddress.trim()}
-                >
-                  {busy ? "添加中…" : "添加学生"}
-                  <Icon name="arrow" size={16} />
-                </button>
-              </form>
-            </section>
-          </div>
-        )}
+        <StudentDialog
+          open={newStudent}
+          onClose={() => setNewStudent(false)}
+          onCreated={(value) =>
+            setNotice(
+              `已添加学生 ${value.name}（${value.mailbox}）。通过 Core CLI 导入来源材料后，任务将出现在工作流中。`,
+            )
+          }
+        />
         {gatewayPanel && (
           <div
             className="modal-backdrop"

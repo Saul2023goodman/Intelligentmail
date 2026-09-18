@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { gatewayHealth } from "../src/pages/workspace/workflow-model.ts";
+import { gatewayHealth } from "../src/core/gateway.ts";
 
 const student = (address = "student@163.com") => ({
   id: "mb1",

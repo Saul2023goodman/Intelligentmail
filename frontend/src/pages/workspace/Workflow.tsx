@@ -1,12 +1,11 @@
 import type { CSSProperties, KeyboardEvent } from "react";
 import type { Workspace } from "../../core";
+import type { GatewayHealth, GatewayState } from "../../core/gateway";
 import {
   stages,
   stageMetric,
   GRAPH_WIDTH,
   GRAPH_HEIGHT,
-  type GatewayHealth,
-  type GatewayState,
 } from "./workflow-model";
 import Icon from "../../shared/Icon";
 

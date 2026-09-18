@@ -1,0 +1,58 @@
+/* Shared "create a Student workspace" dialog, used by the global scope
+   switcher and by the Workflow empty state. */
+.student-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #1c2d4860;
+  backdrop-filter: blur(3px);
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+}
+.student-dialog {
+  position: relative;
+  width: 480px;
+  max-width: 100%;
+  max-height: calc(100dvh - 40px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: #fff;
+  padding: 32px;
+  border-radius: 14px;
+  box-shadow: 0 20px 100px #12253f30;
+}
+.student-dialog h2 {
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.6px;
+  margin: 12px 0;
+}
+.student-dialog p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #7a8aa0;
+  margin: 10px 0;
+}
+.student-dialog .modal-close {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+}
+.student-dialog .finding {
+  font-size: 11px;
+  line-height: 1.7;
+  background: #fff3f4;
+  color: #b46577;
+  padding: 9px;
+  border-radius: 5px;
+  margin: 10px 0;
+}
+@media (max-width: 600px) {
+  .student-dialog {
+    padding: 26px 20px;
+  }
+  .student-dialog h2 {
+    font-size: 19px;
+  }
+}

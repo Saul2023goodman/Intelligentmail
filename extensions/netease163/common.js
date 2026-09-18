@@ -58,7 +58,8 @@
   // inside one block; element.innerText then projects back to the exact text.
   api.plainToHtml = text => {
     const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");
-    const html = lines.map(line => (line === "" ? "<br />" : api.escapeHtml(line)))
+    // Every newline becomes one <br>; an empty line contributes nothing.
+    const html = lines.map(line => (line === "" ? "" : api.escapeHtml(line)))
       .join("<br />");
     return '<div data-ntes="ntes_mail_body_root" '
       + 'style="line-height:1.7;color:#000000;font-size:14px;font-family:Arial">'

@@ -10,103 +10,36 @@
   background: #f7f9fc;
 }
 
-:where(.workspace-page) .student-bar {
+/* Current workspace strip. Switching lives in the shell's global switcher;
+   this strip only states what the canvas below is scoped to. */
+:where(.workspace-page) .workspace-context {
   flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 5px;
-  padding: 10px var(--page-inset) 2px;
-}
-:where(.workspace-page) .student-chips {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 100%;
-  padding: 3px 2px;
-  overflow-x: auto;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-}
-:where(.workspace-page) .student-chips::-webkit-scrollbar {
-  display: none;
-}
-:where(.workspace-page) .student-chip {
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 36px;
-  padding: 0 15px 0 5px;
-  border: 1px solid #e1e8f2;
-  border-radius: 999px;
-  background: #fff;
-  color: #5f6f88;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 1px 2px #273a570d;
-  transition:
-    border-color 0.15s ease,
-    color 0.15s ease,
-    box-shadow 0.15s ease,
-    background-color 0.15s ease;
-}
-:where(.workspace-page) .student-chip:hover {
-  border-color: #b7cdf1;
-  color: var(--blue);
-}
-:where(.workspace-page) .student-chip.active {
-  border-color: var(--blue);
-  color: #27456e;
-  box-shadow: 0 4px 14px #397af026;
-}
-:where(.workspace-page) .student-avatar {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background: #edf2f9;
-  color: #7284a3;
-  font-size: 11px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-:where(.workspace-page) .student-chip.active .student-avatar {
-  background: linear-gradient(150deg, #5b97f6, #397af0);
-  color: #fff;
-}
-:where(.workspace-page) .student-name {
-  white-space: nowrap;
-}
-:where(.workspace-page) .student-chip-add {
-  height: 36px;
-  padding: 0 14px;
-  border-style: dashed;
-  color: #8496b0;
-}
-:where(.workspace-page) .student-chip-add:hover {
-  background: #f3f8ff;
-  border-color: var(--blue);
-  color: var(--blue);
-}
-:where(.workspace-page) .student-meta {
-  margin: 0;
-  max-width: 100%;
-  font-size: 10px;
-  letter-spacing: 0.2px;
-  color: #98a5b9;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 9px var(--page-inset) 3px;
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.2px;
+  color: #98a5b9;
 }
-:where(.workspace-page) .student-meta > span {
+:where(.workspace-page) .workspace-context > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+:where(.workspace-page) .context-campaign {
+  color: #6d7f99;
+  font-weight: 650;
+}
+:where(.workspace-page) .context-sep {
+  color: #cbd4e0;
+}
+:where(.workspace-page) .context-empty {
+  color: #98a5b9;
 }
 
 /* Mailbox Gateway health pill — contextual connection entry point. */
@@ -710,8 +643,8 @@
 }
 
 @media (max-height: 750px) {
-  :where(.workspace-page) .student-bar {
-    padding-top: 9px;
+  :where(.workspace-page) .workspace-context {
+    padding-top: 8px;
   }
   :where(.workspace-page) .canvas-legend {
     bottom: 10px;
@@ -725,7 +658,7 @@
   }
 }
 @media (max-width: 850px) {
-  :where(.workspace-page) .student-bar {
+  :where(.workspace-page) .workspace-context {
     padding-inline: 16px;
   }
   :where(.workspace-page) .banner {
