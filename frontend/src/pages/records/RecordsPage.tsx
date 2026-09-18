@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AppShell, Topbar } from "../../app/shell";
 import { PageHeader } from "../../app/page-header";
 import { useWorkspaceScope } from "../../app/scope";
@@ -22,6 +22,23 @@ import {
 import "./Records.css";
 
 const toneClass = (tone: Tone) => `rc-tone-${tone}`;
+
+function RecordsDialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const element = ref.current;
+    element?.showModal();
+    return () => element?.close();
+  }, []);
+  return (
+    <dialog className="rc-dialog" ref={ref} onCancel={close} onClick={(event) => {
+      if (event.target === event.currentTarget) close();
+    }}>
+      <header><div><span>MAILBOX EVIDENCE</span><h2>{title}</h2></div><button autoFocus aria-label="Close mailbox history" onClick={close}><Icon name="close" /></button></header>
+      <div className="rc-dialog-body">{children}</div>
+    </dialog>
+  );
+}
 
 function flattenNodes(lineage: TaskLineage): LineNode[] {
   const out: LineNode[] = [];
@@ -295,6 +312,7 @@ function SectionLabel({ icon, title, count }: { icon: IconName; title: string; c
 export default function RecordsPage() {
   const { scope } = useWorkspaceScope();
   const campaign = scope?.campaignId ?? "";
+  const student = scope?.studentId ?? "";
   const workspaceQuery = useCoreQuery("records_workspace", { campaign_id: campaign }, { enabled: Boolean(campaign) });
   const data = workspaceQuery.data;
   const loading = workspaceQuery.isLoading;
@@ -306,6 +324,12 @@ export default function RecordsPage() {
   const detail = detailQuery.data;
   const detailLoading = detailQuery.isLoading;
   const [selectedNodeKey, setSelectedNodeKey] = useState("");
+  const [mailboxHistoryOpen, setMailboxHistoryOpen] = useState(false);
+  const mailboxHistoryQuery = useCoreQuery(
+    "mailbox_history",
+    { student_id: student },
+    { enabled: Boolean(student && mailboxHistoryOpen) },
+  );
 
   const rows = useMemo(() => (data ? buildTaskRows(data) : []), [data]);
   const filtered = useMemo(
@@ -330,6 +354,7 @@ export default function RecordsPage() {
 
   const selectedTaskRow = data?.tasks.find((t) => t.task_id === selectedTask) ?? null;
   const counts = data?.counts;
+  const mailboxSummary = data?.mailboxes.find((item) => item.student_id === student);
   const statusChips: { key: string; label: string; value: number; tone: Tone }[] = counts
     ? [
         { key: "all", label: "All tasks", value: counts.tasks, tone: "blue" },
@@ -369,6 +394,11 @@ export default function RecordsPage() {
           title="Records"
           subtitle="lineage &amp; traceability"
           meta={<span className="rc-readonly-badge"><Icon name="shield" size={13} /> Read-only · no editing or execution</span>}
+          actions={
+            <button className="rc-header-button" disabled={!student} onClick={() => setMailboxHistoryOpen(true)}>
+              <Icon name="mail" size={14} /> 邮箱监测历史 {mailboxSummary ? `· ${mailboxSummary.observation_count}` : ""}
+            </button>
+          }
         />
         <section className="rc-filters" aria-label="Evidence filters">
           <div className="rc-chips">
@@ -531,6 +561,44 @@ export default function RecordsPage() {
           <span>Observations are evidence, not sending authority</span>
         </footer>
       </div>
+      {mailboxHistoryOpen && (
+        <RecordsDialog title="Observation & reconciliation history" close={() => setMailboxHistoryOpen(false)}>
+          <p className="rc-dialog-intro">Mailbox 页面只负责当前监测和触发；所有历史批次、覆盖范围与对账结果在这里作为只读证据保留。</p>
+          {mailboxHistoryQuery.isLoading ? (
+            <div className="rc-empty"><Icon name="refresh" size={24} /><p>读取邮箱证据…</p></div>
+          ) : mailboxHistoryQuery.error ? (
+            <div className="rc-notice rc-error">{mailboxHistoryQuery.error.message}</div>
+          ) : mailboxHistoryQuery.data?.observations.length ? (
+            <div className="rc-mailbox-history">
+              {mailboxHistoryQuery.data.observations.slice().reverse().map((observation) => {
+                const reconciliation = mailboxHistoryQuery.data?.reconciliations.find(
+                  (item) => item.observation_id === observation.id,
+                );
+                return (
+                  <article key={observation.id}>
+                    <header>
+                      <span className={`rc-history-dot ${observation.status === "complete" ? "is-complete" : ""}`} />
+                      <div><strong>{formatTime(observation.observed_at)}</strong><small>{observation.mailbox_address} · {observation.adapter}</small></div>
+                      <span className="rc-chip sm">{observation.status.replaceAll("_", " ")}</span>
+                    </header>
+                    <p>{observation.detail || "Retained mailbox observation"}</p>
+                    <dl>
+                      <Field label="Observation ID" value={observation.id} mono />
+                      <Field label="Messages" value={observation.messages.length} />
+                      <Field label="Reconciliation" value={reconciliation?.id} mono />
+                      <Field label="Findings" value={reconciliation?.findings.length ?? 0} />
+                    </dl>
+                    <JsonBlock title="Coverage and capabilities" value={{ coverage: observation.evidence_coverage, capabilities: observation.capabilities }} />
+                    {reconciliation && <JsonBlock title="Reconciliation findings" value={{ summary: reconciliation.summary, findings: reconciliation.findings }} />}
+                  </article>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="rc-empty"><Icon name="mail" size={26} /><h2>尚无邮箱监测证据</h2><p>回到 Mailbox 页面连接网关并刷新监测。</p></div>
+          )}
+        </RecordsDialog>
+      )}
     </AppShell>
   );
 }

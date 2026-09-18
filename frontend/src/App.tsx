@@ -5,6 +5,7 @@ import ReviewPage from "./pages/review/ReviewPage";
 import ExecutionPage from "./pages/execution/ExecutionPage";
 import MailboxPage from "./pages/mailbox/MailboxPage";
 import RecordsPage from "./pages/records/RecordsPage";
+import FollowUpAutomationDriver from "./pages/mailbox/automation-driver";
 import { WorkspaceScopeProvider } from "./app/scope";
 import { CoreDataProvider } from "./core/data";
 import "./app/shell.css";
@@ -17,6 +18,7 @@ export default function App() {
   return (
     <CoreDataProvider>
       <WorkspaceScopeProvider>
+        <FollowUpAutomationDriver />
         <WorkspacePage route={route} />
         {route === "sources" && <IntakePage />}
         {route === "review" && <ReviewPage />}

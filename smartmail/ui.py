@@ -16,6 +16,7 @@ from .mailbox_ui import mailbox_workspace
 from .records_ui import mailbox_summaries, records_workspace, records_task
 from .intake_ui import intake_workspace, import_uploaded_sources, recognize_uploaded_sources
 from .review_ui import review_workspace, resolve_review_exception
+from .followup_ui import follow_up_workspace
 
 
 def dispatch(core, request):
@@ -50,6 +51,23 @@ def dispatch(core, request):
         return records_workspace(core, request["campaign_id"])
     if command == "records_task":
         return records_task(core, request["task_id"])
+    if command == "followup_workspace":
+        return follow_up_workspace(core, request["campaign_id"])
+    if command == "followup_configure":
+        rule = core.configure_follow_up_rule(
+            request["campaign_id"],
+            delay_days=request.get("delay_days"),
+            maximum_count=request.get("maximum_count"),
+            subject_template=request.get("subject_template"),
+            body_template=request.get("body_template"),
+            enabled=request.get("enabled"),
+            timezone_name=request.get("timezone"),
+            send_time=request.get("send_time"),
+        )
+        return {"rule": rule, "workspace": follow_up_workspace(core, request["campaign_id"])}
+    if command == "followup_process":
+        result = core.process_follow_up_automation(request["campaign_id"])
+        return {**result, "workspace": follow_up_workspace(core, request["campaign_id"])}
     if isinstance(command, str) and command.startswith("execution_"):
         return dispatch_execution(core, request)
     if command == "workspace":

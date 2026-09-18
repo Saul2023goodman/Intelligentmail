@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -21,10 +22,26 @@ import {
   type OperationReview,
   type Confirmation,
   type ExternalSchedule,
-  type Proposal,
   type Workspace,
+  type Attempt,
 } from "../../core";
 import Icon, { type IconName } from "../../shared/Icon";
+import Timetable from "./Timetable";
+import {
+  autoDensity,
+  buildIndex,
+  buildRows,
+  buildSessions,
+  buildSlots,
+  DAY_LABEL,
+  DENSITIES,
+  SLOT_LABEL,
+  WEEKDAY_TOKEN,
+  zoned,
+  type Density,
+  type Slot,
+  type Tone,
+} from "./timetable-model";
 import "./Execution.css";
 
 const REGIONS = ["Ready pool", "Send timeline", "Execution monitor"];
@@ -38,6 +55,10 @@ const OUTCOME_LABELS: [string, string][] = [
   ["unknown_outcome", "Unknown"],
   ["refused", "Refused"],
   ["not_reached", "Not reached"],
+];
+/** Legend order: what the operator needs to read about the whole horizon, in sequence. */
+const LEGEND_ORDER: Tone[] = [
+  "proposed", "queued", "placed", "sent", "failed", "unknown", "expired",
 ];
 const QUEUE_TONE: Record<string, string> = {
   ready_to_authorize: "blue",
@@ -58,12 +79,6 @@ const OUTCOME_TONE: Record<string, string> = {
   not_reached: "gray",
 };
 const DAY_TOKENS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-const WEEKDAY_TOKEN: Record<string, string> = {
-  Sun: "SUN", Mon: "MON", Tue: "TUE", Wed: "WED", Thu: "THU", Fri: "FRI", Sat: "SAT",
-};
-const DAY_LABEL: Record<string, string> = {
-  SUN: "周日", MON: "周一", TUE: "周二", WED: "周三", THU: "周四", FRI: "周五", SAT: "周六",
-};
 const DAY_SHORT: Record<string, string> = {
   SUN: "日", MON: "一", TUE: "二", WED: "三", THU: "四", FRI: "五", SAT: "六",
 };
@@ -81,104 +96,6 @@ const date = (value?: string) =>
         minute: "2-digit",
       })
     : "Immediate";
-/** One planned action placed in the institution × session grid. */
-type Slot = {
-  proposal: Proposal;
-  institution: string;
-  supervisor: string;
-  at: string;
-  time: string;
-  date: string;
-  weekday: string;
-  session: number | null;
-  epoch: number;
-};
-type Session = {
-  key: string;
-  date: string;
-  weekday: string;
-  index: number | null;
-  start: string;
-  end: string;
-  epoch: number;
-};
-type Row = { institution: string; count: number; first: number };
-
-function zoned(
-  instant: Date,
-  timezone: string,
-  options: Intl.DateTimeFormatOptions,
-  locale = "en-CA",
-) {
-  return new Intl.DateTimeFormat(locale, { timeZone: timezone, ...options }).format(instant);
-}
-function sessionIndex(token: string, time: string, windows: PlanConfiguration["windows"]) {
-  for (let index = 0; index < windows.length; index += 1) {
-    const window = windows[index];
-    if (window.days.includes(token) && window.start <= time && time <= window.end) return index;
-  }
-  return null;
-}
-function buildSlots(plan: SendingPlan | undefined): Slot[] {
-  if (!plan) return [];
-  const timezone = plan.configuration.timezone;
-  return plan.proposals.map((proposal) => {
-    const instant = new Date(proposal.scheduled_at);
-    const weekday = zoned(instant, timezone, { weekday: "short" }, "en-US");
-    const time = zoned(instant, timezone, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }, "en-GB");
-    const token = WEEKDAY_TOKEN[weekday] ?? "";
-    return {
-      proposal,
-      institution: proposal.institution_name || "Unassigned institution",
-      supervisor: proposal.supervisor_name || "Supervisor",
-      at: proposal.scheduled_at,
-      time,
-      date: zoned(instant, timezone, { year: "numeric", month: "2-digit", day: "2-digit" }),
-      weekday: token,
-      session: sessionIndex(token, time, plan.configuration.windows),
-      epoch: instant.getTime(),
-    };
-  });
-}
-function buildSessions(slots: Slot[], configuration: PlanConfiguration): Session[] {
-  const found = new Map<string, Session>();
-  for (const slot of slots) {
-    const key = `${slot.date}#${slot.session ?? "-"}`;
-    const window = slot.session === null ? undefined : configuration.windows[slot.session];
-    const existing = found.get(key);
-    if (existing) {
-      existing.epoch = Math.min(existing.epoch, slot.epoch);
-      continue;
-    }
-    found.set(key, {
-      key,
-      date: slot.date,
-      weekday: slot.weekday,
-      index: slot.session,
-      start: window?.start ?? "",
-      end: window?.end ?? "",
-      epoch: slot.epoch,
-    });
-  }
-  return [...found.values()].sort((a, b) => a.epoch - b.epoch);
-}
-function buildRows(slots: Slot[]): Row[] {
-  const found = new Map<string, Row>();
-  for (const slot of slots) {
-    const row = found.get(slot.institution);
-    if (row) {
-      row.count += 1;
-      row.first = Math.min(row.first, slot.epoch);
-      continue;
-    }
-    found.set(slot.institution, {
-      institution: slot.institution,
-      count: 1,
-      first: slot.epoch,
-    });
-  }
-  return [...found.values()].sort((a, b) => a.first - b.first);
-}
 /** What a configuration would actually produce, shown before it is saved. */
 function project(
   configuration: PlanConfiguration,
@@ -583,12 +500,23 @@ export default function ExecutionPage() {
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [replacement, setReplacement] = useState("");
   const [tick, setTick] = useState(() => Date.now());
+  /** Grid density; ``null`` follows the size of the plan, an explicit pick sticks. */
+  const [density, setDensity] = useState<Density | null>(null);
+  const [focused, setFocused] = useState(false);
   const actionLock = useRef(false);
 
   useEffect(() => {
     const timer = setInterval(() => setTick(Date.now()), 30000);
     return () => clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!focused) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFocused(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focused]);
 
   async function refresh() {
     if (!campaign) return;
@@ -622,13 +550,58 @@ export default function ExecutionPage() {
   const selected = override ?? authorizable.map((row) => row.preparation_id);
   const plans = data?.plans.filter((p) => p.status !== "superseded") ?? [];
   const plan = plans.at(-1);
-  const slots = buildSlots(plan);
-  const sessions = configuration ? buildSessions(slots, configuration) : [];
-  const rows = buildRows(slots);
-  const slotAt = (institution: string, session: string) =>
-    slots.find((slot) => slot.institution === institution
-      && `${slot.date}#${slot.session ?? "-"}` === session);
-  const queueById = new Map(queue.map((row) => [row.preparation_id, row]));
+  const slots = useMemo(() => buildSlots(plan), [plan]);
+  const queueById = useMemo(
+    () => new Map((data?.queue ?? []).map((row) => [row.preparation_id, row])),
+    [data?.queue]);
+  /** The newest attempt per Preparation; the mailbox is the only source of an outcome. */
+  const attemptById = useMemo(() => {
+    const found = new Map<string, Attempt>();
+    for (const attempt of data?.attempts ?? []) {
+      const existing = found.get(attempt.preparation_id);
+      if (!existing || attempt.updated_at > existing.updated_at) {
+        found.set(attempt.preparation_id, attempt);
+      }
+    }
+    return found;
+  }, [data?.attempts]);
+  const toneOf = useMemo(() => (slot: Slot): Tone => {
+    const row = queueById.get(slot.proposal.preparation_id);
+    const attempt = attemptById.get(slot.proposal.preparation_id);
+    if (row?.state === "already_sent") return "sent";
+    if (attempt?.state === "sent") return "sent";
+    if (attempt?.state === "failed") return "failed";
+    if (attempt?.state === "unknown") return "unknown";
+    if (row?.state === "externally_scheduled") return "placed";
+    if (row?.state === "awaiting_execution") return "queued";
+    // A planned time that passed before it was ever confirmed needs a new time, not a send.
+    return slot.epoch <= tick ? "expired" : "proposed";
+  }, [queueById, attemptById, tick]);
+  const sessions = useMemo(
+    () => (configuration ? buildSessions(slots, configuration) : []), [slots, configuration]);
+  const rows = useMemo(() => buildRows(slots, toneOf), [slots, toneOf]);
+  const index = useMemo(() => buildIndex(slots), [slots]);
+  const toneCounts = useMemo(() => {
+    const counts: Record<Tone, number> = {
+      proposed: 0, queued: 0, placed: 0, sending: 0,
+      sent: 0, failed: 0, unknown: 0, expired: 0,
+    };
+    for (const slot of slots) counts[toneOf(slot)] += 1;
+    return counts;
+  }, [slots, toneOf]);
+  const timezone = configuration?.timezone ?? "";
+  const today = useMemo(
+    () => (timezone
+      ? zoned(new Date(tick), timezone, { year: "numeric", month: "2-digit", day: "2-digit" })
+      : ""),
+    [timezone, tick],
+  );
+  /** The first session still ahead of now; its left edge is the "now" line. */
+  const nowKey = useMemo(
+    () => sessions.find((session) => session.epoch > tick)?.key ?? null,
+    [sessions, tick],
+  );
+  const gridDensity = density ?? autoDensity(sessions.length, rows.length);
   const confirmationById = new Map(
     (data?.confirmations ?? []).map((c) => [c.id, c]));
   const reviewById = new Map((data?.reviews ?? []).map((r) => [r.preparation_id, r]));
@@ -810,7 +783,7 @@ export default function ExecutionPage() {
             </button>
           ))}
         </div>
-        <main className="ex-main" aria-busy={disabled}>
+        <main className={`ex-main${focused ? " is-focused" : ""}`} aria-busy={disabled}>
           {panel(
             0,
             "database",
@@ -910,93 +883,60 @@ export default function ExecutionPage() {
             "clock",
             slots.length,
             <>
-              <div className="ex-panel-sub">
-                <span>
-                  {plan ? `${human(plan.status)} · ${rows.length} 所院校 × ${sessions.length} 个档期`
-                    : "Institution rows · session columns"}
+              <div className="ex-panel-sub ex-timeline-sub">
+                <span className="ex-scale">
+                  {rows.length} 校 × {sessions.length} 档期 · {plan ? human(plan.status) : "无排期"}
                 </span>
-                <span className="ex-legend">
-                  <span className="ex-chip ex-chip-blue">已排期 {slots.filter((s) => !s.proposal.confirmation_id).length}</span>
-                  <span className="ex-chip ex-chip-green">已入队 {slots.filter((s) => s.proposal.confirmation_id).length}</span>
+                <span className="ex-sub-tools">
+                  <span className="ex-legend">
+                    {LEGEND_ORDER.filter((tone) => toneCounts[tone] > 0).map((tone) => (
+                      <span className={`ex-swatch is-${tone}`} key={tone} title={SLOT_LABEL[tone]}>
+                        <i />
+                        {SLOT_LABEL[tone]} {toneCounts[tone]}
+                      </span>
+                    ))}
+                  </span>
+                  <span className="ex-density" role="group" aria-label="网格密度">
+                    {DENSITIES.map((option) => (
+                      <button
+                        key={option.key}
+                        type="button"
+                        title={option.hint}
+                        aria-pressed={gridDensity === option.key}
+                        className={gridDensity === option.key ? "is-active" : ""}
+                        onClick={() => setDensity(option.key)}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </span>
                 </span>
               </div>
-              <div className="ex-grid-wrap">
-                {slots.length ? (
-                  <table className="ex-grid">
-                    <thead>
-                      <tr>
-                        <th className="ex-grid-corner">院校</th>
-                        {sessions.map((session) => (
-                          <th
-                            key={session.key}
-                            className={`ex-colhead${session.epoch <= tick && session.epoch + 86400000 > tick ? " is-now" : ""}`}
-                          >
-                            <span className="ex-col-date">
-                              {session.date.slice(5).replace("-", "/")} {DAY_LABEL[session.weekday] ?? ""}
-                              {session.epoch <= tick && session.epoch + 86400000 > tick && (
-                                <em className="ex-now-pill">今天</em>
-                              )}
-                            </span>
-                            <span className="ex-col-window">
-                              {session.start && session.end ? `${session.start}–${session.end}` : "档期"}
-                            </span>
-                          </th>
-                        ))}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((row) => (
-                        <tr key={row.institution}>
-                          <th className="ex-rowhead">
-                            <span className="ex-row-name">{row.institution}</span>
-                            <span className="ex-row-count">{row.count} 位 · 按档期串行</span>
-                          </th>
-                          {sessions.map((session) => {
-                            const slot = slotAt(row.institution, session.key);
-                            if (!slot)
-                              return (
-                                <td className="ex-cell" key={session.key}>
-                                  <span className="ex-cell-empty">该档期不投</span>
-                                </td>
-                              );
-                            const state = queueById.get(slot.proposal.preparation_id);
-                            const tone = state?.state === "already_sent" ? "sent"
-                              : state?.state === "externally_scheduled" ? "placed"
-                              : state?.state === "awaiting_execution" ? "queued"
-                              : "proposed";
-                            const due = slot.epoch <= tick && tone !== "sent";
-                            return (
-                              <td className={`ex-cell${slot.epoch <= tick ? " is-past" : ""}`} key={session.key}>
-                                <button
-                                  className={`ex-slot is-${tone}`}
-                                  onClick={() => plan && setDialog({
-                                    type: "slot", slot, plan: plan.id,
-                                    timezone: plan.configuration.timezone,
-                                  })}
-                                >
-                                  <span className="ex-slot-time">{slot.time}</span>
-                                  <span className="ex-slot-name">{slot.supervisor}</span>
-                                  <span className="ex-slot-state">
-                                    <i />
-                                    {SLOT_LABEL[tone]}
-                                  </span>
-                                  {due && <span className="ex-slot-due">已到</span>}
-                                </button>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                ) : (
+              {slots.length ? (
+                <Timetable
+                  sessions={sessions}
+                  rows={rows}
+                  index={index}
+                  tick={tick}
+                  today={today}
+                  nowKey={nowKey}
+                  density={gridDensity}
+                  toneOf={toneOf}
+                  onPick={(slot) => plan && setDialog({
+                    type: "slot", slot, plan: plan.id,
+                    timezone: plan.configuration.timezone,
+                  })}
+                />
+              ) : (
+                <div className="ex-grid-wrap ex-grid-blank">
                   <Empty icon="clock">
                     {loading
                       ? "Loading the plan…"
                       : "Propose a plan to see every institution paced across the horizon's sessions."}
                   </Empty>
-                )}
-                {excluded.length > 0 && (
+                </div>
+              )}
+              {excluded.length > 0 && (
                   <div className="ex-excluded">
                     <h3>未进入排期 {excluded.length}</h3>
                     {excluded.map((item) => (
@@ -1008,7 +948,6 @@ export default function ExecutionPage() {
                     ))}
                   </div>
                 )}
-              </div>
               <div className="ex-panel-foot">
                 <span>行内串行 · 列间并行 · 一格一位导师</span>
                 <span className="ex-foot-actions">
@@ -1035,6 +974,16 @@ export default function ExecutionPage() {
                 </span>
               </div>
             </>,
+            <button
+              key="focus"
+              type="button"
+              className={`ex-icon-button${focused ? " is-active" : ""}`}
+              aria-pressed={focused}
+              title={focused ? "退出专注（Esc）" : "专注时间线"}
+              onClick={() => setFocused(!focused)}
+            >
+              <Icon name="fit" size={14} />
+            </button>,
           )}
           {panel(
             2,
@@ -1400,12 +1349,6 @@ export default function ExecutionPage() {
   );
 }
 
-const SLOT_LABEL: Record<string, string> = {
-  proposed: "已排期",
-  queued: "已入队",
-  placed: "已投放",
-  sent: "已发送",
-};
 const atOf = (confirmation?: Confirmation) =>
   confirmation
     ? new Date(confirmation.execution.scheduled_at

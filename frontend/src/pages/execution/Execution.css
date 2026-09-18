@@ -118,6 +118,15 @@
   gap: 12px;
   min-height: 0;
 }
+/* Focus mode: one large campaign needs the whole width for its timeline. */
+@media (min-width: 1101px) {
+  .execution-page .ex-main.is-focused {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .execution-page .ex-main.is-focused .ex-panel:not(.ex-panel-1) {
+    display: none;
+  }
+}
 .execution-page .ex-panel {
   min-height: 0;
   min-width: 0;
@@ -311,7 +320,7 @@
   border-color: #f6dcbd;
 }
 
-/* ---- center: session grid ---- */
+/* ---- center: institution × session timetable ---- */
 .execution-page .ex-grid-wrap {
   flex: 1;
   min-height: 0;
@@ -319,12 +328,39 @@
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: #c9d5e8 transparent;
+  background:
+    linear-gradient(#fbfcff, #fbfcff) padding-box;
+}
+.execution-page .ex-grid-blank {
+  display: grid;
+  place-items: center;
+}
+
+/* One place to retune the whole grid: columns, rows, type and gutters per density. */
+.execution-page .ex-grid.is-comfy {
+  --col-w: 168px;
+  --row-h: 58px;
+  --head-w: 148px;
+  --head-h: 34px;
+}
+.execution-page .ex-grid.is-compact {
+  --col-w: 112px;
+  --row-h: 46px;
+  --head-w: 132px;
+  --head-h: 30px;
+}
+.execution-page .ex-grid.is-micro {
+  --col-w: 74px;
+  --row-h: 34px;
+  --head-w: 118px;
+  --head-h: 28px;
 }
 .execution-page table.ex-grid {
   border-collapse: separate;
   border-spacing: 0;
   width: max-content;
   min-width: 100%;
+  --tone-line: #bccadf;
 }
 .execution-page .ex-grid th,
 .execution-page .ex-grid td {
@@ -332,42 +368,76 @@
   text-align: left;
   vertical-align: top;
 }
+
+/* --- column headers --- */
 .execution-page .ex-grid-corner {
   position: sticky;
   top: 0;
   left: 0;
-  z-index: 5;
-  min-width: 148px;
+  z-index: 6;
+  width: var(--head-w);
+  min-width: var(--head-w);
   background: #f4f8ff;
   border-bottom: 1px solid #e2eaf6;
-  border-right: 1px solid #e2eaf6;
-  padding: 9px 12px;
+  border-right: 1px solid #dbe5f4;
+  padding: 7px 10px;
+  vertical-align: middle;
+}
+.execution-page .ex-corner-title {
   font-size: 9px;
   font-weight: 600;
   letter-spacing: 0.6px;
   color: #8fa1ba;
 }
-.execution-page .ex-colhead {
+.execution-page .ex-bandhead {
   position: sticky;
   top: 0;
-  z-index: 3;
-  min-width: 168px;
-  background: #f4f8ff;
-  border-bottom: 1px solid #e2eaf6;
-  border-right: 1px solid #eef3fa;
-  padding: 9px 10px;
+  z-index: 2;
+  background: #eff4fc;
+  border-bottom: 1px solid #dbe5f4;
+  border-right: 1px solid #dbe5f4;
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #7286a4;
+  text-align: center;
+  white-space: nowrap;
 }
-.execution-page .ex-colhead.is-now {
+.execution-page .ex-bandhead.is-today {
+  background: #e3edff;
+  color: #2f66d6;
+}
+.execution-page .ex-colhead {
+  position: sticky;
+  top: var(--head-h);
+  z-index: 3;
+  width: var(--col-w);
+  min-width: var(--col-w);
+  background: #f7faff;
+  border-bottom: 1px solid #e2eaf6;
+  border-right: 1px solid #edf2f9;
+  padding: 6px 9px;
+}
+.execution-page .ex-bandrow ~ tr .ex-colhead {
+  top: calc(var(--head-h) + 22px);
+}
+.execution-page .ex-colhead.is-day-start {
+  border-left: 1px solid #ccd9ee;
+}
+.execution-page .ex-colhead.is-today {
   background: #fff;
-  box-shadow: inset 0 2px 0 #3379ff;
+}
+.execution-page .ex-colhead.is-past {
+  background: #f2f5fa;
 }
 .execution-page .ex-col-date {
   display: flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
+  gap: 4px;
+  font-size: 10.5px;
   font-weight: 600;
   color: #4b6183;
+  white-space: nowrap;
 }
 .execution-page .ex-now-pill {
   font-style: normal;
@@ -376,23 +446,61 @@
   background: #e4efff;
   color: #2f66d6;
   border-radius: 9px;
-  padding: 1px 6px;
+  padding: 1px 5px;
+}
+.execution-page .ex-now-flag {
+  font-style: normal;
+  font-size: 9px;
+  font-weight: 600;
+  background: #ff5a4a;
+  color: #fff;
+  border-radius: 9px;
+  padding: 1px 5px;
 }
 .execution-page .ex-col-window {
   display: block;
-  margin-top: 3px;
+  margin-top: 2px;
   font-size: 9px;
   color: #93a4bb;
+  white-space: nowrap;
 }
+.execution-page .ex-col-count {
+  position: absolute;
+  top: 5px;
+  right: 7px;
+  min-width: 15px;
+  text-align: center;
+  font-size: 9px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: #4d7fd8;
+  background: #e4efff;
+  border-radius: 8px;
+  padding: 0 4px;
+}
+.execution-page .ex-col-count.is-zero {
+  color: #b3c0d4;
+  background: #f0f3f9;
+}
+/* The "now" line: everything left of it has passed, everything right is ahead. */
+.execution-page .ex-colhead.is-nowline {
+  box-shadow: inset 2px 0 0 #ff5a4a;
+}
+.execution-page .ex-colhead.is-nowline .ex-col-count {
+  right: 11px;
+}
+
+/* --- row headers --- */
 .execution-page .ex-rowhead {
   position: sticky;
   left: 0;
-  z-index: 2;
-  min-width: 148px;
+  z-index: 4;
+  width: var(--head-w);
+  min-width: var(--head-w);
   background: #fbfcff;
   border-bottom: 1px solid #eef3fa;
-  border-right: 1px solid #e2eaf6;
-  padding: 10px 12px;
+  border-right: 1px solid #dbe5f4;
+  padding: 7px 10px;
   vertical-align: middle;
 }
 .execution-page .ex-row-name {
@@ -403,50 +511,106 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 132px;
+}
+.execution-page .ex-row-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+}
+.execution-page .ex-row-bar {
+  flex: 1;
+  min-width: 24px;
+  height: 3px;
+  border-radius: 2px;
+  background: #e6ecf6;
+  overflow: hidden;
+}
+.execution-page .ex-row-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #4cc39a, #12a478);
 }
 .execution-page .ex-row-count {
-  display: block;
-  margin-top: 3px;
   font-size: 9px;
   color: #98a8bf;
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
 }
+
+/* --- cells --- */
 .execution-page .ex-cell {
   border-bottom: 1px solid #eef3fa;
   border-right: 1px solid #eef3fa;
-  padding: 6px;
-  height: 60px;
+  padding: 4px;
+  height: var(--row-h);
+}
+.execution-page .ex-cell.is-day-start {
+  border-left: 1px solid #ccd9ee;
 }
 .execution-page .ex-cell.is-past {
-  background: #fbfbfe;
+  background: #fafbfe;
 }
-.execution-page .ex-cell-empty {
+.execution-page .ex-cell.is-nowline {
+  box-shadow: inset 2px 0 0 #ff5a4a;
+}
+/* An empty cell is a deliberate gap — a whisper, not a wall of repeated text. */
+.execution-page .ex-gap {
   display: grid;
   place-items: center;
   height: 100%;
   border: 1px dashed #e8eef7;
-  border-radius: 7px;
-  font-size: 9px;
-  color: #c6d2e3;
+  border-radius: 6px;
 }
+.execution-page .ex-gap i {
+  font-style: normal;
+  font-size: 9px;
+  color: #cfdaea;
+}
+.execution-page .ex-grid.is-compact .ex-gap i,
+.execution-page .ex-grid.is-micro .ex-gap i {
+  display: none;
+}
+.execution-page .ex-grid.is-micro .ex-gap {
+  border-style: dotted;
+}
+
+/* --- slot tiles --- */
 .execution-page .ex-slot {
   position: relative;
   width: 100%;
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   text-align: left;
   border: 1px solid #e1e9f6;
-  border-left: 3px solid #bccadf;
-  border-radius: 7px;
+  border-left: 3px solid var(--tone-line);
+  border-radius: 6px;
   background: #fff;
-  padding: 6px 8px;
+  padding: 4px 6px;
+  overflow: hidden;
+  transition: box-shadow 120ms ease, border-color 120ms ease;
+}
+.execution-page .ex-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
 }
 .execution-page .ex-slot-time {
   font-size: 9px;
-  color: #98a8bf;
+  color: #8fa1ba;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+.execution-page .ex-slot-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--tone-line);
+  flex-shrink: 0;
+  margin-left: auto;
 }
 .execution-page .ex-slot-name {
   font-size: 11px;
@@ -455,57 +619,212 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.25;
 }
 .execution-page .ex-slot-state {
   margin-top: auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
   font-size: 9px;
-  color: #8b9ab1;
-}
-.execution-page .ex-slot-state i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #bccadf;
-  flex-shrink: 0;
+  color: #8296b1;
+  line-height: 1.3;
 }
 .execution-page .ex-slot-due {
   position: absolute;
-  top: 6px;
-  right: 7px;
-  font-size: 9px;
+  right: 5px;
+  bottom: 4px;
+  font-style: normal;
+  font-size: 8.5px;
   color: #95641a;
   background: #fdf1dc;
-  border-radius: 8px;
-  padding: 0 5px;
+  border-radius: 7px;
+  padding: 0 4px;
 }
+.execution-page .ex-slot.is-due {
+  box-shadow: 0 0 0 1px #f3c98a inset;
+}
+
+/* --- tone language: the left rule carries the state, the wash supports it --- */
 .execution-page .ex-slot.is-proposed {
-  border-left-color: #5a91ff;
-  background: #f2f7ff;
+  --tone-line: #5a91ff;
+  background: #f6f9ff;
 }
 .execution-page .ex-slot.is-queued {
-  border-left-color: #3379ff;
-  background: #e4efff;
-}
-.execution-page .ex-slot.is-queued .ex-slot-state i,
-.execution-page .ex-slot.is-placed .ex-slot-state i {
-  background: #3379ff;
+  --tone-line: #3379ff;
+  background: #e8f0ff;
 }
 .execution-page .ex-slot.is-placed {
-  border-left-color: #7f77dd;
-  background: #f1effd;
+  --tone-line: #7f77dd;
+  background: #f2f0fd;
+}
+.execution-page .ex-slot.is-sending {
+  --tone-line: #3379ff;
+  background: #e8f0ff;
+}
+.execution-page .ex-slot.is-sending .ex-slot-dot {
+  animation: ex-pulse 1.1s ease-in-out infinite;
 }
 .execution-page .ex-slot.is-sent {
-  border-left-color: #28bd8d;
-  background: #e2f6ea;
+  --tone-line: #28bd8d;
+  background: #e6f7ee;
 }
-.execution-page .ex-slot.is-sent .ex-slot-state i {
-  background: #28bd8d;
+.execution-page .ex-slot.is-failed {
+  --tone-line: #e05a4a;
+  background: #fdeae8;
 }
-.execution-page .ex-slot:hover {
-  border-color: #b9d2ff;
+.execution-page .ex-slot.is-unknown {
+  --tone-line: #ffba35;
+  background: #fdf5e6;
+}
+.execution-page .ex-slot.is-expired {
+  --tone-line: #bccadf;
+  background: #eff2f8;
+}
+.execution-page .ex-slot.is-expired .ex-slot-name {
+  color: #8496ae;
+}
+.execution-page .ex-slot:hover,
+.execution-page .ex-slot:focus-visible {
+  border-color: #9dc0ff;
+  box-shadow: 0 1px 6px #3379ff26;
+  z-index: 1;
+}
+@keyframes ex-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.35; transform: scale(0.7); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .execution-page .ex-slot.is-sending .ex-slot-dot {
+    animation: none;
+  }
+}
+
+/* --- crosshair: hover a row to read one school's pace, a column to read one session's --- */
+.execution-page .ex-cell.is-row-hot,
+.execution-page .ex-cell.is-col-hot {
+  background: #eff5ff;
+}
+.execution-page .ex-cell.is-row-hot.is-col-hot {
+  background: #dfeaff;
+}
+.execution-page .ex-cell.is-row-hot .ex-slot,
+.execution-page .ex-cell.is-col-hot .ex-slot {
+  box-shadow: 0 0 0 1px #b7d3ff;
+}
+.execution-page .ex-rowhead.is-row-hot {
+  background: #e9f1ff;
+}
+.execution-page .ex-rowhead.is-row-hot .ex-row-name {
+  color: #2f66d6;
+}
+.execution-page .ex-colhead.is-col-hot {
+  background: #e9f1ff;
+}
+.execution-page .ex-colhead.is-col-hot .ex-col-date {
+  color: #2f66d6;
+}
+
+/* --- density: type shrinks before columns do --- */
+.execution-page .ex-grid.is-compact .ex-slot-name {
+  font-size: 10.5px;
+}
+.execution-page .ex-grid.is-compact .ex-slot-time,
+.execution-page .ex-grid.is-micro .ex-slot-time {
+  font-size: 8.5px;
+}
+.execution-page .ex-grid.is-micro .ex-slot {
+  padding: 3px 5px;
+  border-radius: 5px;
+  border-left-width: 2px;
+}
+.execution-page .ex-grid.is-micro .ex-slot-name {
+  font-size: 10px;
+}
+.execution-page .ex-grid.is-micro .ex-row-name {
+  font-size: 10.5px;
+}
+.execution-page .ex-grid.is-micro .ex-row-meta {
+  margin-top: 2px;
+}
+
+/* --- toolbar: scale readout, status legend, density switch --- */
+.execution-page .ex-timeline-sub {
+  flex-wrap: wrap;
+  row-gap: 5px;
+}
+.execution-page .ex-scale {
+  white-space: nowrap;
+}
+.execution-page .ex-sub-tools {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.execution-page .ex-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  color: #6f819c;
+  background: #f2f5fa;
+  border-radius: 8px;
+  padding: 1px 6px 1px 5px;
+  white-space: nowrap;
+}
+.execution-page .ex-swatch i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #bccadf;
+}
+.execution-page .ex-swatch.is-proposed i { background: #5a91ff; }
+.execution-page .ex-swatch.is-queued i { background: #3379ff; }
+.execution-page .ex-swatch.is-placed i { background: #7f77dd; }
+.execution-page .ex-swatch.is-sending i { background: #3379ff; }
+.execution-page .ex-swatch.is-sent i { background: #28bd8d; }
+.execution-page .ex-swatch.is-failed i { background: #e05a4a; }
+.execution-page .ex-swatch.is-unknown i { background: #ffba35; }
+.execution-page .ex-swatch.is-expired i { background: #bccadf; }
+.execution-page .ex-density {
+  display: inline-flex;
+  border: 1px solid #dfe7f3;
+  border-radius: 6px;
+  overflow: hidden;
+  background: #fff;
+  flex-shrink: 0;
+}
+.execution-page .ex-density button {
+  border: 0;
+  background: transparent;
+  color: #8b9ab1;
+  font-size: 9.5px;
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+.execution-page .ex-density button + button {
+  border-left: 1px solid #e8eef7;
+}
+.execution-page .ex-density button.is-active {
+  background: #e6efff;
+  color: #347aff;
+  font-weight: 600;
+}
+.execution-page .ex-icon-button.is-active {
+  background: #e6efff;
+  border-color: #c7dcff;
+  color: #347aff;
+}
+.execution-page .ex-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
 }
 .execution-page .ex-excluded {
   padding: 10px 12px 12px;
@@ -1046,8 +1365,11 @@
   .execution-page .ex-panel-foot {
     padding-block: 6px;
   }
-  .execution-page .ex-cell {
-    height: 52px;
+  .execution-page .ex-grid.is-comfy {
+    --row-h: 48px;
+  }
+  .execution-page .ex-grid.is-compact {
+    --row-h: 40px;
   }
 }
 @media (max-width: 1100px), (max-height: 520px) {

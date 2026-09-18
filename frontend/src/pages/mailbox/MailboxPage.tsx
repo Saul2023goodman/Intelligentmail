@@ -1,85 +1,340 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { AppShell, Topbar } from '../../app/shell';
-import { PageHeader } from '../../app/page-header';
-import { useWorkspaceScope } from '../../app/scope';
-import { useCoreQuery } from '../../core/data';
-import { core, human, type ComparisonRow } from '../../core';
-import Icon from '../../shared/Icon';
-import { kindOf, statusOf, statuses, type Status } from './presentation';
-import './Mailbox.css';
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { AppShell, Topbar } from "../../app/shell";
+import { PageHeader } from "../../app/page-header";
+import { navigate } from "../../app/routes";
+import { useWorkspaceScope } from "../../app/scope";
+import { core, human, type FollowUpStatus } from "../../core";
+import { useCoreQuery } from "../../core/data";
+import Icon from "../../shared/Icon";
+import "./MailboxMonitor.css";
 
-const date = (value?: string) => value ? new Date(value).toLocaleString() : 'Not observed';
-function Dialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null);
-  useEffect(() => { const el = ref.current; el?.showModal(); return () => el?.close(); }, []);
-  return <dialog className="mb-dialog" ref={ref} onCancel={close} onClick={e => { if (e.target === e.currentTarget) close(); }}>
-    <header><div><span className="mb-eyebrow">RECONCILIATION EVIDENCE</span><h2>{title}</h2></div><button autoFocus aria-label="Close evidence" onClick={close}><Icon name="close" /></button></header>
-    <div className="mb-dialog-body">{children}</div>
-  </dialog>;
+const ZONES = [
+  "Asia/Shanghai", "Asia/Singapore", "Asia/Tokyo", "Australia/Sydney",
+  "Europe/London", "Europe/Berlin", "America/New_York", "America/Los_Angeles", "UTC",
+];
+
+const STATE_LABEL: Record<string, string> = {
+  rule_not_configured: "未配置",
+  no_initial_send: "等待首封",
+  ordinary_reply_received: "已有普通回复",
+  reply_review_required: "回复待核对",
+  follow_up_open: "已进入执行",
+  maximum_reached: "已达上限",
+  due: "触发到期",
+  waiting: "等待触发",
+};
+const STATE_TONE: Record<string, string> = {
+  due: "amber",
+  waiting: "blue",
+  follow_up_open: "violet",
+  ordinary_reply_received: "green",
+  reply_review_required: "rose",
+  maximum_reached: "gray",
+  no_initial_send: "gray",
+  rule_not_configured: "gray",
+};
+
+const formatTime = (value?: string) => value
+  ? new Date(value).toLocaleString(undefined, {
+      month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
+    })
+  : "—";
+
+function StatusRow({ item }: { item: FollowUpStatus }) {
+  const tone = STATE_TONE[item.state] ?? "gray";
+  return (
+    <article className="fu-task-row">
+      <span className={`fu-state-dot is-${tone}`} />
+      <span className="fu-task-copy">
+        <strong>{item.supervisor_name}</strong>
+        <small>{item.institution_name} · {item.recipient_addresses[0] || "未记录收件地址"}</small>
+      </span>
+      <span className="fu-task-time">
+        <strong>{STATE_LABEL[item.state] ?? human(item.state)}</strong>
+        <small>{item.due_at ? formatTime(item.due_at) : `第 ${item.next_sequence} 次`}</small>
+      </span>
+    </article>
+  );
 }
+
 export default function MailboxPage() {
   const { scope } = useWorkspaceScope();
-  const campaign = scope?.campaignId ?? '';
-  const student = scope?.studentId ?? '';
-  const workspaceQuery = useCoreQuery('workspace', { campaign_id: campaign }, { enabled: Boolean(campaign) });
-  const mailboxQuery = useCoreQuery('mailbox_workspace', { campaign_id: campaign, student_id: student }, { enabled: Boolean(campaign && student) });
-  const workspace = workspaceQuery.data;
-  const data = mailboxQuery.data;
-  const [query, setQuery] = useState('');
-  const [status, setStatus] = useState<Status | 'all'>('all');
-  const [kind, setKind] = useState('all');
+  const campaignId = scope?.campaignId ?? "";
+  const studentId = scope?.studentId ?? "";
+  const query = useCoreQuery(
+    "followup_workspace",
+    { campaign_id: campaignId },
+    { enabled: Boolean(campaignId), refetchInterval: 30_000 },
+  );
+  const workspaceQuery = useCoreQuery(
+    "workspace",
+    { campaign_id: campaignId },
+    { enabled: Boolean(campaignId), refetchInterval: 30_000 },
+  );
+  const mailboxQuery = useCoreQuery(
+    "mailbox_workspace",
+    { campaign_id: campaignId, student_id: studentId },
+    { enabled: Boolean(campaignId && studentId), refetchInterval: 30_000 },
+  );
+  const data = query.data;
+  const mailboxData = mailboxQuery.data;
+  const mailboxSummary = workspaceQuery.data?.mailboxes.find((item) => item.student_id === studentId);
+  const observation = mailboxData?.observation;
+  const canRead = workspaceQuery.data?.mailbox_capabilities.capabilities.read_history.available ?? false;
+  const rule = data?.rule;
+  const [enabled, setEnabled] = useState(false);
+  const [delay, setDelay] = useState("3");
+  const [maximum, setMaximum] = useState("2");
+  const [timezone, setTimezone] = useState("Asia/Shanghai");
+  const [sendTime, setSendTime] = useState("09:00");
+  const [subject, setSubject] = useState("");
+  const [body, setBody] = useState("");
+  const [hydratedRevision, setHydratedRevision] = useState<number | null>(null);
+  const [busy, setBusy] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const [selected, setSelected] = useState<ComparisonRow | null>(null);
-  const [history, setHistory] = useState(false);
-  const loading = workspaceQuery.isLoading || mailboxQuery.isLoading;
-  const displayError = error || workspaceQuery.error?.message || mailboxQuery.error?.message || '';
-  async function refresh() {
-    setRefreshing(true); setError(''); setNotice('');
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const revision = rule?.revision ?? 0;
+    if (hydratedRevision === revision) return;
+    // oxlint-disable-next-line react/set-state-in-effect -- Rehydrate only when Core publishes a new confirmed policy revision.
+    setEnabled(rule?.enabled ?? false);
+    setDelay(String(rule?.delay_days ?? 3));
+    setMaximum(String(rule?.maximum_count ?? 2));
+    setTimezone(rule?.timezone || "Asia/Shanghai");
+    setSendTime(rule?.send_time || "09:00");
+    setSubject(rule?.subject_template ?? "");
+    setBody(rule?.body_template ?? "");
+    setHydratedRevision(revision);
+  }, [hydratedRevision, rule]);
+
+  const sortedStatuses = useMemo(() => [...(data?.statuses ?? [])].sort((a, b) => {
+    const order = ["due", "reply_review_required", "follow_up_open", "waiting"];
+    return (order.indexOf(a.state) < 0 ? 99 : order.indexOf(a.state))
+      - (order.indexOf(b.state) < 0 ? 99 : order.indexOf(b.state));
+  }), [data?.statuses]);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!campaignId || busy) return;
+    setBusy(true);
+    setError("");
+    setNotice("");
     try {
-      const result = await core('refresh_mailbox', { student_id: student });
-      setNotice(`Observation ${human(result.observation.status)}. ${result.observation.detail || 'Reconciliation evidence updated.'}`);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
-    finally { setRefreshing(false); }
+      const configured = await core("followup_configure", {
+        campaign_id: campaignId,
+        delay_days: Number(delay),
+        maximum_count: Number(maximum),
+        subject_template: subject,
+        body_template: body,
+        enabled,
+        timezone,
+        send_time: sendTime,
+      });
+      setHydratedRevision(configured.rule.revision);
+      if (configured.rule.enabled) {
+        const processed = await core("followup_process", { campaign_id: campaignId });
+        query.setData(processed.workspace);
+        setNotice(
+          processed.state === "awaiting_mailbox"
+            ? "配置已确认；已到期动作已进入队列，等待邮箱执行能力。"
+            : "配置已确认，系统已完成一次触发检查。",
+        );
+      } else {
+        query.setData(configured.workspace);
+        setNotice("自动 Follow-up 已停用；不会派生新的动作。 ");
+      }
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
   }
-  const rows = data?.rows ?? [];
-  const filtered = rows.filter(row => (status === 'all' || statusOf(row) === status) && (kind === 'all' || kindOf(row) === kind) &&
-    `${row.local?.subject ?? ''} ${row.local?.supervisor ?? ''} ${row.local?.recipient ?? ''} ${row.observed?.subject ?? ''} ${row.observed?.counterpart ?? ''} ${row.findings.map(f => `${f.finding} ${f.detail}`).join(' ')}`.toLowerCase().includes(query.toLowerCase()));
-  const mailbox = workspace?.mailboxes.find(m => m.student_id === student);
-  const observation = data?.observation;
-  const canRead = workspace?.mailbox_capabilities.capabilities.read_history.available;
-  const count = (key: Status) => rows.filter(row => statusOf(row) === key).length;
-  return <AppShell className="mailbox-page" activeRoute="mailbox">
-    <div className="workspace">
-      <Topbar breadcrumb="Mailbox" homeHref="#workflow"><span className="mb-top-note"><Icon name="shield" size={15} /> Observation & reconciliation</span></Topbar>
-      <PageHeader
-        eyebrow="Communication operations"
-        title="Mailbox reconciliation"
-        meta={<div className="mb-observed-at" aria-label="Mailbox evidence status"><i className={observation?.status === 'complete' ? 'complete' : ''} /><span>{observation ? `Last observation · ${date(observation.observed_at)}` : 'No mailbox observation yet'}</span><small>{canRead ? 'Read-only observation available' : 'Connect the dedicated 163 extension to refresh'}</small></div>}
-        actions={<><button className="mb-button" onClick={() => setHistory(true)}><Icon name="clock" size={15} /> Observation history</button><button className="mb-button mb-primary" disabled={!student || !campaign || !canRead || loading || refreshing} onClick={refresh}><Icon name="refresh" size={15} />{refreshing ? 'Observing mailbox…' : 'Refresh evidence'}</button></>}
-      />
-      <section className="mb-stats" aria-label="Reconciliation filters">{(['all', 'matched', 'discrepancy', 'unknown', 'external', 'reply'] as const).map(key => <button key={key} aria-pressed={status === key} className={`mb-stat ${key} ${status === key ? 'selected' : ''}`} onClick={() => setStatus(key)}><span>{key === 'all' ? 'All comparisons' : statuses[key].label}</span><strong>{loading ? '—' : key === 'all' ? rows.length : count(key)}</strong><small>{key === 'all' ? 'Current evidence' : key === 'matched' ? 'Established by Core' : key === 'discrepancy' ? 'External change detected' : key === 'unknown' ? 'Needs more evidence' : key === 'external' ? 'No local association' : 'Associated & unassociated'}</small></button>)}</section>
-      {displayError && <div className="mb-notice mb-error" role="alert"><Icon name="warning" size={16} /><span>{displayError}</span><button onClick={() => { void workspaceQuery.refresh(); void mailboxQuery.refresh(); }}>Retry loading</button></div>}
-      {notice && <div className="mb-notice" role="status">{notice}</div>}
-      <main className="mb-main">
-        <div className="mb-toolbar"><div className="mb-tabs" aria-label="Record type">{['all', 'sent', 'schedules', 'replies'].map(k => <button aria-pressed={kind === k} className={kind === k ? 'active' : ''} key={k} onClick={() => setKind(k)}>{k === 'all' ? 'All records' : k[0].toUpperCase() + k.slice(1)}</button>)}</div><label className="mb-search"><Icon name="search" size={16} /><input aria-label="Search comparisons" placeholder="Search subject, supervisor, evidence…" value={query} onChange={e => setQuery(e.target.value)} /></label><select aria-label="Comparison status" value={status} onChange={e => setStatus(e.target.value as Status | 'all')}><option value="all">All statuses</option>{Object.entries(statuses).map(([key, value]) => <option value={key} key={key}>{value.label}</option>)}</select></div>
-        <div className="mb-column-head"><div><span className="mb-system-icon"><Icon name="database" size={22} /></span><span><strong>SmartMail</strong><small>Expected state · local system of record</small></span><span className="mb-source-label">LOCAL</span></div><span className="mb-compare-icon"><Icon name="refresh" /></span><div><span className="mb-system-icon external"><Icon name="mail" size={22} /></span><span><strong>External mailbox</strong><small>{mailbox?.address || 'Observed state · select a mailbox'}</small></span><span className="mb-source-label">OBSERVED</span></div></div>
-        <div className="mb-comparisons" aria-label="Expected and observed comparisons" aria-busy={loading || refreshing}>
-          {loading ? <div className="mb-empty"><Icon name="refresh" size={30} /><h2>Loading reconciliation evidence</h2><p>Reading retained SmartMail records.</p></div> : filtered.length === 0 ? <div className="mb-empty"><span className="mb-empty-icon"><Icon name="branch" size={36} /></span><h2>{rows.length ? 'No comparisons match these filters' : !campaign || !student ? 'Choose a Student workspace' : 'A clear view starts with evidence'}</h2><p>{rows.length ? 'Try a different status or search term.' : 'Local work appears here alongside retained mailbox observations. Refresh evidence after connecting the dedicated extension.'}</p>{rows.length > 0 && <button className="mb-button" onClick={() => { setQuery(''); setStatus('all'); setKind('all'); }}>Clear filters</button>}</div> : filtered.map(row => {
-            const state = statusOf(row); const local = row.local; const observed = row.observed;
-            return <button key={row.id} className={`mb-comparison ${state}`} onClick={() => setSelected(row)} aria-label={`Inspect ${local?.subject || observed?.subject || 'evidence'}: ${statuses[state].label}`}>
-              <div className={`mb-record ${!local ? 'absent' : ''}`}><span className="mb-record-icon"><Icon name={local?.kind === 'external_schedule' ? 'clock' : local?.kind === 'sent_record' ? 'send' : local?.kind === 'reply_association' ? 'reply' : 'file'} size={19} /></span><div className="mb-record-text"><strong>{local?.subject || (local?.kind === 'reply_association' ? local.supervisor : local ? 'Untitled preparation' : 'No local association')}</strong><small>{local ? `${local.supervisor} · ${local.institution}` : 'Mailbox-wide evidence · campaign unassigned'}</small><span>{local?.recipient || (local ? human(local.kind) : 'Retained for operator inspection')}</span></div><span className="mb-state">{local ? human(local.state) : 'External only'}{local?.time && <small>{date(local.time)}</small>}</span></div>
-              <div className="mb-link"><span>{statuses[state].symbol}</span><small>{statuses[state].label}</small></div>
-              <div className={`mb-record observed ${!observed ? 'absent' : ''}`}><span className="mb-record-icon"><Icon name={observed?.direction === 'inbound' ? 'reply' : observed?.status === 'scheduled' ? 'clock' : 'mail'} size={19} /></span><div className="mb-record-text"><strong>{observed?.subject || (observed ? 'No subject observed' : 'No linked observation')}</strong><small>{observed?.counterpart || 'Available evidence does not establish a match'}</small><span>{observed ? `${observed.folder} · ${observed.observed_time || 'Time unavailable'}` : 'Absence of evidence does not establish failure'}</span></div><span className="mb-state">{observed ? human(observed.status) : 'Not established'}<Icon name="chevron" size={13} /></span></div>
-            </button>;
-          })}
-        </div>
-        <div className="mb-coverage"><Icon name="shield" size={15} /><span><strong>Evidence coverage: {observation ? observation.evidence_coverage.complete ? 'complete within reported scope' : 'partial / limited' : 'not available'}</strong><span>{observation ? ` · ${human(observation.status)} · ${observation.messages.length} observed messages` : ' · No conclusions drawn without mailbox evidence'}</span></span><button onClick={() => setHistory(true)}>View coverage <Icon name="arrow" size={13} /></button></div>
-      </main>
-      <footer className="mb-footer"><span>{filtered.length} of {rows.length} comparisons · Select a row to inspect evidence</span><span>Observations do not grant sending authority</span></footer>
-    </div>
-    {selected && <Dialog title="Comparison details" close={() => setSelected(null)}><div className={`mb-detail-status ${statusOf(selected)}`}>{statuses[statusOf(selected)].label}</div><p>Local records are compared with the latest retained observation. A match establishes only the finding below, not delivery or reading.</p>{selected.findings.length ? selected.findings.map(f => <section className="mb-finding" key={f.id}><h3>{human(f.finding)}</h3><p>{f.detail || 'Core recorded this association from the available evidence.'}</p><dl><dt>Matching basis</dt><dd>{human(f.basis) || 'Not established'}</dd><dt>Finding ID</dt><dd>{f.id}</dd></dl></section>) : <p>No finding links this local record to the latest observation. This is not proof of failure.</p>}<div className="mb-evidence-pair"><section><h3>SmartMail expected state</h3><dl><dt>Subject</dt><dd>{selected.local?.subject || 'Not available'}</dd><dt>State</dt><dd>{human(selected.local?.state || 'No local association')}</dd><dt>Confirmed schedule</dt><dd>{selected.local?.time ? date(selected.local.time) : 'Not applicable'}</dd><dt>Record ID</dt><dd>{selected.local?.id || 'None'}</dd></dl></section><section><h3>Observed external state</h3><dl><dt>Subject</dt><dd>{selected.observed?.subject || 'Not available'}</dd><dt>State / folder</dt><dd>{selected.observed ? `${selected.observed.status} / ${selected.observed.folder}` : 'Not established'}</dd><dt>Observed time</dt><dd>{selected.observed?.observed_time || 'Not available'}</dd><dt>Platform reference</dt><dd>{selected.observed?.platform_reference || 'Not available'}</dd></dl></section></div><p className="mb-evidence-note">Unknown outcomes require reconciliation before another attempt. External edits do not inherit Confirmation. Sent Records remain immutable.</p><details><summary>Retained record and observation evidence</summary><pre>{JSON.stringify({ local: selected.local?.evidence, observed: selected.observed, observation: { id: observation?.id, observed_at: observation?.observed_at, coverage: observation?.evidence_coverage } }, null, 2)}</pre></details></Dialog>}
-    {history && <Dialog title="Observation history & coverage" close={() => setHistory(false)}><p>Comparisons use the latest retained observation. Earlier observations remain evidence; they are not a live mailbox mirror.</p>{data?.history.length ? data.history.map(item => <section className="mb-finding" key={item.id}><h3>{date(item.observed_at)} <span>{human(item.status)}</span></h3><p>{item.detail || 'Retained mailbox observation'}</p><details open><summary>Evidence coverage</summary><pre>{JSON.stringify(item.evidence_coverage, null, 2)}</pre></details><small>{item.id}</small></section>) : <p>No retained observations for this mailbox.</p>}</Dialog>}
-  </AppShell>;
+
+  async function refreshMailbox() {
+    if (!studentId || refreshing) return;
+    setRefreshing(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await core("refresh_mailbox", { student_id: studentId });
+      const processed = await core("followup_process", { campaign_id: campaignId });
+      query.setData(processed.workspace);
+      await Promise.all([workspaceQuery.refresh(), mailboxQuery.refresh()]);
+      setNotice(
+        `邮箱监测已更新：${human(result.observation.status)}。新回复已参与 Follow-up 触发判断。`,
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  const loading = query.isLoading || workspaceQuery.isLoading || mailboxQuery.isLoading;
+  const queryError = query.error?.message || workspaceQuery.error?.message || mailboxQuery.error?.message || "";
+  const displayError = error || queryError;
+
+  return (
+    <AppShell className="followup-page mailbox-monitor-page" activeRoute="mailbox">
+      <div className="workspace">
+        <Topbar breadcrumb="Mailbox monitoring" homeHref="#workflow">
+          <span className={`fu-live ${rule?.enabled ? "is-on" : ""}`}>
+            <i /> {observation ? `Observed ${formatTime(observation.observed_at)}` : "No observation"}
+          </span>
+        </Topbar>
+        <PageHeader
+          eyebrow="Mailbox monitoring"
+          title="Mailbox & Follow-up"
+          subtitle="Observe replies, evaluate triggers, and hand confirmed actions to Execution."
+          badge={rule?.enabled ? `Automation v${rule.revision}` : "Automation off"}
+          actions={
+            <>
+              <button className="fu-button" onClick={() => navigate("records")}>
+                <Icon name="book" size={15} /> 对账与历史证据
+              </button>
+              <button
+                className="fu-button fu-primary"
+                disabled={loading || busy || refreshing || !canRead}
+                onClick={refreshMailbox}
+              >
+                <Icon name="refresh" size={15} /> {refreshing ? "正在监测…" : "刷新邮箱监测"}
+              </button>
+            </>
+          }
+        />
+        {(displayError || notice) && (
+          <div className={`fu-banner ${displayError ? "is-error" : ""}`} role={displayError ? "alert" : "status"}>
+            <span>{displayError || notice}</span>
+            <button aria-label="Dismiss" onClick={() => { setError(""); setNotice(""); }}>
+              <Icon name="close" size={14} />
+            </button>
+          </div>
+        )}
+        <main className="fu-main" aria-busy={loading || busy}>
+          <form className="fu-panel fu-config" onSubmit={save}>
+            <header className="fu-panel-head">
+              <span><Icon name="shield" size={17} /></span>
+              <div>
+                <h2>触发与授权配置</h2>
+                <p>保存并启用即构成持续 Confirmation</p>
+              </div>
+              <label className="fu-switch">
+                <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+                <span />
+                {enabled ? "启用" : "停用"}
+              </label>
+            </header>
+            <div className="fu-config-scroll">
+              <section className="fu-section">
+                <h3>触发条件</h3>
+                <div className="fu-fixed-rules">
+                  <span><Icon name="check" size={13} /> 无普通回复</span>
+                  <span><Icon name="check" size={13} /> 自动回复不阻断</span>
+                  <span><Icon name="check" size={13} /> 歧义回复暂停</span>
+                </div>
+                <div className="fu-fields two">
+                  <label>首次 / 上次发送后
+                    <span className="fu-suffix"><input type="number" min="0" required value={delay} onChange={(e) => setDelay(e.target.value)} /> 天</span>
+                  </label>
+                  <label>最多 Follow-up
+                    <span className="fu-suffix"><input type="number" min="1" required value={maximum} onChange={(e) => setMaximum(e.target.value)} /> 次</span>
+                  </label>
+                </div>
+              </section>
+              <section className="fu-section">
+                <h3>执行时间</h3>
+                <div className="fu-fields two">
+                  <label>本地时间<input type="time" required value={sendTime} onChange={(e) => setSendTime(e.target.value)} /></label>
+                  <label>时区
+                    <select value={timezone} onChange={(e) => setTimezone(e.target.value)}>
+                      {ZONES.map((zone) => <option key={zone}>{zone}</option>)}
+                    </select>
+                  </label>
+                </div>
+              </section>
+              <section className="fu-section fu-template">
+                <h3>确定性内容模板</h3>
+                <p>允许字段：supervisor_name、student_name、institution、original_subject</p>
+                <label>主题模板<input required={enabled} value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Re: {original_subject}" /></label>
+                <label>正文模板<textarea required={enabled} rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Dear {supervisor_name}, …" /></label>
+              </section>
+            </div>
+            <footer className="fu-config-foot">
+              <span><Icon name="shield" size={13} /> 内容或时间变更会生成新授权版本</span>
+              <button className="fu-button fu-primary" disabled={busy || !campaignId}>
+                {busy ? "正在保存…" : enabled ? "保存并确认自动跟进" : "保存停用状态"}
+              </button>
+            </footer>
+          </form>
+
+          <section className="fu-operations">
+            <div className="fu-overview">
+              <div className="fu-metrics">
+                <article><span>监测批次</span><strong>{mailboxSummary?.observation_count ?? 0}</strong><small>保留在 Records</small></article>
+                <article><span>观察邮件</span><strong>{mailboxSummary?.message_count ?? 0}</strong><small>只读邮箱证据</small></article>
+                <article><span>等待触发</span><strong>{data?.summary.waiting ?? 0}</strong><small>按已确认时间计算</small></article>
+                <article><span>开放动作</span><strong>{data?.summary.open_actions ?? 0}</strong><small>已交给 Execution</small></article>
+              </div>
+              <div className={`fu-mailbox-strip ${canRead ? "is-ready" : ""}`}>
+                <span className="fu-mailbox-icon"><Icon name="mail" size={17} /></span>
+                <span>
+                  <strong>{scope?.mailbox || "未选择学生邮箱"}</strong>
+                  <small>
+                    {observation
+                      ? `${human(observation.status)} · ${observation.messages.length} messages · coverage ${observation.evidence_coverage.complete ? "complete in reported scope" : "limited"}`
+                      : canRead ? "网关可读，尚无保留监测批次" : "连接当前学生的 163 邮箱扩展后才能刷新"}
+                  </small>
+                </span>
+                <button onClick={() => navigate("records")}>查看证据链 <Icon name="arrow" size={12} /></button>
+              </div>
+            </div>
+
+            <section className="fu-panel fu-status-panel">
+              <header className="fu-panel-head">
+                <span><Icon name="clock" size={17} /></span>
+                <div><h2>邮箱驱动的触发监视</h2><p>{data?.summary.tasks ?? 0} 个 Outreach Task · 普通回复会停止 Follow-up</p></div>
+                <span className={`fu-capability ${data?.availability.available ? "is-ready" : ""}`}>
+                  {data?.flow.state === "paused" ? "执行已暂停" : data?.availability.available ? "邮箱可执行" : "等待邮箱"}
+                </span>
+              </header>
+              <div className="fu-list">
+                {sortedStatuses.map((item) => <StatusRow key={item.task_id} item={item} />)}
+                {!sortedStatuses.length && <div className="fu-empty"><Icon name="reply" /> 当前 Campaign 尚无 Outreach Task</div>}
+              </div>
+            </section>
+
+            <section className="fu-panel fu-audit-panel">
+              <header className="fu-panel-head">
+                <span><Icon name="book" size={17} /></span>
+                <div><h2>进入 Execution</h2><p>策略 Confirmation → 精确 Confirmation → Attempt；完整证据在 Records</p></div>
+              </header>
+              <div className="fu-audit-list">
+                {(data?.actions ?? []).slice().reverse().map((action) => (
+                  <article key={action.id}>
+                    <span className={`fu-state-dot is-${action.status === "sent" ? "green" : action.attempt ? "amber" : "violet"}`} />
+                    <div>
+                      <strong>Follow-up #{action.sequence} · {human(action.status)}</strong>
+                      <small>{action.preparation?.subject || action.detail || "等待生成确定内容"}</small>
+                    </div>
+                    <dl>
+                      <dt>触发</dt><dd>{formatTime(action.due_at)}</dd>
+                      <dt>授权</dt><dd>{action.confirmation ? `v${action.rule_revision}` : "—"}</dd>
+                      <dt>结果</dt><dd>{action.attempt ? human(action.attempt.state) : "未尝试"}</dd>
+                    </dl>
+                  </article>
+                ))}
+                {!data?.actions.length && <div className="fu-empty"><Icon name="book" /> 尚未触发 Follow-up Action</div>}
+              </div>
+            </section>
+          </section>
+        </main>
+        <footer className="fu-footer">
+          <span><Icon name="shield" size={13} /> Mailbox only observes and triggers; every external action still uses the Execution Flow</span>
+          <span>{rule?.confirmed_at ? `Automation confirmed ${formatTime(rule.confirmed_at)}` : "No standing Confirmation"}</span>
+        </footer>
+      </div>
+    </AppShell>
+  );
 }

@@ -7,10 +7,12 @@ never stop eligibility, and unresolved ambiguous associations hold it pending
 operator review rather than driving it silently.
 """
 
+import hashlib
 import json
 import re
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..documents import DocumentError, association_key, parse_draft, read_paragraphs
 from ..identity import person_name
@@ -20,6 +22,7 @@ from ..errors import SmartMailError
 #: Fields a Campaign template may reference; every value is recorded evidence.
 _TEMPLATE_FIELDS = {"supervisor_name", "student_name", "institution", "original_subject"}
 _TEMPLATE_PLACEHOLDER = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+_SEND_TIME = re.compile(r"^(?:[01]\d|2[0-3]):[0-5]\d$")
 
 
 class FollowUpOperations:
@@ -30,7 +33,10 @@ class FollowUpOperations:
     def configure_follow_up_rule(self, campaign_id: str, *, delay_days: int | None = None,
                                  maximum_count: int | None = None,
                                  subject_template: str | None = None,
-                                 body_template: str | None = None) -> dict:
+                                 body_template: str | None = None,
+                                 enabled: bool | None = None,
+                                 timezone_name: str | None = None,
+                                 send_time: str | None = None) -> dict:
         """Configure follow-up timing, maximum count and optional templates.
 
         Partial updates preserve the other fields; unknown template fields are
@@ -50,25 +56,71 @@ class FollowUpOperations:
         maximum = maximum_count if maximum_count is not None else existing["maximum_count"]
         subject = existing["subject_template"] if existing else ""
         body = existing["body_template"] if existing else ""
+        active = bool(existing["enabled"]) if existing else False
+        zone = existing["timezone"] if existing else "UTC"
+        clock = existing["send_time"] if existing else ""
         if subject_template is not None:
             subject = subject_template
         if body_template is not None:
             body = body_template
+        if enabled is not None:
+            if not isinstance(enabled, bool):
+                raise SmartMailError("Follow-up automation enabled must be true or false")
+            active = enabled
+        if timezone_name is not None:
+            zone = str(timezone_name).strip()
+            try:
+                ZoneInfo(zone)
+            except (ZoneInfoNotFoundError, ValueError, TypeError) as error:
+                raise SmartMailError(
+                    f"Unknown Follow-up timezone: {zone or '(empty)'}") from error
+        if send_time is not None:
+            clock = str(send_time).strip()
+            if clock and not _SEND_TIME.fullmatch(clock):
+                raise SmartMailError("Follow-up send time must use 24-hour HH:MM")
         for template, label in ((subject, "subject template"), (body, "body template")):
             unknown = set(_TEMPLATE_PLACEHOLDER.findall(template)) - _TEMPLATE_FIELDS
             if unknown:
                 raise SmartMailError(
                     f"Unsupported field(s) in {label}: {', '.join(sorted(unknown))}; allowed: "
                     + ", ".join(sorted(_TEMPLATE_FIELDS)))
+        if active and (not subject.strip() or not body.strip()):
+            raise SmartMailError(
+                "Enabled Follow-up automation requires complete subject and body templates")
+        if active and not clock:
+            raise SmartMailError(
+                "Enabled Follow-up automation requires an exact local send time")
+        policy = {
+            "delay_days": delay, "maximum_count": maximum,
+            "subject_template": subject, "body_template": body,
+            "enabled": active, "timezone": zone, "send_time": clock,
+        }
+        digest = hashlib.sha256(json.dumps(
+            policy, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+        ).encode()).hexdigest()
+        previous_digest = existing["policy_digest"] if existing else ""
+        changed = digest != previous_digest
+        revision = (existing["revision"] if existing else 0) + (1 if changed else 0)
+        confirmed_at = (self._now() if active and changed else
+                        (existing["confirmed_at"] if existing else ""))
+        updated_at = self._now() if changed else (existing["updated_at"] if existing else self._now())
         with self._db:
             self._db.execute(
                 "INSERT INTO follow_up_rules (campaign_id, delay_days, maximum_count, "
-                "subject_template, body_template) VALUES (?, ?, ?, ?, ?) "
+                "subject_template, body_template, enabled, timezone, send_time, revision, "
+                "policy_digest, confirmed_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT(campaign_id) DO UPDATE SET delay_days = excluded.delay_days, "
                 "maximum_count = excluded.maximum_count, "
                 "subject_template = excluded.subject_template, "
-                "body_template = excluded.body_template",
-                (campaign_id, delay, maximum, subject, body))
+                "body_template = excluded.body_template, enabled = excluded.enabled, "
+                "timezone = excluded.timezone, send_time = excluded.send_time, "
+                "revision = excluded.revision, policy_digest = excluded.policy_digest, "
+                "confirmed_at = excluded.confirmed_at, updated_at = excluded.updated_at",
+                (campaign_id, delay, maximum, subject, body, int(active), zone, clock,
+                 revision, digest, confirmed_at, updated_at))
+            if changed:
+                self._invalidate_derived_confirmations(
+                    campaign_id, "follow_up_automation_configuration_changed")
         return self.get_follow_up_rule(campaign_id)
 
     def get_follow_up_rule(self, campaign_id: str) -> dict | None:
@@ -83,7 +135,23 @@ class FollowUpOperations:
             "subject_template": row["subject_template"],
             "body_template": row["body_template"],
             "has_templates": bool(row["subject_template"].strip() and row["body_template"].strip()),
+            "enabled": bool(row["enabled"]), "timezone": row["timezone"],
+            "send_time": row["send_time"], "revision": row["revision"],
+            "policy_digest": row["policy_digest"], "confirmed_at": row["confirmed_at"],
+            "updated_at": row["updated_at"],
         }
+
+    def _invalidate_derived_confirmations(self, campaign_id: str, reason: str) -> None:
+        rows = list(self._db.execute(
+            "SELECT c.id, c.execution_detail FROM confirmations c "
+            "JOIN follow_up_actions a ON a.preparation_id = c.preparation_id "
+            "WHERE a.campaign_id = ? AND c.status = 'active'", (campaign_id,)))
+        for row in rows:
+            execution = json.loads(row["execution_detail"])
+            if execution.get("authorization_source") == "follow_up_automation":
+                self._db.execute(
+                    "UPDATE confirmations SET status = 'invalidated', invalidated_reason = ? "
+                    "WHERE id = ?", (reason, row["id"]))
 
     # --- Deterministic eligibility --------------------------------------
 
@@ -159,6 +227,13 @@ class FollowUpOperations:
                 anchor["outcome_observed_at"] or anchor["intent_at"])
         if sent_at is None or rule is None:
             return ""
+        if rule.get("send_time"):
+            zone = ZoneInfo(rule.get("timezone") or "UTC")
+            local = sent_at.astimezone(zone)
+            hour, minute = (int(part) for part in rule["send_time"].split(":"))
+            due_day = local.date() + timedelta(days=rule["delay_days"])
+            return datetime.combine(due_day, time(hour, minute), tzinfo=zone).astimezone(
+                timezone.utc).isoformat()
         return (sent_at + timedelta(days=rule["delay_days"])).isoformat()
 
     # --- Preparing linked Follow-up Actions -----------------------------
@@ -187,7 +262,7 @@ class FollowUpOperations:
             with self._db:
                 action_id = self._insert_action(
                     task["id"], campaign_id, view["next_sequence"], anchor["id"],
-                    self._due_at(anchor, rule))
+                    self._due_at(anchor, rule), rule=rule)
                 if rule["has_templates"]:
                     rendered = self._render_templates(rule, task, anchor)
                     if rendered is not None:
@@ -281,13 +356,15 @@ class FollowUpOperations:
             "WHERE t.id = ?", (task_id,)).fetchone()["address"]
 
     def _insert_action(self, task_id: str, campaign_id: str, sequence: int,
-                       anchor_id: str, due_at: str) -> str:
+                       anchor_id: str, due_at: str, *, rule: dict | None = None) -> str:
         action_id = str(uuid4())
         self._db.execute(
-            "INSERT INTO follow_up_actions (id, task_id, campaign_id, sequence, "
-            "follows_sent_record_id, status, due_at, preparation_id, detail, created_at) "
-            "VALUES (?, ?, ?, ?, ?, 'due_for_preparation', ?, NULL, '', ?)",
-            (action_id, task_id, campaign_id, sequence, anchor_id, due_at, self._now()))
+            "INSERT INTO follow_up_actions "
+            "(id, task_id, campaign_id, sequence, follows_sent_record_id, status, due_at, "
+            "preparation_id, detail, created_at, rule_revision, policy_digest) "
+            "VALUES (?, ?, ?, ?, ?, 'due_for_preparation', ?, NULL, '', ?, ?, ?)",
+            (action_id, task_id, campaign_id, sequence, anchor_id, due_at, self._now(),
+             (rule or {}).get("revision", 0), (rule or {}).get("policy_digest", "")))
         return action_id
 
     def _set_action_detail(self, action_id: str, detail: str) -> None:
@@ -341,6 +418,113 @@ class FollowUpOperations:
             else "Content prepared by the operator from Source Material")
         self._revalidate(preparation_id)
         return preparation_id
+
+    # --- Standing automation Confirmation ------------------------------
+
+    def process_follow_up_automation(self, campaign_id: str) -> dict:
+        """Derive exact Confirmations and enter execution for one enabled rule.
+
+        This is the small scheduler interface. It is safe to call repeatedly: an
+        open Action prevents duplicate preparation, an active Confirmation is
+        reused, and any recorded Execution Attempt prevents automatic retry.
+        """
+        rule = self.get_follow_up_rule(campaign_id)
+        result = {
+            "campaign_id": campaign_id, "enabled": bool(rule and rule["enabled"]),
+            "created_action_ids": [], "confirmation_ids": [], "attempt_ids": [],
+            "state": "not_configured" if rule is None else "disabled",
+            "detail": "",
+        }
+        if rule is None or not rule["enabled"]:
+            return result
+
+        created = self.prepare_follow_ups(campaign_id)
+        result["created_action_ids"] = [action["id"] for action in created]
+        confirmations = []
+        for action in self.list_follow_up_actions(campaign_id):
+            if action["status"] == "sent" or not action["preparation_id"]:
+                continue
+            action = self._refresh_action_for_policy(action, rule)
+            preparation = action.get("preparation")
+            if not preparation or not preparation["ready"]:
+                continue
+            active = self._db.execute(
+                "SELECT * FROM confirmations WHERE preparation_id = ? AND status = 'active'",
+                (action["preparation_id"],)).fetchone()
+            if active is None:
+                confirmation = self.confirm(action["preparation_id"], execution={
+                    "kind": "immediate",
+                    "authorization_source": "follow_up_automation",
+                    "rule_revision": rule["revision"],
+                    "policy_digest": rule["policy_digest"],
+                    "trigger_due_at": action["due_at"],
+                    "configured_timezone": rule["timezone"],
+                    "configured_send_time": rule["send_time"],
+                }, confirmed_at=rule["confirmed_at"])
+            else:
+                confirmation = self._confirmation_view(active)
+            with self._db:
+                self._db.execute(
+                    "UPDATE follow_up_actions SET status = 'authorized' WHERE id = ?",
+                    (action["id"],))
+            confirmations.append(confirmation)
+
+        result["confirmation_ids"] = [item["id"] for item in confirmations]
+        flow = self._flow_state(campaign_id)
+        if flow["state"] == "paused":
+            result.update(state="paused", detail=flow["reason"])
+            return result
+        capability = self.mailbox_capabilities()["capabilities"].get("immediate_send", {})
+        if not capability.get("available"):
+            result.update(
+                state="awaiting_mailbox",
+                detail=capability.get("basis") or "Immediate sending is unavailable")
+            return result
+        pending = [confirmation for confirmation in confirmations if self._db.execute(
+            "SELECT 1 FROM execution_attempts WHERE confirmation_id = ? LIMIT 1",
+            (confirmation["id"],)).fetchone() is None]
+        if not pending:
+            result["state"] = "idle" if not confirmations else "already_entered"
+            return result
+        run = self.run_execution([item["id"] for item in pending])
+        result["attempt_ids"] = [item["id"] for item in run["attempts"]]
+        result["state"] = "paused" if run["paused"] else "executed"
+        result["detail"] = run["flow"].get("reason", "")
+        return result
+
+    def _refresh_action_for_policy(self, action: dict, rule: dict) -> dict:
+        """Make a still-open Action match the currently confirmed policy version."""
+        if action.get("policy_digest") == rule["policy_digest"]:
+            return action
+        task = self.get_task(action["task_id"])
+        anchor = self._db.execute(
+            "SELECT * FROM sent_records WHERE id = ?", (action["follows_sent_record_id"],)
+        ).fetchone()
+        rendered = self._render_templates(rule, task, anchor) if anchor else None
+        if rendered is None:
+            with self._db:
+                self._db.execute(
+                    "UPDATE follow_up_actions SET status = 'due_for_preparation', detail = ?, "
+                    "rule_revision = ?, policy_digest = ? WHERE id = ?",
+                    ("The confirmed automation template cannot be rendered from recorded values",
+                     rule["revision"], rule["policy_digest"], action["id"]))
+            return self.get_follow_up_action(action["id"])
+        current = self.get_preparation(action["preparation_id"])
+        preparation_id = current["id"]
+        if current["subject"] != rendered["subject"] or current["body"] != rendered["body"]:
+            with self._db:
+                preparation_id = self._store_prepared_action(
+                    action["id"], task, anchor, rendered["subject"], rendered["body"],
+                    template_used=True, source_id=self._initial_source_id(task["id"]))
+                self._db.execute(
+                    "UPDATE preparations SET superseded_by = ? WHERE id = ?",
+                    (preparation_id, current["id"]))
+        with self._db:
+            self._db.execute(
+                "UPDATE follow_up_actions SET status = 'prepared', preparation_id = ?, "
+                "rule_revision = ?, policy_digest = ?, detail = '' WHERE id = ?",
+                (preparation_id, rule["revision"], rule["policy_digest"], action["id"]))
+        return self.get_follow_up_action(action["id"])
 
     # --- Safeguard helpers used by Confirmation and Execution -----------
 
@@ -401,6 +585,7 @@ class FollowUpOperations:
             "status": row["status"], "due_at": row["due_at"],
             "preparation_id": row["preparation_id"], "preparation": preparation,
             "detail": row["detail"], "created_at": row["created_at"],
+            "rule_revision": row["rule_revision"], "policy_digest": row["policy_digest"],
         }
 
     def list_follow_up_actions(self, campaign_id: str) -> list[dict]:

@@ -211,7 +211,14 @@ CREATE TABLE IF NOT EXISTS follow_up_rules (
     delay_days INTEGER NOT NULL,
     maximum_count INTEGER NOT NULL,
     subject_template TEXT NOT NULL DEFAULT '',
-    body_template TEXT NOT NULL DEFAULT ''
+    body_template TEXT NOT NULL DEFAULT '',
+    enabled INTEGER NOT NULL DEFAULT 0,
+    timezone TEXT NOT NULL DEFAULT 'UTC',
+    send_time TEXT NOT NULL DEFAULT '',
+    revision INTEGER NOT NULL DEFAULT 0,
+    policy_digest TEXT NOT NULL DEFAULT '',
+    confirmed_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS follow_up_actions (
     id TEXT PRIMARY KEY,
@@ -224,6 +231,8 @@ CREATE TABLE IF NOT EXISTS follow_up_actions (
     preparation_id TEXT REFERENCES preparations(id),
     detail TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
+    rule_revision INTEGER NOT NULL DEFAULT 0,
+    policy_digest TEXT NOT NULL DEFAULT '',
     UNIQUE(task_id, sequence)
 );
 CREATE TABLE IF NOT EXISTS plan_configurations (

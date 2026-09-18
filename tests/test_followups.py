@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from smartmail import SmartMail, SmartMailError
-from smartmail.mailbox import ControlledMailbox
+from smartmail.mailbox import ControlledMailbox, DisabledMailbox
 from tests.test_execution import (
     DECLARATION, DEFAULT_ROWS, DRAFT_NAME, ROOT, SUBJECT, ExecutionTestCase,
     bundle, document, draft_paragraphs, master,
@@ -406,6 +406,103 @@ class FollowUpSafeguardTests(FollowUpTestCase):
             state = next(item for item in restarted.follow_up_status(self.campaign["id"])
                          if item["task_id"] == preparation["task_id"])
             self.assertEqual(state["state"], "maximum_reached")
+
+
+class FollowUpAutomationTests(FollowUpTestCase):
+    def enable_automation(self, **overrides):
+        values = {
+            "delay_days": 3,
+            "maximum_count": 2,
+            "subject_template": SUBJECT_TEMPLATE,
+            "body_template": BODY_TEMPLATE,
+            "enabled": True,
+            "timezone_name": "Asia/Shanghai",
+            "send_time": "09:30",
+        }
+        values.update(overrides)
+        return self.core.configure_follow_up_rule(self.campaign["id"], **values)
+
+    def test_enabled_configuration_is_a_versioned_standing_confirmation(self):
+        self.at(SEND_AT)
+        rule = self.enable_automation()
+
+        self.assertTrue(rule["enabled"])
+        self.assertEqual(rule["revision"], 1)
+        self.assertEqual(rule["confirmed_at"], SEND_AT.isoformat())
+        self.assertEqual(len(rule["policy_digest"]), 64)
+        unchanged = self.enable_automation()
+        self.assertEqual(unchanged["revision"], 1)
+        changed = self.core.configure_follow_up_rule(
+            self.campaign["id"], send_time="10:00")
+        self.assertEqual(changed["revision"], 2)
+        self.assertEqual(changed["send_time"], "10:00")
+
+    def test_enabling_requires_deterministic_content_and_time(self):
+        with self.assertRaisesRegex(SmartMailError, "subject and body"):
+            self.core.configure_follow_up_rule(
+                self.campaign["id"], delay_days=3, maximum_count=2, enabled=True,
+                send_time="09:00")
+        with self.assertRaisesRegex(SmartMailError, "exact local send time"):
+            self.core.configure_follow_up_rule(
+                self.campaign["id"], delay_days=3, maximum_count=2, enabled=True,
+                subject_template=SUBJECT_TEMPLATE, body_template=BODY_TEMPLATE)
+
+    def test_due_automation_derives_exact_confirmation_executes_and_is_idempotent(self):
+        initial = self.send_initial_at()
+        self.at(SEND_AT + timedelta(hours=1))
+        rule = self.enable_automation(delay_days=1, send_time="09:00")
+        self.at(SEND_AT + timedelta(days=2))
+
+        result = self.core.process_follow_up_automation(self.campaign["id"])
+
+        self.assertEqual(result["state"], "executed")
+        self.assertEqual(len(result["created_action_ids"]), 1)
+        self.assertEqual(len(result["confirmation_ids"]), 1)
+        self.assertEqual(len(result["attempt_ids"]), 1)
+        action = self.core.get_follow_up_action(result["created_action_ids"][0])
+        self.assertEqual(action["status"], "sent")
+        self.assertEqual(action["policy_digest"], rule["policy_digest"])
+        confirmation = self.core.get_confirmation(result["confirmation_ids"][0])
+        self.assertEqual(
+            confirmation["execution"]["authorization_source"],
+            "follow_up_automation")
+        self.assertEqual(confirmation["confirmed_at"], rule["confirmed_at"])
+        self.assertEqual(len(self.mailbox.requests), 2)
+        self.assertEqual(self.state_for(initial["task_id"])["state"], "waiting")
+
+        again = self.core.process_follow_up_automation(self.campaign["id"])
+        self.assertEqual(again["created_action_ids"], [])
+        self.assertEqual(len(self.mailbox.requests), 2)
+
+    def test_unavailable_mailbox_keeps_exact_confirmation_queued_without_attempt(self):
+        self.send_initial_at()
+        self.enable_automation(delay_days=1)
+        self.core.mailbox = DisabledMailbox()
+        self.at(SEND_AT + timedelta(days=2))
+
+        result = self.core.process_follow_up_automation(self.campaign["id"])
+
+        self.assertEqual(result["state"], "awaiting_mailbox")
+        self.assertEqual(len(result["confirmation_ids"]), 1)
+        self.assertEqual(result["attempt_ids"], [])
+        self.assertEqual(
+            self.core.get_follow_up_action(result["created_action_ids"][0])["status"],
+            "authorized")
+        self.assertEqual(len(self.core.list_execution_attempts(self.campaign["id"])), 1)
+
+    def test_ordinary_reply_prevents_automatic_preparation_and_execution(self):
+        preparation = self.send_initial_at()
+        self.enable_automation(delay_days=1)
+        self.at(SEND_AT + timedelta(days=2))
+        self.observe_reply(observed_at=self.moment.isoformat())
+
+        result = self.core.process_follow_up_automation(self.campaign["id"])
+
+        self.assertEqual(result["state"], "idle")
+        self.assertEqual(result["created_action_ids"], [])
+        self.assertEqual(result["confirmation_ids"], [])
+        self.assertEqual(self.state_for(preparation["task_id"])["state"],
+                         "ordinary_reply_received")
 
 
 class FollowUpTerminalTests(unittest.TestCase):

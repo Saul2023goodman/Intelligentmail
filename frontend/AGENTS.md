@@ -4,6 +4,8 @@ Read `README.md` and `../docs/frontend-foundation.md` before changing the fronte
 
 - Workspace work belongs in `src/pages/workspace/`.
 - Intake (the Source mapping prototype) work belongs in `src/pages/intake/`.
+- Mailbox monitoring and Follow-up automation work belongs in `src/pages/mailbox/`.
+- Historical mailbox observations, Reconciliation findings and evidence drill-down belong in `src/pages/records/`.
 - Keep page state, fixtures, dialogs, domain presentation, and styles in that page's directory. Do not import one page's implementation from another page.
 - Reuse `src/app/` for shell/navigation/routing and `src/shared/` for tokens, icons, search, and primitive styles. Existing page work should not require editing `App.tsx`, `main.tsx`, global styles, or the other page.
 - Scope new page CSS under its page root or use CSS modules. Do not add global element selectors in page CSS.

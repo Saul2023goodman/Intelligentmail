@@ -213,6 +213,31 @@ class UiBridgeTests(ExecutionTestCase):
             "protocol": 0,
         })
 
+    def test_follow_up_workspace_configures_standing_confirmation_and_processes(self):
+        preparation, _ = self.ready_preparation()
+        confirmation = self.core.confirm(preparation["id"])
+        self.core.run_execution([confirmation["id"]])
+        configured = dispatch(self.core, {
+            "command": "followup_configure",
+            "campaign_id": self.campaign["id"],
+            "delay_days": 0,
+            "maximum_count": 1,
+            "subject_template": "Re: {original_subject}",
+            "body_template": "Dear {supervisor_name}, follow-up from {student_name}.",
+            "enabled": True,
+            "timezone": "UTC",
+            "send_time": self.core._instant().strftime("%H:%M"),
+        })
+        self.assertTrue(configured["rule"]["enabled"])
+        processed = dispatch(self.core, {
+            "command": "followup_process", "campaign_id": self.campaign["id"]})
+        self.assertEqual(processed["state"], "executed")
+        view = dispatch(self.core, {
+            "command": "followup_workspace", "campaign_id": self.campaign["id"]})
+        self.assertEqual(view["summary"]["sent_actions"], 1)
+        self.assertEqual(view["actions"][0]["confirmation"]["execution"]
+                         ["authorization_source"], "follow_up_automation")
+
     def test_readiness_workspace_uses_real_preparation_and_operator_actions(self):
         preparation, _ = self.ready_preparation(subject=None, attach=False)
         view = dispatch(self.core, {"command": "review_workspace",

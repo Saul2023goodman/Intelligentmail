@@ -14,6 +14,8 @@ import type {
   IntakeTaskDetail,
   IntakeWorkspace,
   ReviewWorkspace,
+  FollowUpWorkspace,
+  FollowUpProcessResult,
 } from "./operator-types";
 import type {
   RecognitionCollection,
@@ -54,6 +56,27 @@ export type Commands = {
   review_workspace: {
     args: { campaign_id: string };
     result: ReviewWorkspace;
+  };
+  followup_workspace: {
+    args: { campaign_id: string };
+    result: FollowUpWorkspace;
+  };
+  followup_configure: {
+    args: {
+      campaign_id: string;
+      delay_days: number;
+      maximum_count: number;
+      subject_template: string;
+      body_template: string;
+      enabled: boolean;
+      timezone: string;
+      send_time: string;
+    };
+    result: { rule: import("./operator-types").FollowUpRule; workspace: FollowUpWorkspace };
+  };
+  followup_process: {
+    args: { campaign_id: string };
+    result: FollowUpProcessResult;
   };
   confirm_attachment: {
     args: { preparation_id: string; slot_id: string };
@@ -185,6 +208,8 @@ const MUTATING_COMMANDS = new Set<CommandName>([
   "confirm_attachment",
   "set_attachment_source",
   "resolve_review_exception",
+  "followup_configure",
+  "followup_process",
   "execution_configure",
   "execution_propose",
   "execution_adjust",

@@ -93,10 +93,14 @@ export type MailboxSummary = {
 export type MailboxHistory = {
   observations: {
     id: string;
+    student_id: string;
+    mailbox_address: string;
+    adapter: string;
     status: string;
     observed_at: string;
     detail: string;
     evidence_coverage: { complete: boolean };
+    capabilities: Record<string, unknown>;
     messages: {
       id: string;
       subject: string;
@@ -107,7 +111,19 @@ export type MailboxHistory = {
   }[];
   reconciliations: {
     id: string;
+    student_id: string;
+    mailbox_address: string;
     observation_id: string;
-    findings: { id: string; finding: string; detail: string }[];
+    observed_at: string;
+    summary: Record<string, unknown>;
+    findings: {
+      id: string;
+      message_observation_id: string | null;
+      finding: string;
+      local_kind: string;
+      local_id: string;
+      basis: string;
+      detail: string;
+    }[];
   }[];
 };

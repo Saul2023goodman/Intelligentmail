@@ -76,6 +76,11 @@ reconciliation findings, correct local subject and recipient, confirm retained
 attachment bytes, run duplicate checks, and Rewrite from an already imported
 document. No sample campaigns or messages are inserted into the user store.
 
+Enabled Follow-up automation is the exception to repeated per-action operator review:
+the operator's saved, versioned trigger/template/time policy is a standing Follow-up
+Automation Confirmation. Core derives exact per-action Confirmations from it and still
+runs every existing execution safeguard. See [the trigger-to-execution design](followup-automation.md).
+
 ## Verification
 
 `python -m unittest tests.test_ui` verifies real persisted report/detail payloads,

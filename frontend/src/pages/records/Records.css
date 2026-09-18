@@ -4,6 +4,56 @@
   --rc-muted: #8b97a9;
   --rc-soft: #f5f7fb;
 }
+.records-page .rc-header-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #dce5f2;
+  border-radius: 7px;
+  background: #fff;
+  color: #526583;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.records-page .rc-header-button:disabled { opacity: .45; cursor: not-allowed; }
+.rc-dialog {
+  width: min(780px, calc(100vw - 28px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  border: 1px solid #dbe5f2;
+  border-radius: 12px;
+  color: #425978;
+  box-shadow: 0 24px 80px #17345a35;
+  overflow: hidden;
+  font-family: inherit;
+}
+.rc-dialog::backdrop { background: #24395255; }
+.rc-dialog > header {
+  padding: 13px 17px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e7edf6;
+  background: #fff;
+}
+.rc-dialog > header span { color: #8c9bb0; font-size: 8px; letter-spacing: 1.4px; }
+.rc-dialog > header h2 { margin: 3px 0 0; font-size: 15px; }
+.rc-dialog > header button { border: 0; background: transparent; color: #7d8da4; }
+.rc-dialog-body { max-height: calc(100dvh - 105px); overflow: auto; padding: 13px 17px 18px; }
+.rc-dialog-intro { margin: 0 0 12px; color: #74859d; font-size: 10px; line-height: 1.6; }
+.rc-mailbox-history { display: flex; flex-direction: column; gap: 9px; }
+.rc-mailbox-history > article { border: 1px solid #e1e8f2; border-radius: 8px; padding: 10px 11px; background: #fbfcff; }
+.rc-mailbox-history > article > header { display: flex; align-items: center; gap: 8px; }
+.rc-mailbox-history > article > header div { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.rc-mailbox-history > article > header strong { font-size: 10px; }
+.rc-mailbox-history > article > header small { font-size: 8px; color: #94a2b5; }
+.rc-mailbox-history > article > header .rc-chip { margin-left: auto; }
+.rc-history-dot { width: 8px; height: 8px; border-radius: 50%; background: #e0a238; }
+.rc-history-dot.is-complete { background: #20ad7d; }
+.rc-mailbox-history > article > p { margin: 8px 0; color: #7a8ba2; font-size: 9px; }
+.rc-mailbox-history > article > dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px 12px; margin: 0 0 7px; }
 .records-page .rc-top-note {
   margin-left: auto;
   display: inline-flex;
