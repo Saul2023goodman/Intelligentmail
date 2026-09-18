@@ -38,6 +38,20 @@ class MailboxCapability:
             for capability in self._CAPABILITIES
         }
 
+    def gateway_status(self) -> dict:
+        """Live connection health of the external execution infrastructure.
+
+        The gateway is the single bus through which observation and confirmed
+        operations reach the mailbox. Adapters without a live transport report
+        a disconnected gateway rather than raising.
+        """
+        return {
+            "adapter": self.name,
+            "connected": False,
+            "mailbox_address": "",
+            "protocol": 0,
+        }
+
     def observe(self, mailbox_address: str) -> dict:
         return {
             "status": "unsupported",

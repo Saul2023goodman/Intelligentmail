@@ -1111,7 +1111,12 @@
   vertical-align: middle;
 }
 
-.sm-recog {
+/* A custom display would override the UA rule that hides closed dialogs;
+   without this the closed modal covers the page and eats pointer events. */
+.sm-recog:not([open]) {
+  display: none;
+}
+.sm-recog[open] {
   position: fixed;
   inset: 0;
   margin: 0;
@@ -1351,6 +1356,29 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+.sm-container-tag {
+  display: inline-block;
+  margin-right: 7px;
+  padding: 1px 7px;
+  border-radius: 5px;
+  background: #eef4ff;
+  color: #3d6fc4;
+  font-size: 9.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.sm-recog-foot-note ul.sm-recog-advisories {
+  margin-top: 3px;
+  padding-left: 14px;
+  color: #8a6a2c;
+}
+.sm-recog-foot-note ul.sm-recog-advisories li { margin-bottom: 1px; }
 
 @media (max-width: 1080px) {
   .sm-recog-row {

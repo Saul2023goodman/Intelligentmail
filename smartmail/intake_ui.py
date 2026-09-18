@@ -12,6 +12,7 @@ from pathlib import Path, PurePosixPath
 from zipfile import ZIP_DEFLATED, ZipFile
 
 from .errors import SmartMailError
+from .intake import read_archive_members
 from .recognition import BUNDLE, TYPE_PROFILES, recognize_bytes, recognize_collection
 
 
@@ -41,7 +42,11 @@ RECOGNITION_CATEGORY = {
 
 
 def decode_uploads(files):
-    """Validate and base64-decode browser uploads into (name, bytes) pairs."""
+    """Validate and base64-decode browser uploads into structured selection items.
+
+    Every reviewed file carries an ``included`` decision; zip files carry the
+    per-member ``members`` decisions from the expanded recognition review.
+    """
     if not isinstance(files, list) or not files or len(files) > MAX_UPLOAD_FILES:
         raise SmartMailError(f"Select between 1 and {MAX_UPLOAD_FILES} source files")
     decoded = []
@@ -68,15 +73,67 @@ def decode_uploads(files):
         total += len(payload)
         if total > MAX_UPLOAD_BYTES:
             raise SmartMailError("The selected source set exceeds the 25 MB intake limit")
-        decoded.append({"name": safe_name, "data": payload,
-                        "revised_type": item.get("type") if isinstance(item.get("type"), str) else None})
+        members = item.get("members")
+        if members is not None and not isinstance(members, list):
+            raise SmartMailError("Zip member selections must be a list")
+        decoded.append({
+            "name": safe_name,
+            "data": payload,
+            "included": bool(item.get("included", True)),
+            "revised_type": item.get("type") if isinstance(item.get("type"), str) else None,
+            "members": members,
+        })
     return decoded
 
 
+def _selected_members(item):
+    """Expand one reviewed upload into its approved (name, bytes, revised) members."""
+    name, data = item["name"], item["data"]
+    if name.lower().endswith(".zip"):
+        try:
+            archive_members = read_archive_members(data)
+        except Exception as error:
+            raise SmartMailError(f"Cannot expand archive {name}: {error}") from error
+        selections = item.get("members")
+        if isinstance(selections, list) and selections:
+            chosen = {
+                PurePosixPath(str(choice.get("name", "")).replace("\\", "/")).name:
+                    choice.get("type") if isinstance(choice.get("type"), str) else None
+                for choice in selections if isinstance(choice, dict)}
+        else:
+            chosen = {member_name: None for member_name, _member_data in archive_members}
+        expanded = []
+        for member_name, member_data in archive_members:
+            if member_name in chosen:
+                expanded.append((member_name, member_data, chosen[member_name]))
+        return expanded
+    return [(name, data, item.get("revised_type"))]
+
+
+def _all_members(item):
+    """Every supported member of one reviewed upload (zip expanded, else itself)."""
+    if item["name"].lower().endswith(".zip"):
+        return [(member_name, member_data, item["name"])
+                for member_name, member_data in read_archive_members(item["data"])]
+    return [(item["name"], item["data"], "")]
+
+
 def recognize_uploaded_sources(core, files):
-    """Classify browser-selected files from structural evidence, without importing."""
+    """Classify browser-selected files from structural evidence, without importing.
+
+    Zip archives are transport: the response flattens every supported member
+    into its own classified row keyed by ``container``; no source is retained.
+    """
     decoded = decode_uploads(files)
-    collection = recognize_collection([(item["name"], item["data"]) for item in decoded])
+    pairs = []
+    containers = {}
+    for item in decoded:
+        for member_name, member_data, container in _all_members(item):
+            pairs.append((member_name, member_data))
+            containers[member_name] = container
+    collection = recognize_collection(pairs)
+    for source in collection["sources"]:
+        source["container"] = containers.get(source["name"], "")
     return collection
 
 
@@ -109,17 +166,15 @@ def _compact_detail(result, effective_type=None):
     return compact
 
 
-def _recognition_by_sha(decoded):
-    """Flatten upload recognition (including zip members) keyed by content hash."""
+def _recognition_by_sha(members):
+    """Recognize flattened import members and key results by content hash."""
     by_sha = {}
     revisions = {}
-    for item in decoded:
-        result = recognize_bytes(item["name"], item["data"])
-        results = result.get("members") if result["type"] == BUNDLE else [result]
-        for member in results:
-            by_sha[member["sha256"]] = member
-        if item["revised_type"]:
-            revisions[result["sha256"]] = item["revised_type"]
+    for name, data, revised_type in members:
+        result = recognize_bytes(name, data)
+        by_sha[result["sha256"]] = result
+        if revised_type and revised_type in TYPE_PROFILES and revised_type != result["type"]:
+            revisions[result["sha256"]] = revised_type
     return by_sha, revisions
 
 
@@ -207,25 +262,58 @@ def intake_workspace(core, campaign_id=None, student_id=None):
 
 
 def import_uploaded_sources(core, campaign_id, student_id, files):
-    """Import one browser-selected source set, then run supported Preparation mapping."""
+    """Import the reviewed source set, expanding archives into their members.
+
+    The supervisor master workbook is optional: when none is selected, draft
+    letters establish their own Outreach Tasks in prepare_from_documents.
+    """
     core.get_campaign(campaign_id)
     core.get_student(student_id)
     decoded = decode_uploads(files)
-    pairs = [(item["name"], item["data"]) for item in decoded]
+    included = [item for item in decoded if item["included"]]
+    if not included:
+        raise SmartMailError("Select at least one source to import")
+    members = []
+    seen_names = set()
+    for item in included:
+        for name, data, revised_type in _selected_members(item):
+            if name in seen_names:
+                raise SmartMailError(
+                    f"Member name {name} occurs in more than one archive; rename it first")
+            seen_names.add(name)
+            members.append((name, data, revised_type))
+    if not members:
+        raise SmartMailError("The selected archives contain no supported members")
+    effective_master = ""
+    master_workbooks = 0
+    for name, data, revised in members:
+        if not name.lower().endswith(".xlsx"):
+            continue
+        effective_type = revised or recognize_bytes(name, data)["type"]
+        if effective_type == "supervisor_master":
+            effective_master = name
+            master_workbooks += 1
+        elif effective_type in ("unknown", "ambiguous"):
+            raise SmartMailError(f"Resolve the type of {name} before importing")
+    if master_workbooks > 1:
+        raise SmartMailError(
+            "Include one supervisor master workbook per import; exclude or revise the others")
 
     with tempfile.TemporaryDirectory(prefix="smartmail-intake-") as directory:
         root = Path(directory)
-        if len(pairs) == 1 and Path(pairs[0][0]).suffix.casefold() in (".zip", ".xlsx"):
-            source_path = root / pairs[0][0]
-            source_path.write_bytes(pairs[0][1])
+        if len(members) == 1 and members[0][0].lower().endswith(".xlsx"):
+            source_path = root / members[0][0]
+            source_path.write_bytes(members[0][1])
         else:
             source_path = root / "browser-sources.zip"
             with ZipFile(source_path, "w", ZIP_DEFLATED) as archive:
-                for name, payload in pairs:
-                    archive.writestr(name, payload)
-        imported = core.import_master(campaign_id, student_id, source_path)
+                for name, data, _revised in members:
+                    archive.writestr(name, data)
+        imported = core.import_source_set(
+            campaign_id, student_id, source_path,
+            master_name=effective_master or "")
         prepared = core.prepare_from_documents(imported["id"])
-        by_sha, revisions = _recognition_by_sha(decoded)
+        by_sha, revisions = _recognition_by_sha(members)
         _persist_recognition(core, imported["id"], by_sha, revisions)
 
     return {

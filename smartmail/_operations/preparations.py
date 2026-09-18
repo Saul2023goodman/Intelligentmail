@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from ..documents import DocumentError, association_key, parse_draft, read_paragraphs
 from ..identity import email_address, person_name
+from ..recognition import extract_letters
 from ..errors import SmartMailError
 
 
@@ -22,50 +23,123 @@ class PreparationOperations:
             "FROM tasks t JOIN supervisors s ON s.id = t.supervisor_id JOIN institutions i ON i.id = s.institution_id "
             "WHERE t.campaign_id = ? AND t.student_id = ?",
             (imported["campaign_id"], imported["student_id"])))
+        # A master-based import makes the workbook authoritative for task
+        # identity; unmatched drafts stay findings.  A master-less import has
+        # no workbook associations, so the addressed letters establish Tasks.
+        has_master = self._db.execute(
+            "SELECT 1 FROM source_associations a JOIN sources s ON s.id = a.source_id "
+            "WHERE s.import_id = ? AND a.sheet != 'document' LIMIT 1", (imported["id"],)).fetchone()
         preparation_ids: list[str] = []
         unassociated_source_ids: list[str] = []
         with self._db:
             for source in self._db.execute(
-                    "SELECT id, name FROM sources WHERE import_id = ? ORDER BY rowid", (import_id,)):
+                    "SELECT id, name FROM sources WHERE import_id = ? ORDER BY rowid", (imported["id"],)):
                 if not source["name"].casefold().endswith(".docx"):
                     continue
                 try:
-                    parsed = parse_draft(read_paragraphs(self.read_source(source["id"])))
+                    data = self.read_source(source["id"])
+                    parsed = parse_draft(read_paragraphs(data))
                 except DocumentError as error:
                     self._record_document_finding(source["id"], "unsupported_document", str(error))
                     unassociated_source_ids.append(source["id"])
                     continue
-                if parsed is None:
-                    continue
                 key = association_key(source["name"])
-                matches = [task for task in tasks if key
+                matches = [task for task in tasks if parsed and key
                            and task["institution_name"].strip().casefold() == key[0].casefold()
                            and person_name(task["supervisor_name"]) == person_name(key[1])]
-                if len(matches) != 1:
+                if parsed is not None and len(matches) == 1:
+                    task = matches[0]
+                    active = self._db.execute(
+                        "SELECT id FROM preparations WHERE task_id = ? AND superseded_by IS NULL",
+                        (task["task_id"],)).fetchone()
+                    already_active = self._db.execute(
+                        "SELECT 1 FROM preparations WHERE task_id = ? AND source_id = ? AND superseded_by IS NULL",
+                        (task["task_id"], source["id"])).fetchone()
+                    if active is not None and already_active is None:
+                        self._record_document_finding(
+                            source["id"], "replacement_requires_rewrite",
+                            f"{source['name']}: Outreach Task already has active Preparation "
+                            f"{active['id']}; replace it with an explicit Rewrite")
+                        unassociated_source_ids.append(source["id"])
+                        continue
+                    preparation_ids.append(self._store_preparation(task, source, parsed, sender, key))
+                    continue
+                if parsed is not None and has_master:
                     self._record_document_finding(
                         source["id"],
                         "unassociated_document" if not matches else "ambiguous_document",
                         f"{source['name']}: expected one Outreach Task, matched {len(matches)}")
                     unassociated_source_ids.append(source["id"])
                     continue
-                task = matches[0]
-                active = self._db.execute(
-                    "SELECT id FROM preparations WHERE task_id = ? AND superseded_by IS NULL",
-                    (task["task_id"],)).fetchone()
-                already_active = self._db.execute(
-                    "SELECT 1 FROM preparations WHERE task_id = ? AND source_id = ? AND superseded_by IS NULL",
-                    (task["task_id"], source["id"])).fetchone()
-                if active is not None and already_active is None:
-                    self._record_document_finding(
-                        source["id"], "replacement_requires_rewrite",
-                        f"{source['name']}: Outreach Task already has active Preparation "
-                        f"{active['id']}; replace it with an explicit Rewrite")
-                    unassociated_source_ids.append(source["id"])
-                    continue
-                preparation_ids.append(self._store_preparation(task, source, parsed, sender, key))
+                if not has_master:
+                    if parsed is not None:
+                        letters = [{
+                            "supervisor": key[1] if key else "",
+                            "institution": key[0] if key else "",
+                            "recipient": parsed["recipient"],
+                            "subject": "",
+                            "body": parsed["body"],
+                            "internal_note": parsed["internal_note"],
+                        }]
+                    else:
+                        letters = extract_letters(data)
+                    for letter_index, letter in enumerate(letters, start=1):
+                        outcome = self._prepare_letter(
+                            letter, letter_index, source, sender, imported, tasks)
+                        if outcome["prepared"]:
+                            preparation_ids.append(outcome["prepared"])
+                            tasks.append(outcome["task_row"])
+                        elif outcome["code"]:
+                            self._record_document_finding(source["id"], outcome["code"], outcome["detail"])
+                            if source["id"] not in unassociated_source_ids:
+                                unassociated_source_ids.append(source["id"])
         for preparation_id in preparation_ids:
             self.suggest_attachment_slots(preparation_id)
         return {"preparation_ids": preparation_ids, "unassociated_source_ids": unassociated_source_ids}
+
+    def _prepare_letter(self, letter, letter_index, source, sender, imported, tasks) -> dict:
+        """Store one addressed letter as a Preparation, creating its Task if needed."""
+        institution = (letter.get("institution") or "").strip()
+        supervisor = (letter.get("supervisor") or letter.get("salutation_name") or "").strip()
+        recipient = email_address(letter.get("recipient") or "") or ""
+        if not supervisor:
+            return {"prepared": "", "task_row": None, "code": "unassociated_document",
+                    "detail": f"{source['name']}: letter {letter_index} has no supervisor identity"}
+        matches = [task for task in tasks
+                   if task["institution_name"].strip().casefold() == institution.casefold()
+                   and person_name(task["supervisor_name"]) == person_name(supervisor)]
+        if len(matches) > 1:
+            return {"prepared": "", "task_row": None, "code": "ambiguous_document",
+                    "detail": f"{source['name']}: letter {letter_index} matched {len(matches)} Outreach Tasks"}
+        if not matches:
+            ensured = self.ensure_task_from_correspondent(
+                imported["campaign_id"], imported["student_id"], source["id"],
+                institution, supervisor, recipient, letter_index)
+            if ensured is None:
+                return {"prepared": "", "task_row": None, "code": "unassociated_document",
+                        "detail": f"{source['name']}: letter {letter_index} has no supervisor identity"}
+            task_row = {"task_id": ensured["task_id"], "supervisor_id": ensured["supervisor_id"],
+                        "supervisor_name": ensured["supervisor_name"],
+                        "institution_name": ensured["institution_name"]}
+        else:
+            task_row = matches[0]
+        active = self._db.execute(
+            "SELECT id FROM preparations WHERE task_id = ? AND superseded_by IS NULL",
+            (task_row["task_id"],)).fetchone()
+        already_active = self._db.execute(
+            "SELECT 1 FROM preparations WHERE task_id = ? AND source_id = ? AND superseded_by IS NULL",
+            (task_row["task_id"], source["id"])).fetchone()
+        if active is not None and already_active is None:
+            return {"prepared": "", "task_row": None, "code": "replacement_requires_rewrite",
+                    "detail": f"{source['name']}: Outreach Task already has active Preparation "
+                              f"{active['id']}; replace it with an explicit Rewrite"}
+        parsed = {"recipient": recipient, "body": letter["body"],
+                  "internal_note": letter.get("internal_note", ""),
+                  "note_separated": bool(letter.get("internal_note"))}
+        prepared = self._insert_preparation(
+            task_row, source, parsed, sender, (institution, supervisor),
+            subject=letter.get("subject", ""))
+        return {"prepared": prepared, "task_row": task_row, "code": "", "detail": ""}
 
     def _record_document_finding(self, source_id: str, code: str, detail: str, blocking: bool = True) -> None:
         if self._db.execute("SELECT 1 FROM document_findings WHERE source_id = ? AND code = ?",
@@ -92,9 +166,10 @@ class PreparationOperations:
             return existing["id"]
         return self._insert_preparation(task, source, parsed, sender, key)
 
-    def _insert_preparation(self, task: dict, source: dict, parsed: dict, sender: str, key: tuple) -> str:
+    def _insert_preparation(self, task: dict, source: dict, parsed: dict, sender: str,
+                            key: tuple, subject: str = "") -> str:
         preparation_id = str(uuid4())
-        subject = ""
+        subject = (subject or "").strip()
         recipient = email_address(parsed["recipient"])
         recorded = [row[0] for row in self._db.execute(
             "SELECT address FROM supervisor_addresses WHERE supervisor_id = ? ORDER BY address",

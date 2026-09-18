@@ -7,7 +7,7 @@ from uuid import uuid4
 from zipfile import BadZipFile
 from xml.etree.ElementTree import ParseError
 
-from ..intake import read_master, read_bundle
+from ..intake import read_archive_members, read_master, read_bundle
 from ..identity import email_address, person_name, profile_url
 from ..errors import SmartMailError
 
@@ -163,6 +163,182 @@ class RecordsOperations:
                 "new_sources": sum(1 for _, reused in resolved_sources if not reused),
             },
         }
+
+    def import_source_set(self, campaign_id: str, student_id: str,
+                          path: Path, master_name: str | None = None) -> dict:
+        """Import a flattened source set whose supervisor master list is optional.
+
+        Zero-master imports preserve every member and create no Tasks here;
+        draft letters then establish their own Tasks in
+        :meth:`prepare_from_documents`.  With one master the familiar
+        row-based Task import runs.  More than one workbook requires an
+        explicit choice (the review flow sends one member name).
+        """
+        self.get_campaign(campaign_id)
+        self.get_student(student_id)
+        suffix = Path(path).suffix.lower()
+        data = path.read_bytes()
+        try:
+            if suffix == ".xlsx":
+                members = [(path.name, data)]
+            elif suffix == ".zip":
+                members = read_archive_members(data)
+            else:
+                raise SmartMailError("Supported inputs are .xlsx workbooks or .zip bundles")
+        except (ValueError, OSError, KeyError, BadZipFile, ParseError) as error:
+            raise SmartMailError(f"Cannot import Source Material: {error}") from error
+        if not members:
+            raise SmartMailError("The archive contains no supported .docx, .xlsx or .csv members")
+
+        workbook_indexes = [index for index, (name, _) in enumerate(members)
+                            if name.lower().endswith(".xlsx")]
+        if master_name:
+            master_index = next((index for index, (name, _) in enumerate(members)
+                                 if name == master_name), None)
+            if master_index is None:
+                raise SmartMailError(f"Selected master workbook is not in the source set: {master_name}")
+        elif master_name is None:
+            # No explicit UI decision: a unique workbook is treated as master.
+            if len(workbook_indexes) == 1:
+                master_index = workbook_indexes[0]
+            elif not workbook_indexes:
+                master_index = None
+            else:
+                raise SmartMailError(
+                    "The source set contains more than one .xlsx workbook; revise or "
+                    "exclude the workbooks that are not supervisor master lists")
+        else:
+            # Empty string is the UI's explicit "no master in this set" decision.
+            master_index = None
+
+        rows = read_master(members[master_index][1]) if master_index is not None else []
+        known_sources = {
+            row["sha256"]: dict(row) for row in self._db.execute(
+                "SELECT s.id, s.name, s.sha256, s.import_id FROM sources s "
+                "JOIN imports i ON i.id = s.import_id "
+                "WHERE i.campaign_id = ? AND i.student_id = ?", (campaign_id, student_id))}
+        resolved_sources = []
+        reused_sources = []
+        for name, member_data in members:
+            sha = hashlib.sha256(member_data).hexdigest()
+            known = known_sources.get(sha)
+            if known is not None:
+                resolved_sources.append((known["id"], True))
+                reused_sources.append({"id": known["id"], "name": name, "sha256": sha})
+            else:
+                resolved_sources.append((str(uuid4()), False))
+
+        import_id = str(uuid4())
+        master_source_id = resolved_sources[master_index][0] if master_index is not None else ""
+        master_sha = hashlib.sha256(members[master_index][1]).hexdigest() if master_index is not None else ""
+        row_results = []
+        task_ids = []
+        seen_tasks: dict[str, tuple] = {}
+        with self._db:
+            self._db.execute("INSERT INTO imports VALUES (?, ?, ?)", (import_id, campaign_id, student_id))
+            for (source_id, reused), (name, member_data) in zip(resolved_sources, members):
+                if not reused:
+                    self._db.execute("INSERT INTO sources VALUES (?, ?, ?, ?, ?)",
+                                     (source_id, import_id, name, member_data,
+                                      hashlib.sha256(member_data).hexdigest()))
+            if master_index is not None:
+                for row in rows:
+                    result = self._import_master_row(
+                        row, campaign_id, student_id, master_source_id, master_sha,
+                        set(), seen_tasks, False)
+                    row_results.append(result)
+                    if result["task_id"] not in task_ids:
+                        task_ids.append(result["task_id"])
+        return {
+            "id": import_id,
+            "task_ids": task_ids,
+            "duplicate": False,
+            "reused_sources": reused_sources,
+            "rows": row_results,
+            "summary": {
+                "rows": len(row_results),
+                "new": sum(1 for result in row_results if result["outcome"] == "new"),
+                "reused": sum(1 for result in row_results if result["outcome"] == "reused"),
+                "duplicate": sum(1 for result in row_results if result["outcome"] == "duplicate"),
+                "conflicts": sum(1 for result in row_results if result["conflict"]),
+                "new_sources": sum(1 for _, reused in resolved_sources if not reused),
+            },
+        }
+
+    def ensure_task_from_correspondent(self, campaign_id: str, student_id: str,
+                                       source_id: str, institution_name: str,
+                                       supervisor_name: str, address: str,
+                                       letter_index: int = 1) -> dict | None:
+        """Create (or reuse) the Outreach Task a draft letter addresses.
+
+        Used only for master-less imports: the letter itself is the identity
+        record.  Missing recipient addresses follow the same blocking rule as
+        master rows.  An empty institution is allowed and left unresolved.
+        """
+        institution_name = (institution_name or "").strip()
+        supervisor_name = (supervisor_name or "").strip()
+        if not supervisor_name:
+            return None
+        address = email_address(address)
+        profile = ""
+        institution = self._db.execute(
+            "SELECT id FROM institutions WHERE name = ?", (institution_name,)).fetchone()
+        institution_id = institution["id"] if institution else str(uuid4())
+        if institution is None:
+            self._db.execute("INSERT INTO institutions VALUES (?, ?)",
+                             (institution_id, institution_name))
+        candidates = list(self._db.execute(
+            "SELECT DISTINCT s.* FROM supervisors s LEFT JOIN supervisor_addresses a ON a.supervisor_id = s.id "
+            "WHERE s.institution_id = ? AND ((s.profile = ? AND s.profile != '') OR a.address = ?)",
+            (institution_id, profile, address)))
+        matches = [candidate for candidate in candidates
+                   if person_name(candidate["name"]) == person_name(supervisor_name)
+                   and not (profile and candidate["profile"] and profile != candidate["profile"])]
+        supervisor_id = matches[0]["id"] if matches else str(uuid4())
+        if len(matches) != 1:
+            self._db.execute("INSERT INTO supervisors VALUES (?, ?, ?, ?)",
+                             (supervisor_id, supervisor_name, institution_id, profile))
+        if address:
+            self._db.execute("INSERT OR IGNORE INTO supervisor_addresses VALUES (?, ?)",
+                             (supervisor_id, address))
+        existing = self._db.execute(
+            "SELECT id FROM tasks WHERE student_id = ? AND supervisor_id = ? AND campaign_id = ?",
+            (student_id, supervisor_id, campaign_id)).fetchone()
+        task_id = existing["id"] if existing else str(uuid4())
+        created = existing is None
+        if created:
+            self._db.execute("INSERT INTO tasks VALUES (?, ?, ?, ?)",
+                             (task_id, student_id, supervisor_id, campaign_id))
+        if not address:
+            self._record_task_exception(
+                task_id, source_id, "invalid_recipient",
+                f"Letter {letter_index}: no usable recipient address is recorded",
+                blocking=1)
+        for candidate in self._db.execute("SELECT * FROM supervisors WHERE id != ?", (supervisor_id,)).fetchall():
+            shared_address = address and self._db.execute(
+                "SELECT 1 FROM supervisor_addresses WHERE supervisor_id = ? AND address = ?",
+                (candidate["id"], address)).fetchone()
+            if (shared_address or (candidate["institution_id"] == institution_id
+                                   and institution_name
+                                   and person_name(candidate["name"]) == person_name(supervisor_name))):
+                detail = ("Unresolved Supervisor identity; candidates: "
+                          + ", ".join([supervisor_id, candidate["id"]]))
+                for affected in (supervisor_id, candidate["id"]):
+                    for affected_task in self._db.execute(
+                            "SELECT id FROM tasks WHERE supervisor_id = ?", (affected,)).fetchall():
+                        self._record_task_exception(
+                            affected_task["id"], source_id, "identity_ambiguity", detail, blocking=1)
+        evidence = {
+            "source": self._db.execute("SELECT name FROM sources WHERE id = ?", (source_id,)).fetchone()["name"],
+            "institution": institution_name, "supervisor": supervisor_name,
+            "recipient": address or "", "letter_index": letter_index,
+        }
+        self._db.execute("INSERT OR IGNORE INTO source_associations VALUES (?, ?, ?, ?, ?)",
+                         (task_id, source_id, "document", letter_index,
+                          json.dumps(evidence, ensure_ascii=False, default=str)))
+        self._record_prior_outreach_conflict(task_id, source_id)
+        return {"task_id": task_id, "supervisor_id": supervisor_id, "created": created,
+                "institution_name": institution_name, "supervisor_name": supervisor_name}
 
     def _import_master_row(self, row: dict, campaign_id: str, student_id: str,
                            source_id: str, master_sha: str, prior_keys: set[tuple],

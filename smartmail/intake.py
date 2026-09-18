@@ -41,6 +41,31 @@ def read_bundle(path: Path) -> tuple[list[tuple[str, bytes]], int]:
     return sources, masters[0]
 
 
+SUPPORTED_MEMBER_SUFFIXES = (".xlsx", ".docx", ".csv")
+
+
+def read_archive_members(data: bytes) -> list[tuple[str, bytes]]:
+    """Flatten one ZIP into its supported member files.
+
+    Unlike :func:`read_bundle` this neither keeps the archive itself nor
+    enforces a master-list count: the supervisor master workbook is optional
+    once tasks can be created directly from draft letters.  Every member name
+    is checked for absolute paths, drive separators and parent traversal.
+    """
+    members: list[tuple[str, bytes]] = []
+    with ZipFile(BytesIO(data), metadata_encoding="gbk") as archive:
+        for item in archive.infolist():
+            if item.is_dir():
+                continue
+            name = item.filename.replace("\\", "/")
+            pure = PurePosixPath(name)
+            if pure.is_absolute() or ".." in pure.parts or ":" in name:
+                raise IntakeError(f"Unsafe archive member name: {name}")
+            if pure.name.lower().endswith(SUPPORTED_MEMBER_SUFFIXES):
+                members.append((pure.name, archive.read(item)))
+    return members
+
+
 def read_master(data: bytes) -> list[dict]:
     workbook = load_workbook(BytesIO(data), data_only=False)
     try:

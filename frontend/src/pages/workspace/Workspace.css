@@ -97,9 +97,266 @@
   font-size: 10px;
   letter-spacing: 0.2px;
   color: #98a5b9;
-  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+:where(.workspace-page) .student-meta > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Mailbox Gateway health pill — contextual connection entry point. */
+:where(.workspace-page) .gateway-pill {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid #e1e8f2;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  background: #fff;
+  color: #8d9bb0;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background-color 0.15s ease,
+    color 0.15s ease;
+}
+:where(.workspace-page) .gateway-pill:hover {
+  border-color: #b7cdf1;
+  color: var(--blue);
+}
+:where(.workspace-page) .gateway-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #aab8c9;
+}
+:where(.workspace-page) .gateway-pill.connected {
+  color: #0e8b65;
+  border-color: #bfe6d7;
+  background: #f2fbf8;
+}
+:where(.workspace-page) .gateway-pill.connected i {
+  background: var(--green);
+}
+:where(.workspace-page) .gateway-pill.disconnected,
+:where(.workspace-page) .gateway-pill.mismatch {
+  color: #a87413;
+  border-color: #f0d8a4;
+  background: #fff8ea;
+}
+:where(.workspace-page) .gateway-pill.disconnected i,
+:where(.workspace-page) .gateway-pill.mismatch i {
+  background: var(--amber);
+}
+:where(.workspace-page) .gateway-pill i.pulse {
+  animation: gateway-pulse-soft 1.8s ease-out infinite;
+}
+@keyframes gateway-pulse-soft {
+  0% {
+    box-shadow: 0 0 0 0 #e6a22580;
+  }
+  100% {
+    box-shadow: 0 0 0 7px #e6a22500;
+  }
+}
+
+/* Gateway node: health lamp + contextual CTA. */
+:where(.workspace-page) .workflow-node.gateway-node {
+  outline: none;
+}
+:where(.workspace-page) .workflow-node.gateway-node:focus-visible {
+  border-color: #84acfa;
+  box-shadow:
+    0 0 0 4px #397af01f,
+    0 7px 22px #397af01a;
+}
+:where(.workspace-page) .gateway-dot {
+  position: absolute;
+  top: 10px;
+  right: 11px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  background: #aab8c9;
+}
+:where(.workspace-page) .gateway-dot.green {
+  background: var(--green);
+}
+:where(.workspace-page) .gateway-dot.amber {
+  background: var(--amber);
+}
+:where(.workspace-page) .gateway-dot.grey {
+  background: #aab8c9;
+}
+:where(.workspace-page) .gateway-dot.pulse {
+  animation: gateway-pulse-ring 1.8s ease-out infinite;
+}
+@keyframes gateway-pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 #e6a22570;
+  }
+  100% {
+    box-shadow: 0 0 0 9px #e6a22500;
+  }
+}
+:where(.workspace-page) .gateway-cta {
+  position: absolute;
+  right: 11px;
+  bottom: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--blue);
+  background: #eef4ff;
+  border: 1px solid #cfe0fb;
+  border-radius: 999px;
+  padding: 2px 8px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+/* Gateway management panel. */
+:where(.workspace-page) .gateway-modal h2 span {
+  font-size: 13px;
+  font-weight: 500;
+  color: #97a2b3;
+  margin-left: 8px;
+}
+:where(.workspace-page) .gateway-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 16px;
+  border-radius: 10px;
+  margin: 14px 0 4px;
+}
+:where(.workspace-page) .gateway-status > i {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #aab8c9;
+}
+:where(.workspace-page) .gateway-status.connected {
+  background: #f1fbf7;
+}
+:where(.workspace-page) .gateway-status.connected > i {
+  background: var(--green);
+}
+:where(.workspace-page) .gateway-status.disconnected,
+:where(.workspace-page) .gateway-status.mismatch {
+  background: #fff7e8;
+}
+:where(.workspace-page) .gateway-status.disconnected > i,
+:where(.workspace-page) .gateway-status.mismatch > i {
+  background: var(--amber);
+}
+:where(.workspace-page) .gateway-status.unavailable {
+  background: #f5f7fa;
+}
+:where(.workspace-page) .gateway-status strong {
+  display: block;
+  font-size: 13px;
+  color: #2f3d52;
+}
+:where(.workspace-page) .gateway-status small {
+  font-size: 11px;
+  color: #7a8aa0;
+}
+:where(.workspace-page) .gateway-status > i.pulse {
+  animation: gateway-pulse-soft 1.8s ease-out infinite;
+}
+:where(.workspace-page) .gateway-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 20px;
+  margin: 16px 0;
+}
+:where(.workspace-page) .gateway-facts div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+:where(.workspace-page) .gateway-facts dt {
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  color: #97a2b3;
+}
+:where(.workspace-page) .gateway-facts dd {
+  margin: 0;
+  font-size: 12px;
+  color: #3f4d63;
+  word-break: break-all;
+}
+:where(.workspace-page) .gateway-steps {
+  margin: 4px 0 14px;
+  padding-left: 20px;
+  font-size: 11px;
+  line-height: 2;
+  color: #5f6f88;
+}
+:where(.workspace-page) .gateway-note {
+  font-size: 11px;
+  line-height: 1.8;
+  color: #5f6f88;
+  background: #f6f8fc;
+  border-radius: 8px;
+  padding: 10px 13px;
+  margin: 6px 0 14px;
+}
+:where(.workspace-page) .gateway-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+:where(.workspace-page) .gateway-actions .primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+:where(.workspace-page) .gateway-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid #d8e2f0;
+  background: #fff;
+  color: #4f617c;
+  border-radius: 8px;
+  padding: 10px 15px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+:where(.workspace-page) .gateway-secondary:hover:not(:disabled) {
+  border-color: #b7cdf1;
+  color: var(--blue);
+}
+:where(.workspace-page) .gateway-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+:where(.workspace-page) .gateway-foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  font-size: 10px;
+  color: #97a2b3;
 }
 
 :where(.workspace-page) .banner {

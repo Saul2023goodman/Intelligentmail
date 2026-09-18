@@ -37,7 +37,13 @@ type Commands = {
     args: {
       campaign_id: string;
       student_id: string;
-      files: { name: string; content: string; type?: RecognitionTypeId }[];
+      files: {
+        name: string;
+        content: string;
+        type?: RecognitionTypeId;
+        included?: boolean;
+        members?: { name: string; type?: RecognitionTypeId }[];
+      }[];
     };
     result: IntakeImportResult;
   };
@@ -158,7 +164,12 @@ export async function recognizeSources(files: File[]) {
   });
 }
 
-export type ImportSelection = { file: File; type?: RecognitionTypeId };
+export type ImportSelection = {
+  file: File;
+  type?: RecognitionTypeId;
+  included?: boolean;
+  members?: { name: string; type?: RecognitionTypeId }[];
+};
 
 export async function importSources(
   campaignId: string,
@@ -169,10 +180,12 @@ export async function importSources(
     campaign_id: campaignId,
     student_id: studentId,
     files: await Promise.all(
-      selections.map(async ({ file, type }) => ({
+      selections.map(async ({ file, type, included, members }) => ({
         name: file.name,
         content: await fileContent(file),
         ...(type ? { type } : {}),
+        ...(included !== undefined ? { included } : {}),
+        ...(members ? { members } : {}),
       })),
     ),
   });

@@ -54,6 +54,19 @@ class NetEase163ExtensionMailbox(MailboxCapability):
         }
         return capabilities
 
+    def gateway_status(self) -> dict:
+        """Live extension-bridge connection: connected tab address and protocol."""
+        try:
+            status = self.transport.status()
+        except BridgeError:
+            status = {"connected": False, "mailbox_address": "", "protocol": 0}
+        return {
+            "adapter": self.name,
+            "connected": bool(status.get("connected")),
+            "mailbox_address": str(status.get("mailbox_address", "")),
+            "protocol": status.get("protocol", 0),
+        }
+
     @staticmethod
     def _observation(status, detail, mailbox=""):
         return {"status": status, "mailbox_address": mailbox,

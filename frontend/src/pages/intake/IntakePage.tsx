@@ -11,24 +11,25 @@ import {
   type IntakeTask,
   type IntakeWorkspace,
   type RecognitionRelation,
-  type RecognitionResult,
   type RecognitionTypeId,
   type SourceRecognitionAnnotation,
 } from "../../core";
 import {
+  buildImportSelections,
   confidenceTone,
   identitySummary,
   isActionableType,
   recognitionTypeOptions,
   reviewImportability,
+  reviewItems,
   typeOption,
-  type ReviewEntry,
+  type ReviewItem,
 } from "./recognition-model";
 import "./SourceMapping.css";
 
 type TaskFilter = "all" | "active" | "incomplete";
 type SourceView = IntakeSource & { category: string; importId: string; finding?: string; recognition?: SourceRecognitionAnnotation };
-type ReviewRow = ReviewEntry & { file: File; result: RecognitionResult; manuallyToggled: boolean };
+type ReviewRow = ReviewItem;
 const categories = [
   { id: "master", title: "Supervisor records", detail: "Authoritative task identity rows", icon: "source" as const, color: "green" },
   { id: "drafts", title: "Draft messages", detail: "Documents associated to Preparations", icon: "file" as const, color: "blue" },
@@ -107,25 +108,26 @@ export default function IntakePage() {
   const activeCount = data?.tasks.filter((item) => item.task.supervisor.addresses.length).length ?? 0;
 
   const importability = useMemo(
-    () => review ? reviewImportability(review.rows) : { ok: false, issues: [] as string[] },
+    () => review ? reviewImportability(review.rows) : { ok: false, issues: [] as string[], advisories: [] as string[] },
     [review],
   );
   const includedCount = review?.rows.filter((row) => row.included).length ?? 0;
+  const reviewFiles = useRef<Map<string, File>>(new Map());
 
   async function ingest(files: File[]) {
     if (!files.length || !campaign || !student) return;
     setRecognizing(true); setError(""); setNotice("");
     try {
       // Stage one: deterministic structural recognition, never an import.
+      // Archives return their expanded members; there is no "mixed" row.
       const collection = await recognizeSources(files);
-      const byName = new Map(collection.sources.map((result) => [result.name, result]));
-      const rows: ReviewRow[] = files.map((file) => {
-        const result = byName.get(file.name);
-        if (!result) throw new Error(`Core did not return recognition for ${file.name}`);
-        return {
-          file, result, name: result.name, format: result.format, type: result.type,
-          included: result.actionable, members: result.members, manuallyToggled: false,
-        };
+      const fileMap = new Map(files.map((file) => [file.name, file]));
+      reviewFiles.current = fileMap;
+      const rows: ReviewRow[] = reviewItems(collection.sources).map((row) => {
+        const uploadName = row.container || row.name;
+        const file = fileMap.get(uploadName);
+        if (!file) throw new Error(`Core did not return recognition for ${uploadName}`);
+        return { ...row, size: file.size };
       });
       setReview({ rows, relations: collection.relations });
     } catch (caught) {
@@ -133,18 +135,18 @@ export default function IntakePage() {
     } finally { setRecognizing(false); }
   }
 
-  function setRowType(name: string, type: RecognitionTypeId) {
+  function setRowType(key: string, type: RecognitionTypeId) {
     setReview((current) => current ? {
       ...current,
-      rows: current.rows.map((row) => row.name === name
+      rows: current.rows.map((row) => row.key === key
         ? { ...row, type, included: row.manuallyToggled ? row.included : isActionableType(type) }
         : row),
     } : current);
   }
-  function toggleRow(name: string) {
+  function toggleRow(key: string) {
     setReview((current) => current ? {
       ...current,
-      rows: current.rows.map((row) => row.name === name
+      rows: current.rows.map((row) => row.key === key
         ? { ...row, included: !row.included, manuallyToggled: true }
         : row),
     } : current);
@@ -152,20 +154,23 @@ export default function IntakePage() {
 
   async function confirmReviewImport() {
     if (!review || !importability.ok) return;
-    const included = review.rows.filter((row) => row.included);
+    const selections = buildImportSelections(review.rows, reviewFiles.current);
     setBusy(true); setError(""); setNotice("");
     try {
-      // Stage two: import exactly the operator-approved set; revised types are
-      // persisted alongside Core's own recognized type.
-      const result = await importSources(campaign, student, included.map((row) => ({
-        file: row.file,
-        ...(row.type !== row.result.type ? { type: row.type } : {}),
-      })));
+      // Stage two: import the operator-approved selection; zips are expanded
+      // server-side and revised types persist alongside Core's own recognition.
+      const result = await importSources(campaign, student, selections);
       setData(result.workspace);
       setReview(null);
       setSelectedSource(null);
       const summary = result.import.summary;
-      setNotice(`Imported ${summary.rows} supervisor row${summary.rows === 1 ? "" : "s"}; ${result.preparation.preparation_ids.length} local Preparation${result.preparation.preparation_ids.length === 1 ? "" : "s"} from ${included.length} of ${review.rows.length} reviewed source${review.rows.length === 1 ? "" : "s"}.`);
+      const created = result.preparation.preparation_ids.length;
+      const createdText = created
+        ? `; ${created} local Preparation${created === 1 ? "" : "s"} created from letters`
+        : summary.rows
+          ? "; drafts will associate on the next preparation step"
+          : "; reference material retained";
+      setNotice(`Imported ${summary.rows} supervisor row${summary.rows === 1 ? "" : "s"}${createdText}.`);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Core rejected the selected source set");
     } finally { setBusy(false); }
@@ -245,20 +250,20 @@ export default function IntakePage() {
             const tone = confidenceTone(row.result.confidence);
             const summary = identitySummary({ ...row.result, type: row.type });
             const evidence = row.result.reasons[0] ?? "No supporting structural evidence; held for operator review.";
-            return <article key={row.name} className={`sm-recog-row ${row.included ? "is-included" : "is-excluded"}`}>
+            return <article key={row.key} className={`sm-recog-row ${row.included ? "is-included" : "is-excluded"}`}>
               <label className="sm-recog-check" title={row.included ? "Exclude from this import" : "Include in this import"}>
-                <input type="checkbox" checked={row.included} disabled={busy} onChange={() => toggleRow(row.name)} />
+                <input type="checkbox" checked={row.included} disabled={busy} onChange={() => toggleRow(row.key)} />
               </label>
               <span className={`sm-recog-type-icon ${row.included ? "" : "is-off"}`}><Icon name={option.icon} size={17} /></span>
               <div className="sm-recog-copy">
                 <strong title={row.name}>{row.name}{revised && <b className="sm-revised-tag">Revised</b>}</strong>
-                <small>{summary ? `${summary} · ` : ""}{Math.max(1, Math.round(row.file.size / 1024))} KB</small>
+                <small>{row.container && <span className="sm-container-tag" title={`Expanded from ${row.container}`}>{row.container}</span>}{summary ? `${summary} · ` : ""}{Math.max(1, Math.round(row.size / 1024))} KB</small>
                 <em title={[...row.result.reasons, ...row.result.cautions].join("\n")}>{evidence}{row.result.cautions.length > 0 ? ` · ${row.result.cautions.length} caution${row.result.cautions.length === 1 ? "" : "s"}` : ""}</em>
               </div>
               <span className={`sm-recog-confidence ${tone}`} title={[...row.result.reasons, ...row.result.cautions].join("\n")}>
                 <i className={`sm-dot ${tone === "ready" ? "ready" : ""}`} />{row.result.confidence}
               </span>
-              <select aria-label={`Revise recognized type for ${row.name}`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.name, event.target.value as RecognitionTypeId)}>
+              <select aria-label={`Revise recognized type for ${row.name}`} value={row.type} disabled={busy} onChange={(event) => setRowType(row.key, event.target.value as RecognitionTypeId)}>
                 <optgroup label="Creates outreach work">
                   {recognitionTypeOptions.filter((item) => item.actionable).map((item) => <option key={item.id} value={item.id}>{item.label}</option>)}
                 </optgroup>
@@ -272,8 +277,8 @@ export default function IntakePage() {
         <div className="sm-recog-footer">
           <div className="sm-recog-foot-note">
             {importability.ok
-              ? <><Icon name="check" size={15} /><span>{includedCount} of {review.rows.length} source{review.rows.length === 1 ? "" : "s"} will import. Reference material stays out unless you include it.</span></>
-              : <><Icon name="warning" size={15} /><ul>{importability.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></>}
+              ? <><Icon name="check" size={15} /><div><span>{includedCount} of {review.rows.length} source{review.rows.length === 1 ? "" : "s"} will import.</span>{importability.advisories.length > 0 && <ul className="sm-recog-advisories">{importability.advisories.map((advisory, index) => <li key={index}>{advisory}</li>)}</ul>}</div></>
+              : <><Icon name="warning" size={15} /><div><ul>{importability.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul>{importability.advisories.length > 0 && <ul className="sm-recog-advisories">{importability.advisories.map((advisory, index) => <li key={index}>{advisory}</li>)}</ul>}</div></>}
           </div>
           <div className="sm-recog-actions">
             <button className="sm-recog-cancel" disabled={busy} onClick={() => setReview(null)}>Cancel</button>

@@ -23,6 +23,12 @@ export type Preparation = {
   blocking_count: number;
   subject: string;
 };
+export type MailboxGateway = {
+  adapter: string;
+  connected: boolean;
+  mailbox_address: string;
+  protocol: number;
+};
 export type Workspace = {
   mailboxes: MailboxSummary[];
   mailbox_capabilities: {
@@ -31,6 +37,7 @@ export type Workspace = {
       [operation: string]: { available: boolean; verified: boolean; basis: string };
       read_history: { available: boolean; verified: boolean; basis: string };
     };
+    gateway: MailboxGateway;
   };
   campaigns: Campaign[];
   preparations: Preparation[];

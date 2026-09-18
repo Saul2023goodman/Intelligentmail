@@ -1,12 +1,44 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, KeyboardEvent } from "react";
 import type { Workspace } from "../../core";
 import {
   stages,
   stageMetric,
   GRAPH_WIDTH,
   GRAPH_HEIGHT,
+  type GatewayHealth,
+  type GatewayState,
 } from "./workflow-model";
 import Icon from "../../shared/Icon";
+
+const GATEWAY_COPY: Record<
+  GatewayState,
+  { dot: string; hint: string; cta: string; pulse: boolean }
+> = {
+  unavailable: {
+    dot: "gateway-dot grey",
+    hint: "网关未启用",
+    cta: "了解网关",
+    pulse: false,
+  },
+  disconnected: {
+    dot: "gateway-dot amber",
+    hint: "未连接邮箱",
+    cta: "连接邮箱",
+    pulse: true,
+  },
+  mismatch: {
+    dot: "gateway-dot amber",
+    hint: "连接了其他邮箱",
+    cta: "查看连接",
+    pulse: true,
+  },
+  connected: {
+    dot: "gateway-dot green",
+    hint: "网关已连接",
+    cta: "管理",
+    pulse: false,
+  },
+};
 
 const solidEdges = [
   "M255 102H295",
@@ -37,13 +69,20 @@ export default function Workflow({
   data,
   selected,
   onSelect,
+  onManageGateway,
+  gateway,
   scale,
 }: {
   data: Workspace | null;
   selected: string;
   onSelect: (id: string) => void;
+  /** Open the Mailbox Gateway management panel. */
+  onManageGateway: () => void;
+  /** Live gateway health for the selected Student. */
+  gateway?: GatewayHealth;
   scale: number;
 }) {
+  const gatewayCopy = gateway ? GATEWAY_COPY[gateway.state] : null;
   return (
     <div
       className="graph-size"
@@ -95,36 +134,86 @@ export default function Workflow({
         <span className="edge-label ready-label">ready</span>
         <span className="edge-label blocked-label">needs attention</span>
         <span className="edge-label external-label">confirmed execution</span>
-        {stages.map((stage) => (
-          <button
-            key={stage.id}
-            className={`workflow-node ${selected === stage.id ? "selected" : ""}`}
-            style={
-              {
-                left: stage.x,
-                top: stage.y,
-                "--node-color": `var(--${stage.color})`,
-              } as CSSProperties
-            }
-            onClick={() => onSelect(stage.id)}
-            aria-pressed={selected === stage.id}
-          >
-            <span className={`node-icon ${stage.color}`}>
-              <Icon name={stage.icon} size={24} />
-            </span>
-            <span className="node-copy">
-              <strong>{stage.label}</strong>
-              <small>{stage.caption}</small>
-              <span className="node-count">
-                <i />
-                {stageMetric(stage.id, data).count}{" "}
-                {stageMetric(stage.id, data).unit}
+        {stages.map((stage) => {
+          const metric = stageMetric(stage.id, data);
+          const isGateway = stage.id === "mailbox" && gateway && gatewayCopy;
+          const positionStyle = {
+            left: stage.x,
+            top: stage.y,
+            "--node-color": `var(--${stage.color})`,
+          } as CSSProperties;
+          const inner = (
+            <>
+              <span className={`node-icon ${stage.color}`}>
+                <Icon name={stage.icon} size={24} />
               </span>
-            </span>
-            <span className="port in" />
-            <span className="port out" />
-          </button>
-        ))}
+              <span className="node-copy">
+                <strong>{stage.label}</strong>
+                <small>{isGateway ? gatewayCopy.hint : stage.caption}</small>
+                <span className="node-count">
+                  <i />
+                  {metric.count} {metric.unit}
+                </span>
+              </span>
+              {isGateway && (
+                <>
+                  <span
+                    className={gatewayCopy.pulse ? `${gatewayCopy.dot} pulse` : gatewayCopy.dot}
+                    aria-label={`Gateway ${gateway.state}`}
+                    title={`Mailbox gateway: ${gateway.state}`}
+                  />
+                  <span className="gateway-cta">
+                    <Icon
+                      name={gateway.state === "connected" ? "chevron" : "plus"}
+                      size={11}
+                    />
+                    {gatewayCopy.cta}
+                  </span>
+                </>
+              )}
+              <span className="port in" />
+              <span className="port out" />
+            </>
+          );
+          if (isGateway) {
+            const activate = () => {
+              onSelect(stage.id);
+              onManageGateway();
+            };
+            return (
+              <div
+                key={stage.id}
+                role="button"
+                tabIndex={0}
+                title={stage.description}
+                aria-label={`${stage.label}：${gatewayCopy.hint}。打开网关管理`}
+                className={`workflow-node gateway-node ${selected === stage.id ? "selected" : ""}`}
+                style={positionStyle}
+                onClick={activate}
+                onKeyDown={(event: KeyboardEvent) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    activate();
+                  }
+                }}
+              >
+                {inner}
+              </div>
+            );
+          }
+          return (
+            <button
+              key={stage.id}
+              title={stage.description}
+              className={`workflow-node ${selected === stage.id ? "selected" : ""}`}
+              style={positionStyle}
+              onClick={() => onSelect(stage.id)}
+              aria-pressed={selected === stage.id}
+            >
+              {inner}
+            </button>
+          );
+        })}
         <div className="graph-note">
           <Icon name="shield" size={15} /> Every external action requires an
           exact-content confirmation.

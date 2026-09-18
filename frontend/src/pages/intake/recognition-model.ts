@@ -3,6 +3,7 @@
 // so the auto-recognition + manual-revision rules are unit-testable.
 
 import type { IconName } from "../../shared/Icon";
+import type { ImportSelection } from "../../core";
 import type {
   RecognitionConfidence,
   RecognitionResult,
@@ -79,67 +80,116 @@ export function identitySummary(result: RecognitionResult): string {
   }
 }
 
-export type ReviewEntry = {
+// A review row is always a concrete file: either a loose upload or one member
+// expanded from a zip. The archive itself never appears as a row ("no mixed").
+export type ReviewItem = {
+  key: string;
   name: string;
-  format: string;
+  container: string;
+  size: number;
+  result: RecognitionResult;
   type: RecognitionTypeId;
   included: boolean;
-  members?: RecognitionResult[];
+  manuallyToggled: boolean;
 };
 
-export type Importability = { ok: boolean; issues: string[] };
+export function reviewItems(sources: RecognitionResult[]): ReviewItem[] {
+  return sources.map((result) => {
+    const container = result.container ?? "";
+    return {
+      key: container ? `${container}::${result.name}` : result.name,
+      name: result.name,
+      container,
+      size: 0,
+      result,
+      type: result.type,
+      included: result.actionable,
+      manuallyToggled: false,
+    };
+  });
+}
 
-// The Core import path accepts one .xlsx supervisor master (optionally with
-// related documents bundled around it) or one .zip that contains exactly that.
-// Everything else is reported up front instead of failing opaquely in Core.
-export function reviewImportability(entries: ReviewEntry[]): Importability {
+export type Importability = {
+  ok: boolean;
+  issues: string[];
+  advisories: string[];
+};
+
+// The supervisor master workbook is recommended, not required: with no master
+// the draft letters establish their own Outreach Tasks. Blockers are reserved
+// for conditions Core cannot turn into safe work.
+export function reviewImportability(entries: ReviewItem[]): Importability {
   const included = entries.filter((entry) => entry.included);
   const issues: string[] = [];
+  const advisories: string[] = [];
   if (!included.length) {
-    return { ok: false, issues: ["Select at least one source to import."] };
+    return { ok: false, issues: ["Select at least one source to import."], advisories };
   }
 
-  const zips = included.filter((entry) => entry.format === "zip");
-  if (zips.length > 1) {
-    issues.push("Choose one archive per import; merge the others first.");
+  const masters = included.filter((entry) => entry.type === "supervisor_master");
+  if (masters.length > 1) {
+    issues.push("Choose one supervisor master workbook per import; exclude or revise the others.");
   }
-  if (zips.length === 1 && included.length > 1) {
-    issues.push(`Import the archive on its own; extract "${zips[0].name}" to pick members individually.`);
-  }
-
-  for (const entry of included.filter((item) => item.format === "csv")) {
-    issues.push(
-      `"${entry.name}" is a ${typeOption(entry.type).label}. Batch CSV rows are not created by this import path; exclude it and use the extension batch workflow.`,
-    );
-  }
-
-  const looseXlsx = included.filter((entry) => entry.format === "xlsx");
-  for (const entry of looseXlsx) {
-    if (entry.type !== "supervisor_master") {
+  for (const entry of included) {
+    if (entry.type === "bulk_import") {
       issues.push(
-        `"${entry.name}" is recognized as ${typeOption(entry.type).label}, not a supervisor master list. Revise its type or exclude it.`,
+        `"${entry.name}" is a structured outreach batch (CSV). Batch rows go through the 163 extension import, not this workflow; exclude it.`,
       );
     }
-  }
-  if (!zips.length) {
-    if (looseXlsx.length > 1) {
-      issues.push("Choose one supervisor master workbook per import.");
-    } else if (looseXlsx.length === 0) {
-      const only = included.length === 1;
-      issues.push(only
-        ? `A document cannot be imported alone. Add the supervisor master workbook (.xlsx) to the same source set.`
-        : "Add the supervisor master workbook (.xlsx) to this source set.");
-    }
-  } else {
-    for (const entry of zips) {
-      const memberXlsx = (entry.members ?? []).filter((member) => member.format === "xlsx");
-      if (memberXlsx.length !== 1) {
-        issues.push(`Archive "${entry.name}" must contain exactly one .xlsx master workbook (found ${memberXlsx.length}).`);
-      } else if (memberXlsx[0].type !== "supervisor_master") {
-        issues.push(`The workbook inside "${entry.name}" is recognized as ${memberXlsx[0].label}, not a supervisor master list.`);
-      }
+    if (entry.type === "unknown" || entry.type === "ambiguous") {
+      issues.push(`"${entry.name}" is unresolved (${entry.type}); revise its type or exclude it.`);
     }
   }
 
-  return { ok: issues.length === 0, issues };
+  const drafts = included.filter((entry) =>
+    entry.type === "outreach_draft" || entry.type === "multi_draft_bundle");
+  const workItems = included.filter((entry) => isActionableType(entry.type));
+  if (!masters.length) {
+    if (drafts.length) {
+      advisories.push(
+        "No supervisor master list included: each addressed letter creates its own Outreach Task; letters without a recipient stay blocked pending an address.",
+      );
+    } else if (!workItems.length) {
+      advisories.push("No outreach work in this set; sources will be retained as reference material only.");
+    }
+  }
+
+  return { ok: issues.length === 0, issues, advisories };
+}
+
+// Group the reviewed rows back into one selection per uploaded file.
+// Archive members travel as a `members` allowlist on their zip upload.
+export function buildImportSelections(
+  entries: ReviewItem[],
+  files: Map<string, File>,
+): ImportSelection[] {
+  const selections = new Map<string, ImportSelection>();
+  const resolveFile = (name: string): File => {
+    const file = files.get(name);
+    if (!file) throw new Error(`Reviewed file is no longer attached: ${name}`);
+    return file;
+  };
+  for (const entry of entries) {
+    const uploadName = entry.container || entry.name;
+    const existing = selections.get(uploadName);
+    if (entry.container) {
+      const selection = existing ?? { file: resolveFile(uploadName), included: false, members: [] };
+      if (entry.included) {
+        selection.included = true;
+        selection.members = [
+          ...(selection.members ?? []),
+          { name: entry.name, ...(entry.type !== entry.result.type ? { type: entry.type } : {}) },
+        ];
+      }
+      selections.set(uploadName, selection);
+    } else {
+      selections.set(uploadName, {
+        file: resolveFile(uploadName),
+        included: entry.included,
+        ...(entry.type !== entry.result.type ? { type: entry.type } : {}),
+      });
+    }
+  }
+  // Keep the original upload order for a predictable payload.
+  return [...selections.values()];
 }

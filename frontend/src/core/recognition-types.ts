@@ -45,6 +45,9 @@ export type RecognitionResult = {
   alternatives: { type: string; score: number }[];
   sha256: string;
   members?: RecognitionResult[];
+  // Present on flattened archive members returned by the review command:
+  // the upload (zip) that contained this member.
+  container?: string;
 };
 
 export type RecognitionRelation = {

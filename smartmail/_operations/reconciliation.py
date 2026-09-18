@@ -14,9 +14,11 @@ class ReconciliationOperations:
 
     def mailbox_capabilities(self) -> dict:
         """Availability is reported per operation; read access grants no write authority."""
+        gateway = self.mailbox.gateway_status()
         return {
             "adapter": getattr(self.mailbox, "name", "unavailable"),
             "capabilities": self.mailbox.capabilities(),
+            "gateway": gateway,
         }
 
     def refresh_mailbox(self, student_id: str) -> dict:

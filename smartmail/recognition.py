@@ -465,6 +465,70 @@ def recognize_file(path: str | Path) -> dict:
     return recognize_bytes(path.name, path.read_bytes())
 
 
+def _normalize_letter_body(lines: list[str]) -> str:
+    """Collapse the blank-line spacing the way the draft parser does."""
+    result: list[str] = []
+    for text in lines:
+        if not text and result and not result[-1]:
+            continue
+        result.append(text)
+    while result and not result[0]:
+        result.pop(0)
+    while result and not result[-1]:
+        result.pop()
+    return "\n".join(result)
+
+
+def extract_letters(data: bytes) -> list[dict]:
+    """Split a document into the addressed letters it contains.
+
+    Returns one letter per salutation/sign-off envelope, so a single draft
+    yields one letter and a multi-draft bundle yields one per supervisor
+    section.  Each letter carries the identity needed to create an Outreach
+    Task without a master workbook: supervisor (heading or salutation),
+    institution (heading, often empty), recipient address (declaration line,
+    envelope marker or heading email -- empty when unresolved), subject and
+    the normalized body from salutation through the sender name.
+    Raises DocumentError when the container cannot be read.
+    """
+    paragraphs = read_paragraphs(data)
+    lines = [paragraph.strip() for paragraph in paragraphs if paragraph.strip()]
+    features = _extract_docx(lines)
+    if not features.salutations:
+        return []
+    segments = _segment_letters(lines, features)
+    anchors = [index for index, _t, _n in features.salutations]
+    letters: list[dict] = []
+    for position, segment in enumerate(segments):
+        start = anchors[position]
+        end = anchors[position + 1] if position + 1 < len(anchors) else len(lines)
+        signer_offset = next((offset for offset, name in features.signers
+                              if start <= offset < end), None)
+        body_end = (signer_offset + 1) if signer_offset is not None else end
+        body = _normalize_letter_body(lines[start:body_end])
+        trailing = [line for line in lines[body_end:end]
+                    if line and not ENVELOPE_EMAIL_RE.search(line)
+                    and not SECTION_NUMBER_RE.match(line)
+                    and not NAME_HEADING_RE.match(line)]
+        recipient = segment["emails"][0] if segment["emails"] else ""
+        if not recipient:
+            in_line = next((value for _i, value in features.recipient_lines
+                            if start <= _i < end and email_address(value.split()[0])), "")
+            if in_line:
+                recipient = in_line.split()[0]
+        letters.append({
+            "supervisor": segment["supervisor"],
+            "salutation_name": segment["salutation_name"],
+            "institution": segment["institution"],
+            "recipient": recipient,
+            "subject": segment["subject"],
+            "body": body,
+            "internal_note": "\n".join(trailing).strip(),
+            "signer": segment["signer"],
+        })
+    return letters
+
+
 # ---------------------------------------------------------------------------
 # DOCX feature extraction and rules
 # ---------------------------------------------------------------------------

@@ -1,4 +1,71 @@
-import type { Task, Workspace } from "../../core";
+import type { MailboxGateway, MailboxSummary, Task, Workspace } from "../../core";
+
+export type GatewayState =
+  | "unavailable"
+  | "disconnected"
+  | "mismatch"
+  | "connected";
+
+export type GatewayHealth = {
+  state: GatewayState;
+  /** Address the extension bridge is currently connected to. */
+  connectedAddress: string;
+  /** The selected Student's registered mailbox. */
+  studentAddress: string;
+  /** Whether observation can run for the selected Student right now. */
+  canObserve: boolean;
+  /** True only for a connected adapter that supports the gateway. */
+  enabled: boolean;
+};
+
+/**
+ * Derive Mailbox Gateway health from existing Core data: the live bridge
+ * connection plus the selected Student's registered mailbox.
+ */
+export function gatewayHealth(
+  gateway: MailboxGateway | undefined,
+  student: MailboxSummary | null,
+): GatewayHealth {
+  const studentAddress = (student?.address || "").toLowerCase();
+  const connectedAddress = (gateway?.mailbox_address || "").toLowerCase();
+  const enabled = Boolean(
+    gateway && gateway.adapter !== "unavailable" && gateway.adapter !== "disabled",
+  );
+  if (!enabled) {
+    return {
+      state: "unavailable",
+      connectedAddress,
+      studentAddress,
+      canObserve: false,
+      enabled: false,
+    };
+  }
+  if (!gateway?.connected || !connectedAddress) {
+    return {
+      state: "disconnected",
+      connectedAddress: "",
+      studentAddress,
+      canObserve: false,
+      enabled: true,
+    };
+  }
+  if (studentAddress && connectedAddress !== studentAddress) {
+    return {
+      state: "mismatch",
+      connectedAddress,
+      studentAddress,
+      canObserve: false,
+      enabled: true,
+    };
+  }
+  return {
+    state: "connected",
+    connectedAddress,
+    studentAddress,
+    canObserve: Boolean(studentAddress),
+    enabled: true,
+  };
+}
 
 export const GRAPH_WIDTH = 1300;
 export const GRAPH_HEIGHT = 870;
@@ -16,14 +83,14 @@ export function fitScale(width: number, height: number, padding = 40): number {
 export const stages = [
   {
     id: "mailbox",
-    label: "读取外部邮箱",
-    caption: "扩展只读观察",
+    label: "邮箱网关",
+    caption: "Mailbox gateway · 连接状态",
     icon: "mail",
     color: "blue",
     x: 55,
     y: 60,
     description:
-      "通过已连接的 163 邮箱扩展读取邮件元数据及证据覆盖范围。每次读取会交给 Core 保存并对账，不会自动创建任务或授权发送。",
+      "外部执行基础设施：经专用 163 邮箱扩展与本机桥接连接一个已登录邮箱标签页，观察与已确认发送都走这条总线。点击查看连接健康状态、读取邮箱证据或进行连接管理；观察为只读，不会授权发送。",
   },
   {
     id: "database",

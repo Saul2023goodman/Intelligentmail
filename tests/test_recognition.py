@@ -603,6 +603,145 @@ class RecognitionBridgeTests(unittest.TestCase):
         self.assertEqual(categories[cv_id], "unresolved")
 
 
+class MasterlessImportBridgeTests(unittest.TestCase):
+    """ZIP expansion and draft-created Tasks without a supervisor master list."""
+
+    def setUp(self):
+        import base64 as b64
+        from smartmail import SmartMail
+        from smartmail.ui import dispatch as ui_dispatch
+
+        self.dispatch = ui_dispatch
+        self.b64encode = b64.b64encode
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.core = SmartMail(Path(self.temp.name) / "store")
+        self.addCleanup(self.core.__exit__)
+        self.campaign = self.core.create_campaign("Masterless")
+        self.student = self.core.create_student("Shen Hui", "shenhui@163.com")
+
+    def _archive(self, name, members):
+        path = Path(self.temp.name) / name
+        with zipfile.ZipFile(path, "w") as archive:
+            for member_name, data in members:
+                archive.writestr(member_name, data)
+        return path.read_bytes()
+
+    def _upload(self, name, data, included=True, members=None):
+        item = {"name": name, "content": self.b64encode(data).decode("ascii"),
+                "included": included}
+        if members is not None:
+            item["members"] = members
+        return item
+
+    def test_recognize_flattens_zip_members_instead_of_returning_a_mixed_row(self):
+        archive = self._archive("pack.zip", [
+            ("Ping Tan.docx", docx_bytes(DRAFT_WITHOUT_ENVELOPE)),
+            ("master.xlsx", self._master_bytes()),
+        ])
+        result = self.dispatch(self.core, {"command": "intake_recognize", "files": [
+            self._upload("pack.zip", archive)]})
+        names = sorted(source["name"] for source in result["sources"])
+        self.assertNotIn("pack.zip", names)
+        self.assertEqual(names, ["Ping Tan.docx", "master.xlsx"])
+        self.assertTrue(all(source.get("container") == "pack.zip"
+                            for source in result["sources"]))
+        by_name = {s["name"]: s["type"] for s in result["sources"]}
+        self.assertEqual(by_name["Ping Tan.docx"], OUTREACH_DRAFT)
+        self.assertEqual(by_name["master.xlsx"], SUPERVISOR_MASTER)
+
+    def _master_bytes(self):
+        return workbook_file(Path(self.temp.name), "m.xlsx", [("Sheet1", [
+            ["大学", "导师", "邮箱📮", "URL"],
+            ["Example University", "Dr Alex Green", "alex@example.edu", ""],
+        ])]).read_bytes()
+
+    def test_draft_only_zip_creates_task_and_preparation_without_master(self):
+        archive = self._archive("letters.zip", [
+            ("Ping Tan.docx", docx_bytes(DRAFT_WITHOUT_ENVELOPE))])
+        result = self.dispatch(self.core, {"command": "intake_import",
+                                           "campaign_id": self.campaign["id"],
+                                           "student_id": self.student["id"],
+                                           "files": [self._upload("letters.zip", archive)]})
+        self.assertEqual(result["import"]["summary"]["rows"], 0)
+        self.assertEqual(len(result["preparation"]["preparation_ids"]), 1)
+        tasks = result["workspace"]["tasks"]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["task"]["supervisor"]["name"], "Tan")
+        self.assertEqual(tasks[0]["task"]["supervisor"]["addresses"], [])
+        self.assertTrue(any(exception["code"] == "invalid_recipient"
+                            for exception in tasks[0]["task"]["exceptions"]))
+
+    def test_member_filter_expands_only_approved_members(self):
+        archive = self._archive("pack.zip", [
+            ("Ping Tan.docx", docx_bytes(DRAFT_WITHOUT_ENVELOPE)),
+            ("申请时间规划.docx", docx_bytes([
+                "某同学 2028-2029 硕士申请时间规划",
+                "2026 年 8 月-2027 年 2 月", "• 探索方向并形成院校长名单",
+                "2027 年 3 月-6 月", "• 完成学术 CV 初稿",
+                "2027 年 7 月-9 月", "• 建立导师池",
+            ])),
+        ])
+        result = self.dispatch(self.core, {"command": "intake_import",
+                                           "campaign_id": self.campaign["id"],
+                                           "student_id": self.student["id"],
+                                           "files": [self._upload("pack.zip", archive, members=[
+                                               {"name": "Ping Tan.docx"},
+                                           ])]})
+        names = [source["name"] for imported in result["workspace"]["imports"]
+                 for source in imported["sources"]]
+        self.assertEqual(names, ["Ping Tan.docx"])
+        self.assertEqual(len(result["workspace"]["tasks"]), 1)
+
+    def test_multi_draft_bundle_creates_one_task_per_segment(self):
+        paragraphs = [
+            "2.", "Daniel Lock — Loughborough University London",
+            "Subject: PhD Application Fall 2027 — Junhao Jiao｜Sports",
+            "Dear Prof. Lock,",
+            "I hope this email finds you well. My name is Junhao Jiao and I am writing "
+            "to express interest. Your work inspires me. My CV is attached.",
+            "Yours sincerely,", "Junhao Jiao",
+            "📧 monica.chien@example.edu",
+            "3.", "Monica Chien — University of Queensland",
+            "Subject: PhD Application — Consumer Behaviour",
+            "Dear Prof. Chien,",
+            "I hope this email finds you well. My name is Junhao Jiao and I am writing "
+            "to inquire. Your research resonates. My CV is attached.",
+            "Yours sincerely,", "Junhao Jiao",
+        ]
+        archive = self._archive("bundle.zip", [("letters.docx", docx_bytes(paragraphs))])
+        result = self.dispatch(self.core, {"command": "intake_import",
+                                           "campaign_id": self.campaign["id"],
+                                           "student_id": self.student["id"],
+                                           "files": [self._upload("bundle.zip", archive)]})
+        self.assertEqual(len(result["preparation"]["preparation_ids"]), 2)
+        tasks = {t["task"]["supervisor"]["name"]: t for t in result["workspace"]["tasks"]}
+        self.assertEqual(set(tasks), {"Daniel Lock", "Monica Chien"})
+        self.assertEqual(tasks["Monica Chien"]["task"]["supervisor"]["addresses"],
+                         ["monica.chien@example.edu"])
+        preparation = next(
+            p for p in (self.core.get_preparation(pid)
+                        for pid in result["preparation"]["preparation_ids"])
+            if p["association"]["supervisor"] == "Monica Chien")
+        self.assertIn("PhD Application", preparation["subject"])
+        self.assertTrue(preparation["ready"])
+
+    def test_reference_only_set_is_preserved_without_creating_work(self):
+        archive = self._archive("refs.zip", [("申请时间规划.docx", docx_bytes([
+            "某同学 2028-2029 硕士申请时间规划",
+            "2026 年 8 月-2027 年 2 月", "• 探索方向并形成院校长名单",
+            "2027 年 3 月-6 月", "• 完成学术 CV 初稿",
+            "2027 年 7 月-9 月", "• 建立导师池",
+        ]))])
+        result = self.dispatch(self.core, {"command": "intake_import",
+                                           "campaign_id": self.campaign["id"],
+                                           "student_id": self.student["id"],
+                                           "files": [self._upload("refs.zip", archive)]})
+        self.assertEqual(result["preparation"]["preparation_ids"], [])
+        self.assertEqual(result["workspace"]["tasks"], [])
+        self.assertEqual(len(result["workspace"]["imports"][0]["sources"]), 1)
+
+
 @unittest.skipUnless(
     os.environ.get("SMARTMAIL_RECOGNITION_FULLSET"),
     "Set SMARTMAIL_RECOGNITION_FULLSET to the extracted fullset directory")
